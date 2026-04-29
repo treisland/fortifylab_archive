@@ -750,17 +750,26 @@ stream_logs() {
     # Cycle through 6 ANSI colors so adjacent pods read distinct.
     local colors=(1 2 3 4 5 6)
 
-    # Trap stays scoped to this function; cleanup happens before return.
+    # Each pod tail runs in a backgrounded subshell that traps its OWN
+    # exit and does `kill 0` — sending TERM to its entire process group,
+    # which includes all pipeline children (kubectl + grep + awk). That
+    # way the parent's cleanup just has to TERM the subshells; each one
+    # fans out its own kill. Without this, `( pipe1 | pipe2 ) &`
+    # leaks the kubectl process when the subshell exits — which was the
+    # bug the user hit when `source`-ing the wizard.
     cleanup_streams() {
+        local p
         for p in "${pids[@]}"; do
-            kill "$p" 2>/dev/null
+            kill -TERM "$p" 2>/dev/null
         done
-        # Also reap any orphans that ignored SIGTERM.
+        # Brief grace, then verify clean.
+        sleep 0.3
         for p in "${pids[@]}"; do
             wait "$p" 2>/dev/null
         done
+        pids=()
     }
-    trap 'cleanup_streams; trap - INT; return 0' INT
+    trap 'cleanup_streams; trap - INT; echo; return 0' INT
 
     echo
     note "Streaming. Ctrl+C to stop."
@@ -776,21 +785,20 @@ stream_logs() {
         fi
         short="$pod"
 
-        # Each tail runs in a subshell that also reads logs from all
-        # containers within the pod. We prefix every line with a colored
-        # [short-name] tag so the multiplexed stream stays readable.
-        # The `2>&1` lets pod startup errors (e.g. "container not found
-        # yet") surface; an awk filter drops the noisiest of those.
         if [ -n "$filter" ]; then
             (
+              # On any exit, kill our entire process group → takes
+              # down kubectl logs + grep + awk in one shot.
+              trap 'kill 0' EXIT
               $KUBECTL -n "$NAMESPACE" logs --follow --all-containers --tail=20 \
                   --ignore-errors=true "$pod" 2>&1 \
-              | grep --line-buffered -F "$filter" \
+              | grep --line-buffered -F -- "$filter" \
               | awk -v c="$color" -v r="$RESET" -v p="$short" \
                   '{ printf "%s[%s]%s %s\n", c, p, r, $0; fflush() }'
             ) &
         else
             (
+              trap 'kill 0' EXIT
               $KUBECTL -n "$NAMESPACE" logs --follow --all-containers --tail=20 \
                   --ignore-errors=true "$pod" 2>&1 \
               | awk -v c="$color" -v r="$RESET" -v p="$short" \
@@ -800,7 +808,7 @@ stream_logs() {
         pids+=("$!")
     done
 
-    # Block until any backgrounded tail exits OR Ctrl+C trips the trap.
+    # Block until all backgrounded tails exit OR Ctrl+C trips the trap.
     wait
     cleanup_streams
     trap - INT
