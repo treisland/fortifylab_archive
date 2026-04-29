@@ -603,6 +603,64 @@ cluster_status() {
     press_any
 }
 
+# Auto-refreshing dashboard. Uses our existing status helpers + per-app
+# rows; trapped Ctrl+C exits cleanly back to the menu.
+live_status() {
+    local interval="${1:-5}"
+    trap 'live_status_running=0' INT
+    live_status_running=1
+
+    while [ "$live_status_running" -eq 1 ]; do
+        clear
+        printf '%sFortify Lab — Live Status%s   refresh %ss   Ctrl+C to exit\n' \
+            "$BOLD" "$RESET" "$interval"
+        printf '%s%s%s\n' "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$RESET"
+        hr
+
+        section "Cluster"
+        printf '  %s\n' "$(status_cluster)"
+
+        if cluster_reachable; then
+            section "Apps"
+            local i pods total ready issues
+            for i in "${!APP_LABEL[@]}"; do
+                pods=$($KUBECTL -n "$NAMESPACE" get pods --no-headers 2>/dev/null \
+                       | awk -v p="${APP_PODS[$i]}" '$1 ~ "^"p {print}')
+                if [ -z "$pods" ]; then
+                    printf '  %-20s %snot deployed%s\n' "${APP_LABEL[$i]}" "$DIM" "$RESET"
+                    continue
+                fi
+                total=$(echo "$pods" | wc -l)
+                ready=$(echo "$pods" | awk '$3=="Running" {n=split($2,a,"/"); if (a[1]==a[2]) c++} END{print c+0}')
+                if [ "$ready" -eq "$total" ]; then
+                    printf '  %-20s %s%d/%d running%s\n' \
+                        "${APP_LABEL[$i]}" "$GREEN" "$ready" "$total" "$RESET"
+                else
+                    printf '  %-20s %s%d/%d ready%s\n' \
+                        "${APP_LABEL[$i]}" "$YELLOW" "$ready" "$total" "$RESET"
+                    # Show offenders inline so the user sees why
+                    echo "$pods" | awk '$3!="Running" || ($2 ~ /^[0-9]+\/[0-9]+$/ && split($2,a,"/") && a[1]!=a[2]) { printf "    %s%s%s  %s  %s\n", "'"$DIM"'", $1, "'"$RESET"'", $2, $3 }'
+                fi
+            done
+
+            section "Recent events (last 8)"
+            $KUBECTL -n "$NAMESPACE" get events --sort-by='.lastTimestamp' 2>/dev/null \
+              | tail -8 \
+              | awk 'NR>0 { printf "  %s\n", $0 }'
+        fi
+
+        # Sleep responsively so Ctrl+C exits within ~1s.
+        local elapsed=0
+        while [ "$elapsed" -lt "$interval" ] && [ "$live_status_running" -eq 1 ]; do
+            sleep 1
+            elapsed=$((elapsed + 1))
+        done
+    done
+
+    trap - INT
+    clear
+}
+
 logs_menu() {
     title "Pod logs"
     local pods=()
@@ -664,6 +722,88 @@ logs_for_prefix() {
         $KUBECTL -n "$NAMESPACE" logs --tail=200 "${pods[$((sel-1))]}" || true
     fi
     press_any
+}
+
+# Multi-pod log streamer. Tails every pod in $NAMESPACE in parallel,
+# tagging each line with a colored [pod-name] prefix. Optional substring
+# filter applies to the LINE, not the pod name (use logs_menu for that).
+# Ctrl+C kills all backgrounded tails and returns to the menu.
+stream_logs() {
+    title "Stream logs (all pods)"
+    if ! cluster_reachable; then
+        error "Cluster not reachable"
+        press_any; return
+    fi
+    local pods=()
+    mapfile -t pods < <($KUBECTL -n "$NAMESPACE" get pods -o name 2>/dev/null | sed 's|^pod/||')
+    if [ ${#pods[@]} -eq 0 ]; then
+        note "No pods in '$NAMESPACE'"
+        press_any; return
+    fi
+    echo
+    echo "  ${#pods[@]} pods will be tailed in parallel."
+    echo "  Tip: filter to surface the lines you care about (errors, specific words)."
+    echo
+    ask filter "Line filter (substring, blank for all):"
+
+    local pids=() pod color color_idx short
+    # Cycle through 6 ANSI colors so adjacent pods read distinct.
+    local colors=(1 2 3 4 5 6)
+
+    # Trap stays scoped to this function; cleanup happens before return.
+    cleanup_streams() {
+        for p in "${pids[@]}"; do
+            kill "$p" 2>/dev/null
+        done
+        # Also reap any orphans that ignored SIGTERM.
+        for p in "${pids[@]}"; do
+            wait "$p" 2>/dev/null
+        done
+    }
+    trap 'cleanup_streams; trap - INT; return 0' INT
+
+    echo
+    note "Streaming. Ctrl+C to stop."
+    echo
+
+    for i in "${!pods[@]}"; do
+        pod="${pods[$i]}"
+        color_idx="${colors[$((i % ${#colors[@]}))]}"
+        if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+            color="$(tput setaf "$color_idx" 2>/dev/null || true)"
+        else
+            color=""
+        fi
+        short="$pod"
+
+        # Each tail runs in a subshell that also reads logs from all
+        # containers within the pod. We prefix every line with a colored
+        # [short-name] tag so the multiplexed stream stays readable.
+        # The `2>&1` lets pod startup errors (e.g. "container not found
+        # yet") surface; an awk filter drops the noisiest of those.
+        if [ -n "$filter" ]; then
+            (
+              $KUBECTL -n "$NAMESPACE" logs --follow --all-containers --tail=20 \
+                  --ignore-errors=true "$pod" 2>&1 \
+              | grep --line-buffered -F "$filter" \
+              | awk -v c="$color" -v r="$RESET" -v p="$short" \
+                  '{ printf "%s[%s]%s %s\n", c, p, r, $0; fflush() }'
+            ) &
+        else
+            (
+              $KUBECTL -n "$NAMESPACE" logs --follow --all-containers --tail=20 \
+                  --ignore-errors=true "$pod" 2>&1 \
+              | awk -v c="$color" -v r="$RESET" -v p="$short" \
+                  '{ printf "%s[%s]%s %s\n", c, p, r, $0; fflush() }'
+            ) &
+        fi
+        pids+=("$!")
+    done
+
+    # Block until any backgrounded tail exits OR Ctrl+C trips the trap.
+    wait
+    cleanup_streams
+    trap - INT
 }
 
 urls_creds() {
@@ -860,11 +1000,13 @@ main_menu() {
         echo "   6. Configure (DNS, SSC token, LIM)"
 
         section "Operations"
-        echo "   7. Cluster status"
-        echo "   8. Pod logs"
-        echo "   9. URLs & credentials"
-        echo "  10. Image versions"
-        echo "  11. Edit .env"
+        echo "   7. Live status (auto-refresh)"
+        echo "   8. Stream logs (all pods)"
+        echo "   9. Cluster snapshot"
+        echo "  10. Tail one pod"
+        echo "  11. URLs & credentials"
+        echo "  12. Image versions"
+        echo "  13. Edit .env"
 
         echo
         echo "   q. Quit"
@@ -878,11 +1020,13 @@ main_menu() {
             4)  license_menu ;;
             5)  certs_secrets_menu ;;
             6)  configure_menu ;;
-            7)  cluster_status ;;
-            8)  logs_menu ;;
-            9)  urls_creds ;;
-           10)  versions_menu ;;
-           11)  edit_env ;;
+            7)  live_status ;;
+            8)  stream_logs ;;
+            9)  cluster_status ;;
+           10)  logs_menu ;;
+           11)  urls_creds ;;
+           12)  versions_menu ;;
+           13)  edit_env ;;
             [Qq]) clear; exit 0 ;;
             *)   error "Invalid choice"; sleep 1 ;;
         esac
