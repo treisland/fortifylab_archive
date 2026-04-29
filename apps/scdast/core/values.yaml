@@ -1,0 +1,936 @@
+---
+#-------------------------------------------------------------------------------
+# RELEASE
+#-------------------------------------------------------------------------------
+
+# -- (string) Overrides the name of this chart.
+# @default -- `.Chart.name`
+nameOverride:
+
+# -- (string) Overrides the fully qualified app name of the release.
+# @default -- `.Release.name`
+fullnameOverride:
+
+# -- list of references to secrets in the same namespace to
+# use for pulling any of the images used by this release.
+# Must be defined if pulling images directly from DockerHub (default)
+imagePullSecrets: []
+
+#-------------------------------------------------------------------------------
+# SCAN CENTRAL DAST
+#-------------------------------------------------------------------------------
+# -- (Debug | Information | Warning | Error) Default Log level.
+# Can be overridden by specific application configurations.
+defaultLogLevel: Information
+
+# -- (pod.annotations) Defines annotations to add to resulting Kubernetes
+# Pod(s). These annotations are added to all Pods deployed in this release.
+commonPodAnnotations: {}
+
+# -- Allows API and GlobalService to obtain the correct Kubernetes roles 
+# required to allow Sensor Auto Scaling/Scan Scaling
+# Note that setting to 'True' enables users of the UI to run arbitary Kubernetes metadata
+# as a job.  Use at own risk!
+allowScanScaling: true
+
+#-------------------------------------------------------------------------------
+# SECRETS
+#-------------------------------------------------------------------------------
+# -- (Opaque) Name of the secret hosting the Service Token.
+# @section -- Required
+serviceTokenSecretName: ""
+# -- (Opaque) Name of the key in the secret hosting the Service Token.
+serviceTokenSecretKey: service-token
+
+# -- (Opaque) Name of the secret hosting the Debricked access token.
+debrickedAccessTokenSecretName: ""
+# -- (Opaque) Name of the key in the secret hosting the Debricked access
+# token.
+debrickedAccessTokenSecretKey: access-token
+
+database:
+  # -- (kubernetes.io/basic-auth) Name of the secret hosting Database Owner
+  # Level Account credentials.
+  standardAccountCredentialsSecret: ""
+
+  # -- (kubernetes.io/basic-auth) Name of the secret hosting Database Owner
+  # Level Account credentials.
+  # @section -- Required
+  dboLevelAccountCredentialsSecret: ""
+
+# -- (kubernetes.io/basic-auth) Name of the secret hosting the SSC Service
+# Account credentials.
+# @section -- Required
+sscServiceAccountSecretName: ""
+
+# -- (kubernetes.io/basic-auth) Name of the secret hosting the LIM Service
+# Account credentials.
+# @section -- Required
+limServiceAccountSecretName: ""
+
+# -- (kubernetes.io/basic-auth) Name of the secret hosting the LIM Default
+# Pool credentials.
+# @section -- Required
+limDefaultPoolSecretName: ""
+
+# -- (kubernetes.io/basic-auth) Name of the secret hosting proxy credentials.
+proxyCredentialsSecretName: ""
+
+# -- Enables name override for the job management role.
+jobmanagementrole:
+  # -- Custom name given to the role
+  nameOverride:
+
+#-------------------------------------------------------------------------------
+# DAST API
+#-------------------------------------------------------------------------------
+api:
+  # -- Custom name to give to the Pod.
+  # NOTE: `-api` will be appended by the release.
+  nameOverride:
+
+  # -- Number of Pod(s) to deploy.
+  replicas: 1
+
+  image:
+    # -- Repository where to pull docker image from.
+    repository: fortifydocker/scancentral-dast-api
+    # -- Version of the docker image to pull in digest format.
+    # Takes precedence over image.tag, if both declared.
+    digest:
+    # -- Version of the docker image to pull.
+    tag: "24.4.ubi.9"
+    # -- Image pull behavior.
+    pullPolicy: IfNotPresent
+
+  # -- (Debug | Information | Warning | Error) Log level.
+  # @default -- See defaultLogLevel
+  logLevel: ""
+
+  certificate:
+  # -- Whether to enable TLS server certificate.  When false, http (plain-text) communication will be used.
+    enabled: true
+    # -- (Opaque) The name of the Secret hosting the server certificate
+    # value.
+    # @section -- Required
+    certificateSecretName: ""
+    # -- (Opaque) The name of the Secret hosting the server certificate password.
+    # @section -- Required
+    certificatePasswordSecretName: ""
+    # -- Name of the key that holds the password for unlocking the certificate file.
+    certificatePasswordSecretKey: password    
+    # -- Name of the key that holds the `.pfx` file with both public and private
+    # keys.
+    pfxCertSecretKey: tls.pfx
+ 
+  # -- (pod.annotations) Defines annotations to add to resulting Kubernetes
+  # Pod(s).
+  podAnnotations: {}
+
+  # -- (pod.labels) Defines labels to add to resulting Kubernetes Pod(s).
+  podLabels: {}
+
+  # -- (pod.securityContext) Defines security context configurations to add to
+  # resulting Kubernetes Pod(s).
+  podSecurityContext: {}
+
+  # -- (pod.containers[*].securityContext) Defines security context
+  # configurations to add to resulting API container.
+  containerSecurityContext: {}
+
+  # -- Defines any additional environment variables to
+  # add to the resulting pod.
+  additionalEnvironmentVariables: []
+
+  # Service configurations for the API Pod
+  service:
+    # -- Service type to use.
+    type: ClusterIP
+    # -- Port to expose for HTTPS calls.
+    port: 34785
+
+  resources:
+    requests:
+      # -- Memory that K8s sets aside and guarantees availability
+      memory: 5Gi
+      # -- Compute that K8s sets aside and guarantees
+      cpu: "4"
+    limits:
+      # -- Maximum memory that can be consumed prior to pod eviction.   
+      memory: 10Gi
+      # -- Maximum compute of pod.  MUST match value used for request.
+      cpu: "4"
+
+  # -- (pod.nodeSelector) Defines Node selection constraint configurations to
+  # add to resulting Kubernetes Pod(s).
+  # @default -- `kubernetes.io/os: linux`
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # -- (pod.affinity) Defines Node Affinity configurations to add to resulting
+  # Kubernetes Pod(s).
+  affinity: {}
+
+  # -- (pod.tolerations) Defines Toleration configurations to add to resulting
+  # Kubernetes Pod(s).
+  tolerations: []
+
+  ingress:
+    # -- Whether to enable Ingress.
+    enabled: false
+    # -- Ingress resource class name.
+    className: ""
+    # -- (ingress.annotations) Annotations to add to resulting resource.
+    annotations: {}
+    # -- Defines TLS configurations.
+    # The default shows example configuration values,
+    # actual default is `[]`.
+    # @default -- `[{"hosts":["some-host"],"secretName":"some-name"}]`
+    tls: []
+    hosts:
+      # Hostname to accept requests through.
+      - host: dast-api.local
+        paths:
+          # -- Path to accept requests through.
+          - path: /
+            # -- PathType.
+            pathType: Prefix
+
+#-------------------------------------------------------------------------------
+# GLOBAL SERVICE
+#-------------------------------------------------------------------------------
+globalService:
+  # -- Custom name to give to the Pod.
+  # NOTE: `-globalservice` will be appended by the release.
+  nameOverride:
+
+  # -- Number of Pod(s) to deploy.  Only one replica is supported at this time.
+  replicas: 1
+
+  image:
+    # -- Repository where to pull docker image from.
+    repository: fortifydocker/scancentral-dast-globalservice
+    # -- Version of the docker image to pull in digest format.
+    # Takes precedence over image.tag, if both declared.
+    digest:
+    # -- Version of the docker image to pull.
+    tag: "24.4.ubi.9"
+    # -- Image pull behavior.
+    pullPolicy: IfNotPresent
+
+  # -- (Debug | Information | Warning | Error) Log level.
+  # @default -- See defaultLogLevel
+  logLevel: ""
+
+  # -- container port used for health checks
+  healthCheckPort: 8080
+
+  # -- (pod.annotations) Defines annotations to add to resulting Kubernetes
+  # Pod(s).
+  podAnnotations: {}
+
+  # -- (pod.labels) Defines labels to add to resulting Kubernetes Pod(s).
+  podLabels: {}
+
+  # -- (pod.securityContext) Defines security context configurations to add to
+  # resulting Kubernetes Pod(s).
+  podSecurityContext: {}
+
+  # -- (pod.containers[*].securityContext) Defines security context
+  # configurations to add to resulting API container.
+  containerSecurityContext: {}
+
+  # -- Defines any additional environment variables to
+  # add to the resulting pod.
+  additionalEnvironmentVariables: []
+
+  resources:
+    requests:
+      # -- Memory that K8s sets aside and guarantees availability
+      memory: 2Gi
+      # -- Compute that K8s sets aside and guarantees availability
+      cpu: "4"
+    limits:
+      # -- Maximum memory that can be consumed prior to pod eviction.
+      memory: 4Gi
+      # -- Maximum compute of pod.  MUST match value used for request.
+      cpu: "4"
+
+  # -- (pod.nodeSelector) Defines Node selection constraint configurations to add to
+  # resulting Kubernetes Pod(s).
+  # @default -- `kubernetes.io/os: linux`
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # -- (pod.affinity) Defines Node Affinity configurations to add to resulting
+  # Kubernetes Pod(s).
+  affinity: {}
+
+  # -- (pod.tolerations) Defines Toleration configurations to add to resulting
+  # Kubernetes Pod(s).
+  tolerations: []
+
+#-------------------------------------------------------------------------------
+# UTILITY SERVICE
+#-------------------------------------------------------------------------------
+utilityService:
+  # -- Custom name to give to the Pod.
+  # NOTE: `-utilityservice` will be appended by the release.
+  nameOverride:
+
+  # -- Number of Pod(s) to deploy.  Values greater than '1' are not supported.
+  replicas: 1
+
+  # Image configurations for the Utility Service container
+  image:
+    # -- Repository where to pull docker image from.
+    repository: fortifydocker/dast-scanner
+    # -- Version of the docker image to pull in digest format.
+    # Takes precedence over image.tag, if both declared.
+    digest:
+    # -- Version of the docker image to pull.
+    tag: "24.4.ubi.9"
+    # -- Image pull behavior.
+    pullPolicy: IfNotPresent
+
+  # -- (Debug | Information | Warning | Error) Log level.
+  # @default -- See defaultLogLevel
+  logLevel: ""
+
+  # -- container port used for health checks
+  healthCheckPort: 8080
+
+  certificate:
+  # -- Whether to enable TLS server certificate.  When false, http (plain-text) communication will be used.
+    enabled: true
+    # -- (Opaque) The name of the Secret hosting the server certificate
+    # value.
+    # @section -- Required
+    certificateSecretName: ""
+    # -- (Opaque) The name of the Secret hosting the server certificate password.
+    # @section -- Required
+    certificatePasswordSecretName: ""
+    # -- Name of the key that holds the password for unlocking the certificate file.
+    certificatePasswordSecretKey: password    
+    # -- Name of the key that holds the `.pfx` file with both public and private
+    # keys.
+    pfxCertSecretKey: tls.pfx
+
+  datastore:
+    # Image configurations for the Scanner datastore container.
+    image:
+      # -- Repository where to pull docker image from.
+      repository: mcr.microsoft.com/mssql/server
+      # -- Version of the docker image to pull in digest format.
+      # Takes precedence over image.tag, if both declared.
+      digest:
+      # -- Version of the docker image to pull.
+      tag: 2022-latest
+      # -- Image pull behavior.
+      pullPolicy: IfNotPresent
+    # -- Defines any additional environment variables to
+    # add to the resulting pod.
+    additionalEnvironmentVariables: []          
+    resources:
+      requests:
+        # -- Memory that K8s sets aside and guarantees availability
+        memory: 4Gi
+        # -- Compute that K8s sets aside and guarantees availability
+        cpu: "1"
+        # -- Guaranteed amount of storage space allocated to datastore.
+        ephemeral-storage: "1500Mi"
+      limits:
+        # -- Maximum memory that can be consumed prior to pod eviction. 
+        memory: 4Gi
+        # -- Maximum compute of pod.  MUST match value used for request.
+        cpu: "1"    
+        # -- Maximum amount of storage space available to datastore before pod is evicted.
+        ephemeral-storage: "1500Mi"
+    mssqlStorage:
+      # -- (String) Sets the maximum size of MSSQL's internal storage. 
+      sizeLimit: "1500Mi"        
+
+  # -- (pod.annotations) Defines annotations to add to resulting Kubernetes
+  # Pod(s).
+  podAnnotations: {}
+
+  # -- (pod.labels) Defines labels to add to resulting Kubernetes Pod(s).
+  podLabels: {}
+
+  # -- (pod.securityContext) Defines security context configurations to add to
+  # resulting Kubernetes Pod(s).
+  podSecurityContext: {}
+
+  # -- (pod.containers[*].securityContext) Defines security context
+  # configurations to add to resulting API container.
+  containerSecurityContext: {}
+
+  # -- Defines any additional environment variables to
+  # add to the resulting pod.
+  additionalEnvironmentVariables: []
+
+  service:
+    # -- Service type to use.
+    type: ClusterIP
+    # -- Port to expose for HTTPS calls.
+    port: 48756
+
+  resources:
+    requests:
+      # -- Memory that K8s sets aside and guarantees availability
+      memory: 16Gi
+      # -- Compute that K8s sets aside and guarantees availability
+      cpu: "4"
+      # -- Guaranteed amount of storage space allocated to datastore.
+      ephemeral-storage: "30Gi"
+    limits:
+      # -- Maximum memory that can be consumed prior to pod eviction.
+      memory: 32Gi
+      # -- Maximum compute of pod.  MUST match value used for request.
+      cpu: "4"
+      # -- Maximum amount of storage space available to datastore before pod is evicted.
+      ephemeral-storage: "30Gi"
+
+  scandataStorage:
+    # -- (String) Sets the maximum amount of temporary data that can be stored for a scan.   Must be less than or equal to the amount of ephemeral storage defined. 
+    sizeLimit: 15Gi      
+
+  # -- (pod.nodeSelector) Defines Node selection constraint configurations to add to
+  # resulting Kubernetes Pod(s).
+  # @default -- `kubernetes.io/os: linux`
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # -- (pod.affinity) Defines Node Affinity configurations to add to resulting
+  # Kubernetes Pod(s).
+  affinity: {}
+
+  # -- (pod.tolerations) Defines Toleration configurations to add to resulting
+  # Kubernetes Pod(s).
+  tolerations: []
+
+#-------------------------------------------------------------------------------
+# UPGRADE JOB
+#-------------------------------------------------------------------------------
+upgradejob:
+  # -- Whether to run upgrade flow for creation, migration or updates on the
+  # backend databases on every helm upgrade.
+  run: true
+
+  # -- Custom name to give to the Pod(s).
+  # NOTE: `-upgrade-job` will be appended by the release.
+  nameOverride:
+
+  # Image configurations for the Upgrade Job container
+  image:
+    # -- Repository where to pull docker image from.
+    repository: fortifydocker/scancentral-dast-config
+    # -- Version of the docker image to pull in digest format.
+    # Takes precedence over image.tag, if both declared.
+    digest:
+    # -- Version of the docker image to pull.
+    tag: "24.4.ubi.9"
+    # -- Image pull behavior.
+    pullPolicy: IfNotPresent
+
+  # Defines configurations for the Upgrade Job Preparation container
+  prepJob:
+    # Image configurations for the Upgrade Job container
+    image:
+      # -- Repository where to pull docker image from.
+      repository: bitnami/kubectl
+      # -- Version of the docker image to pull in digest format.
+      # Takes precedence over image.tag, if both declared.
+      digest:
+      # -- Version of the docker image to pull.
+      tag: "1.28"
+      # -- Image pull behavior.
+      pullPolicy: IfNotPresent
+
+    resources:
+      requests:
+        # -- Memory that K8s sets aside and guarantees availability
+        memory: 1Gi
+        # -- Compute that K8s sets aside and guarantees availability
+        cpu: ".5"
+      limits:
+        # -- Maximum memory that can be consumed prior to pod eviction. 
+        memory: 1Gi
+        # -- Maximum compute of pod.  MUST match value used for request.
+        cpu: ".5"
+
+  # -- (pod.annotations) Defines annotations to add to resulting Kubernetes
+  # Pod(s).
+  podAnnotations: {}
+
+  # -- (pod.labels) Defines labels to add to resulting Kubernetes Pod(s).
+  podLabels: {}
+
+  # -- (pod.securityContext) Defines security context configurations to add to
+  # resulting Kubernetes Pod(s).
+  podSecurityContext: {}
+
+  # -- (pod.containers[*].securityContext) Defines security context
+  # configurations to add to resulting API container.
+  containerSecurityContext: {}
+
+  # -- Defines any additional environment variables to
+  # add to the resulting pod.
+  additionalEnvironmentVariables: []
+
+  resources:
+    requests:
+      # -- Memory that K8s sets aside and guarantees availability
+      memory: 4Gi
+      # -- Compute that K8s sets aside and guarantees availability
+      cpu: "4"
+    limits:
+      # -- Maximum memory that can be consumed prior to pod eviction.
+      memory: 4Gi
+      # -- Maximum compute of pod.  MUST match value used for request.
+      cpu: "4"
+
+  # -- (pod.nodeSelector) Defines Node selection constraint configurations to add to
+  # resulting Kubernetes Pod(s).
+  # @default -- `kubernetes.io/os: linux`
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # -- (pod.affinity) Defines Node Affinity configurations to add to resulting
+  # Kubernetes Pod(s).
+  affinity: {}
+
+  # -- (pod.tolerations) Defines Toleration configurations to add to resulting
+  # Kubernetes Pod(s).
+  tolerations: []
+
+#-------------------------------------------------------------------------------
+# APP SETTINGS
+#-------------------------------------------------------------------------------
+# 
+appsettings:
+  # Refer to the Fortify ScanCentral DAST Configuration and Usage Guide for
+  # more details. Environment variable placeholders may be used in the format
+  # ${ENVIRONMENT_VARIABLE_NAME}. Any environment variable placeholder will be
+  # replaced during runtime.
+  databaseSettings:
+    # -- (SQLServer | PostgreSQL | AzureSQLServer | AzurePostgreSQL | AmazonRdsPostgreSQL)
+    # Indicates the type of database that will be used.
+    databaseProvider: SQLServer
+    # -- Name of the database server. 
+    # @section -- Required
+    server: ""
+    # -- Name of the database instance
+    database: DAST
+    # Defines Configurations for the dbo level database account.
+    # NOTE: Not required if the database already exists and migration scripts
+    # have already been applied.
+    dboLevelDatabaseAccount:
+      # @ignored (ENVIRONMENT_VARIABLE) Username of the Database Owner Level Account.
+      username: ${DATABASE_OWNER_USERNAME}
+      # @ignored (ENVIRONMENT_VARIABLE) Password of the Database Owner Level Account.
+      password: ${DATABASE_OWNER_PASSWORD}
+      # -- Whether to use Windows Authentication
+      useWindowsAuthentication: false
+      # -- ([]string) List of additional connection properties to append to the
+      # database connection string.
+      # @default "someKey=SomeValue"
+      additionalConnectionProperties:
+    # Defines Configurations for the standard database account.
+    standardDatabaseAccount:
+      # @ignored (ENVIRONMENT_VARIABLE) Username of the Standard Level Account.
+      username: ${STANDARD_DB_USER_USERNAME}
+      # @ignored (ENVIRONMENT_VARIABLE) Password of the Standard Level Account.
+      password: ${STANDARD_DB_USER_PASSWORD}
+      # -- Whether to create a login for this account.
+      createLogin: false
+      # -- ([]string) List of additional connection properties to append to the
+      # database connection string.
+      # @default "someKey=SomeValue"
+      additionalConnectionProperties:
+  # -- Whether to retain completed scans.
+  retainCompletedScans: false
+  # -- Whether to disable advanced scan prioritization.
+  disableAdvancedScanPrioritization: false
+  # -- Whether to enable restricted scan settings.
+  enableRestrictedScanSettings: false
+  # @ignored (ENVIRONMENT_VARIABLE) Service Token used to access DAST services.
+  serviceToken: ${SCANCENTRAL_DAST_SERVICE_TOKEN}
+  # Defines Smart Update configurations.
+  smartUpdateSettings:
+    # -- URL used for general Smart Update.
+    smartUpdateUrl: https://smartupdate.fortify.microfocus.com/
+    # -- URL used for licensing Smart Update.
+    licensingUrl: https://licenseservice.fortify.microfocus.com/
+  # Defines SSC configurations.
+  sSCSettings:
+    # -- Root URL for connecting to SSC
+    # @section -- Required
+    sSCRootUrl: http://ssc
+    # @ignored  (ENVIRONMENT_VARIABLE) Username of the SSC Service Account.
+    serviceAccountUserName: ${SSC_SERVICE_ACCOUNT_USERNAME}
+    # @ignored  (ENVIRONMENT_VARIABLE) Password of the SSC Service Account.
+    serviceAccountPassword: ${SSC_SERVICE_ACCOUNT_PASSWORD}
+  # Defines ScanCentral DAST API configurations.
+  dASTApiSettings:
+    # -- (int) Container port to use.
+    containerListenPort: 1444
+    # -- (int) Container IP to listen on.
+    containerListenIPAddress: 0.0.0.0
+    # @ignored ScanCentral DAST API Root URL
+    rootUrl: ${SCANCENTRAL_DAST_API_SERVICE_URL}
+    # -- Whether to disable CORS Origins.
+    disableCorsOrigins: false
+    # List of CORS origins to enable.
+    # @ignored NOTE: List cannot be empty if disableCorsOrigins is false.  Do not override values eclosed in ${}
+    corsOrigins:
+      - ${SSC_ROOT_URL}
+      - ${SCANCENTRAL_DAST_API_SERVICE_URL}
+  # Defines ScanCentral DAST API SSL Configurations
+  dastApiSSLSettings:
+    # @ignored (GenerateCertificate | UseExistingCertificate | NoSSL) Which SSL type
+    # to use.
+    sSLPreferenceType: ${DAST_API_SSL_PREFERENCE_TYPE}
+    # @ignored Defines configurations for a generated certificate.
+    # Required if sslPreferenceType is GenerateCertificate.
+    # generateCertificateModel Should not be used with helm chart, but recorded here because configuration tool will fail otherwise.
+    generateCertificateModel:
+      # Certificate Host.
+      host: dast-api
+      # @ignored Certificate password.
+      password: ${SCANCENTRAL_DAST_API_CERTIFICATE_PASSWORD}
+      # Certificate validity period in days.
+      validity: 1000
+      # Certificate Location (City).
+      location: ""
+      # Email to attach to generated certificate.
+      email: email@domain.com
+      # Directory where to mount Certificate in the pod.
+      certificateDirectory: /app/certificates/dastapi
+    # @ignored Defines configurations for pulling an existing certificate.
+    existingCertificateModel:
+      # @ignored Directory where to mount the certificate in the pod.
+      certificateFullPath: ${DAST_API_CERTIFICATE_PATH}
+      # @ignored Certificate password.
+      password: ${SCANCENTRAL_DAST_API_CERTIFICATE_PASSWORD}
+  # Defines configurations for LIM connection.
+  lIMSettings:
+    # -- URL to reach LIM.
+    # @section -- Required
+    limUrl: ""
+    # @ignored (ENVIRONMENT_VARIABLE) Username of the LIM Service Account.
+    serviceAccountUserName: ${LIM_SERVICE_ACCOUNT_USERNAME}
+    # @ignored (ENVIRONMENT_VARIABLE) Password of the LIM Service Account.
+    serviceAccountPassword: ${LIM_SERVICE_ACCOUNT_PASSWORD}
+    # @ignored (ENVIRONMENT_VARIABLE) Username of the default LIM Pool.
+    defaultLimPoolName: ${LIM_DEFAULT_POOL_USERNAME}
+    # @ignored (ENVIRONMENT_VARIABLE) Password of the default LIM Pool.
+    defaultLimPoolPassword: ${LIM_DEFAULT_POOL_PASSWORD}
+    # @ignored Whether to use LIM REST API.
+    useLimRestApi: true
+  # Defines Utility Service configurations.
+  utilityWorkerServiceSettings:
+    # -- (int) Container port to use.
+    containerListenPort: 1445
+    # @ignored  (int) Container IP to listen on.
+    containerListenIPAddress: 0.0.0.0  
+    # @ignored Root Url used to reach the UtilityService Service.
+    rootUrl: ${SCANCENTRAL_DAST_UTILITYSERVICE_SERVICE_URL}
+  # Defines UtilityService SSL Configurations
+  utilityWorkerServiceSSLSettings:
+    # -- (int) Container port to use.
+    containerListenPort: 1444
+    # @ignored (int) Container IP to listen on.
+    containerListenIPAddress: 0.0.0.0
+    # @ignored (GenerateCertificate | UseExistingCertificate | NoSSL) Which SSL type
+    # to use.
+    sSLPreferenceType: ${DAST_UTILITYSERVICE_SSL_PREFERENCE_TYPE}
+    # @ignored Defines configurations for a generated certificate.
+    # Required if sslPreferenceType is GenerateCertificate.
+    generateCertificateModel:
+      # -- Certificate Host.
+      host: dast-api
+      # Certificate password.
+      password: ${SCANCENTRAL_DAST_UTILITYSERVICE_CERTIFICATE_PASSWORD}
+      # -- Certificate validity period in days.
+      validity: 1000
+      # -- Certificate Location (City).
+      location: ""
+      # -- Email to attach to generated certificate.
+      email: email@domain.com
+      # -- Directory where to mount Certificate in the pod.
+      certificateDirectory: /app/certificates/utilityservice
+    # @ignored Defines configurations for pulling an existing certificate.
+    existingCertificateModel:
+      # Directory where to mount the certificate in the pod.
+      certificateFullPath: ${DAST_UTILITYSERVICE_CERTIFICATE_PATH}
+      # Certificate password.
+      password: ${SCANCENTRAL_DAST_UTILITYSERVICE_CERTIFICATE_PASSWORD}
+  # Defines general environment ScanCentral DAST Environment configurations.
+  environmentSettings:
+    # -- Whether to allow non-trusted server certificate.
+    allowNonTrustedServerCertificate: false
+    # @ignored Defines proxy configurations.
+    proxySettings:
+      # -- Whether to enable a proxy.
+      useProxy: false
+      # -- Proxy server address with `:PORT`.
+      proxyAddress: ""
+      # (ENVIRONMENT_VARIABLE) Proxy server username.
+      proxyUserName: ${SCANCENTRAL_DAST_PROXY_USERNAME}
+      # (ENVIRONMENT_VARIABLE) Proxy server password.
+      proxyPassword: ${SCANCENTRAL_DAST_PROXY_PASSWORD}
+      # -- (comma,separated,list) List of Proxy bypass hosts.
+      proxyBypassList: dast-api,dast-utility-service,lim-server-instance,ssc-instance
+  # -- Whether to apply SecureBase.
+  applySecureBase: true
+  # -- Path to SecureBase definitions. If not blank, you must use a container instance that contains the "DefaultData.zip file" (/app/DefaultData.zip)
+  # WARNING: LIM must be up and fully licensed prior to installing this helm chart if the value is blank.
+  secureBasePath: 
+  # @ignored Define Debricked configurations.
+  debrickedSettings:
+    # The access token obtained from Debricked.
+    accessToken: ${SCANCENTRAL_DAST_DEBRICKED_ACCESS_TOKEN}
+  # Defines Fortify Connect Server configurations.
+  fortifyConnectServerSettings:
+    # -- Whether to disable Fortify Connect Server.
+    disableFortifyConnectServer: true
+    # @ignored Internal Fortify Connect Server host.
+    internalHost: ${SCANCENTRAL_DAST_FORTIFY_CONNECT_SERVER_INTERNAL_SERVICE}
+    # -- Port used by Fortify Connect Server internally.
+    internalPort: 33467
+    # -- FortifyConnectServer external host advertised at ScanCentral DAST UI.  Replace with a valid external host name.
+    externalHost: "invalidHost.replaceme.org"
+    # -- Port used by Fortify Connect Server externally.
+    externalPort: 2022
+    # @ignored (ENVIRONMENT_VARIABLE) Fortify Connect Server public key.
+    # Required if Fortify Connect enabled.
+    publicKeyContents: ${FORTIFY_CONNECT_SERVER_PUBLIC_KEY}
+    # @ignored (ENVIRONMENT_VARIABLE) Fortify Connect Server private key.
+    # Required if Fortify Connect enabled.
+    privateKeyContents: ${FORTIFY_CONNECT_SERVER_PRIVATE_KEY}
+
+#-------------------------------------------------------------------------------
+# TWO FACTOR AUTHENTICATION
+#-------------------------------------------------------------------------------
+# Defines configurations for the Two Factor Authentication Pod
+twofactorauth:
+  # -- Custom name to give to the Pod.
+  # NOTE: `-2fa` will be added by the release.
+  nameOverride:
+
+  # -- Number of Pod(s) to deploy.
+  replicas: 1
+
+  # Image configurations for the Two Factor Authentication container
+  image:
+    # -- Repository where to pull docker image from.
+    repository: fortifydocker/fortify-2fa
+    # -- Version of the docker image to pull in digest format.
+    # Takes precedence over image.tag, if both declared.
+    digest:
+    # -- Version of the docker image to pull.
+    tag: "24.4.ubi.9"
+    # -- Image pull behavior.
+    pullPolicy: IfNotPresent
+
+  # -- Name of the Secret hosting the Two Factor Authentication master token.
+  # NOTE: Token should be a minimum of 36 characters.
+  masterTokenSecretName: ""
+
+  # -- Name of the key in the Secret hosting the Two Factor Authentication
+  # master token.
+  masterTokenSecretKey: master-token
+
+  # -- (pod.annotations) Defines annotations to add to resulting Kubernetes
+  # Pod(s).
+  podAnnotations: {}
+
+  # -- (pod.labels) Defines labels to add to resulting Kubernetes Pod(s).
+  podLabels: {}
+
+  # -- (pod.securityContext) Defines security context configurations to add to
+  # resulting Kubernetes Pod(s).
+  podSecurityContext: {}
+
+  # -- (pod.containers[*].securityContext) Defines security context
+  # configurations to add to resulting API container.
+  containerSecurityContext: {}
+
+  # -- Defines any additional environment variables to
+  # add to the resulting pod.
+  additionalEnvironmentVariables: []
+
+  # -- (int) Container port used by twofactor auth. 
+  containerPort: 1443  # 
+  # Service configurations for the Two Factor Authentication Pod
+  service:
+    # -- Service type to use.
+    type: ClusterIP
+    # -- Port to expose for HTTPS calls.
+    port: 59752
+
+  resources:
+    requests:
+      # -- Memory that K8s sets aside and guarantees availability
+      memory: 16Gi
+      # -- Compute that K8s sets aside and guarantees availability
+      cpu: "16"
+    limits:
+      # -- Maximum memory that can be consumed prior to pod eviction.
+      memory: 64Gi
+      # -- Maximum compute of pod.  MUST match value used for request.
+      cpu: "16"
+
+  # -- (pod.nodeSelector) Defines Node selection constraint configurations to add to
+  # resulting Kubernetes Pod(s).
+  # @default -- `kubernetes.io/os: linux`
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # -- (pod.affinity) Defines Node Affinity configurations to add to resulting
+  # Kubernetes Pod(s).
+  affinity: {}
+
+  # -- (pod.tolerations) Defines Toleration configurations to add to resulting
+  # Kubernetes Pod(s).
+  tolerations: []
+
+  # Ingress configurations for the Two Factor Authentication Pod
+  ingress:
+    # -- Whether to enable Ingress.
+    enabled: false
+    # -- Ingress resource class name.
+    className: ""
+    # -- (ingress.annotations) Annotations to add to resulting resource.
+    annotations: {}
+    # -- Defines TLS configurations.
+    # The default shows example configuration values,
+    # actual default is `[]`.
+    # @default -- `[{"hosts":["some-host"],"secretName":"some-name"}]`
+    tls: []
+    # Defines hosts configurations.
+    # @default -- see below
+    hosts:
+      # Hostname to accept requests through.
+      - host: dast-2fa.local
+        # Path configurations.
+        paths:
+          # -- Path to accept requests through.
+          - path: /
+            # -- PathType.
+            pathType: Prefix
+
+#-------------------------------------------------------------------------------
+# FORTIFY CONNECT SERVER
+#-------------------------------------------------------------------------------
+# Defines configurations for the Fortify Connect Server Pod
+fortifyConnectServer:
+  # -- Custom name to give to the Pod.
+  # NOTE: `-globalservice` will be appended by the release.
+  nameOverride:
+
+  # -- Number of Pod(s) to deploy.
+  replicas: 1
+
+  # Image configurations for the Fortify Connect Server container
+  image:
+    # -- Repository where to pull docker image from.
+    repository: fortifydocker/scancentral-dast-fortifyconnect
+    # -- Version of the docker image to pull in digest format.
+    # Takes precedence over image.tag, if both declared.
+    digest:
+    # -- Version of the docker image to pull.
+    tag: "24.4.ubi.9"
+    # -- Image pull behavior.
+    pullPolicy: IfNotPresent
+
+  # -- Name of the Secret hosting SSH Key data.
+  sshKeySecretName: ""
+  # -- Name of the key in the Secret hosting SSH Public Key data.
+  sshPublicKeySecretKey: public.key
+  # -- Name of the key in the Secret hosting SSH Private Key data.
+  sshPrivateKeySecretKey: private.key
+
+  # -- (Chart | Default) Whether to use the default container sshd_config
+  # template or the one provided by the Helm Chart.
+  defaultContainerSshdConfigTemplate: Chart
+
+  # -- (ConfigMap) Name of the ConfigMap hosting a custom sshdConfig template.
+  # If not specified and defaultContainerSshdConfigTemplate is set to 'Chart',
+  # release will use the one provided by the Helm Chart.
+  sshdConfigConfigMapName: ""
+
+  # -- Name of the key in the  ConfigMap hosting a custom sshdConfig template.
+  sshdConfigConfigMapKey: sshd-config-template
+
+  # Service configurations for the Fortify Connect Server Pod.
+  service:
+    # -- (ClusterIP | NodePort | LoadBalancer | ExternalName) Service type.
+    type: LoadBalancer
+    # -- Required if service type is LoadBalancer.
+    loadBalancerClass:
+    # -- Port to expose on the Node. Required if service type is NodePort.
+    nodePort:
+    # -- (service.annotations) Defines annotations to add to resulting
+    # Kubernetes resource.
+    annotations: {}
+
+  # -- (pod.annotations) Defines annotations to add to resulting Kubernetes
+  # Pod(s).
+  podAnnotations: {}
+
+  # -- (pod.labels) Defines labels to add to resulting Kubernetes Pod(s).
+  podLabels: {}
+
+  # -- (pod.securityContext) Defines security context configurations to add to
+  # resulting Kubernetes Pod(s).
+  podSecurityContext: {}
+
+  # -- (pod.containers[*].securityContext) Defines security context
+  # configurations to add to resulting API container.
+  containerSecurityContext: {}
+
+  # -- Defines any additional environment variables to
+  # add to the resulting pod.
+  additionalEnvironmentVariables: []
+
+  resources:
+    requests:
+      # -- Memory that K8s sets aside and guarantees availability
+      memory: 4Gi
+      # -- Compute that K8s sets aside and guarantees availability
+      cpu: "4"
+    limits:
+      # -- Maximum memory that can be consumed prior to pod eviction.
+      memory: 4Gi
+      # -- Maximum compute of pod.  MUST match value used for request.
+      cpu: "4"
+
+  # -- (pod.nodeSelector) Defines Node selection constraint configurations to add to
+  # resulting Kubernetes Pod(s).
+  # @default -- `kubernetes.io/os: linux`
+  nodeSelector:
+    kubernetes.io/os: linux
+
+  # -- (pod.affinity) Defines Node Affinity configurations to add to resulting
+  # Kubernetes Pod(s).
+  affinity: {}
+
+  # -- (pod.tolerations) Defines Toleration configurations to add to resulting
+  # Kubernetes Pod(s).
+  tolerations: []
+
+#-------------------------------------------------------------------------------
+# CUSTOM RESOURCES
+#-------------------------------------------------------------------------------
+
+# -- Custom map that lets you define Kubernetes resources you want installed and configured as part of this chart.
+# If you provide any resources, be sure to provide them as
+# quoted using `|`, and set `customResources.enabled` to `true`.
+customResources:
+  # -- Whether to enable custom resource creation.
+  enabled: false
+  # -- (Kubernetes YAML) Custom resources to generate.
+  resources: {}
+

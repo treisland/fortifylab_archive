@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ssc-ingress
+  namespace: fortify
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "1G"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  ingressClassName: public
+  tls:
+  - hosts:
+    - ssc.fortifydemo.com
+    secretName: tls
+
+  rules:
+  - host: ssc.fortifydemo.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ssc-service
+            port:
+              number: 443

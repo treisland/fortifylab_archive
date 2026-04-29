@@ -1,0 +1,11 @@
+scannerPoolID: "1"
+
+resources:
+  requests:
+    cpu: null
+    memory: null
+  limits:
+    cpu: null
+    memory: null
+wise:
+  resources: null

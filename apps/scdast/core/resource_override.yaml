@@ -1,0 +1,30 @@
+api:
+  resources: null
+
+globalService:
+  resources: null
+
+utilityService:
+  resources: null
+
+  datastore:
+    resources:
+      requests:
+        cpu: "1"
+        memory: "1Gi"
+      limits:
+        cpu: "2"
+        memory: "2Gi"
+
+
+twofactorauth:
+  resources: null
+
+fortifyConnectServer:
+  resources: null
+
+upgradejob:
+  resources: null
+  prepJob:
+    resources: null
+

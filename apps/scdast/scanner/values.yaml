@@ -1,0 +1,205 @@
+---
+#-------------------------------------------------------------------------------
+# RELEASE
+#-------------------------------------------------------------------------------
+# -- (string) Overrides the name of this chart.
+# @default -- `.Chart.name`
+nameOverride:
+
+# -- (string) Overrides the fully qualified app name of the release.
+# @default -- `.Release.name`
+fullnameOverride:
+
+#-------------------------------------------------------------------------------
+# DEPENDENCIES
+#-------------------------------------------------------------------------------
+
+# -- URL of the ScanCentral DAST API service . Used to reach ScanCentral DAST API over
+# HTTP/HTTPS.  To find out how to retrieve this value, run 'helm get notes <name of scancentral-dast-core release>'
+dastApiServiceURL: ""
+
+# -- container port used for health checks
+healthCheckPort: 8080
+
+#-------------------------------------------------------------------------------
+# SCANNER
+#-------------------------------------------------------------------------------
+# -- Number of Pod(s) to deploy.
+replicas: 1
+
+# Image configurations for the Scanner container.
+image:
+  # -- Repository where to pull docker image from.
+  repository: fortifydocker/dast-scanner
+  # -- Version of the docker image to pull in digest format.
+  # Takes precedence over image.tag, if both declared.
+  digest:
+  # -- Version of the docker image to pull.
+  tag: "24.4.ubi.9"
+  # -- Image pull behavior.
+  pullPolicy: IfNotPresent
+
+# -- List of references to secrets in the same namespace to
+# use for pulling any of the images used by this release.
+imagePullSecrets: []
+
+# -- Scanner pool ID.
+scannerPoolID: "0"
+
+# Scanner datastore configurations.
+datastore:
+  # Image configurations for the Scanner datastore container.
+  image:
+    # -- Repository where to pull docker image from.
+    repository: mcr.microsoft.com/mssql/server
+    # -- Version of the docker image to pull in digest format.
+    # Takes precedence over image.tag, if both declared.
+    digest:
+    # -- Version of the docker image to pull.
+    tag: "2022-latest"
+    # -- Image pull behavior.
+    pullPolicy: IfNotPresent
+  # -- Defines any additional environment variables to
+  # add to the resulting pod.
+  additionalEnvironmentVariables: []            
+  resources:
+    requests:
+      # -- Memory that K8s sets aside and guarantees availability
+      memory: "4Gi"
+      # -- Compute that K8s sets aside and guarantees availability
+      cpu: "1"
+      # -- Guaranteed amount of storage space allocated to datastore.
+      ephemeral-storage: "1500Mi"
+    limits:
+      # -- Maximum memory that can be consumed prior to pod eviction. 
+      memory: "4Gi"
+      # -- Maximum compute of pod.  MUST match value used for request.
+      cpu: "1"
+      # -- Maximum amount of storage space available to datastore before pod is evicted.
+      ephemeral-storage: "1500Mi"
+  mssqlStorage:
+    # -- (String) Sets the maximum size of MSSQL's internal storage.   
+    sizeLimit: "1500Mi"
+
+# Scanner wise configurations.
+wise:
+  # Image configurations for the Scanner wise container.
+  image:
+    # -- Repository where to pull docker image from.
+    repository: fortifydocker/wise
+    # -- Version of the docker image to pull in digest format.
+    # Takes precedence over image.tag, if both declared.
+    digest:
+    # -- Version of the docker image to pull.
+    tag: "24.4.ubi.9"
+    # -- Image pull behavior.
+    pullPolicy: IfNotPresent
+  # -- Defines any additional environment variables to
+  # add to the resulting pod.
+  additionalEnvironmentVariables: []        
+  resources:
+    requests:
+      # -- Memory that K8s sets aside and guarantees availability
+      memory: 16Gi
+      # -- Compute that K8s sets aside and guarantees availability
+      cpu: "8"
+    limits:
+      # -- Maximum memory that can be consumed prior to pod eviction.
+      memory: 64Gi
+      # -- Maximum compute of pod.  MUST match value used for request.
+      cpu: "8"
+
+# -- (Opaque) Name of the Secret hosting the Service Token.
+serviceTokenSecretName: ""
+
+# -- Name of the Key in the Secret hosting the Service Token.
+serviceTokenSecretKey: service-token
+
+# -- ScannerDescription to add to Scanner container environment.
+scannerDescription: ""
+
+# -- ScannerType to add to Scanner container environment.
+scannerType: Fixed
+
+# -- Whether to retain completed scans.
+retainCompletedScans: false
+
+# -- Whether to disable advanced scan prioritization.
+disableAdvancedScanPrioritization: false
+
+# -- Whether to enable restricted scan settings.
+enableRestrictedScanSettings: false
+
+# -- Whether to allow non-trusted Server certificate.
+# NOTE: If Fortify Connect is in use, this must be set to `true`
+allowNonTrustedServerCertificate: false
+
+# -- (pod.annotations) Defines annotations to add to resulting Kubernetes
+# Pod(s).
+podAnnotations: {}
+
+# -- (pod.labels) Defines labels to add to resulting Kubernetes Pod(s).
+podLabels: {}
+
+# -- (pod.securityContext) Defines security context configurations to add to
+# resulting Kubernetes Pod(s).
+podSecurityContext: {}
+
+# -- (pod.containers[*].securityContext) Defines security context
+# configurations to add to resulting API container.
+containerSecurityContext: {}
+
+# -- Defines any additional environment variables to
+# add to the resulting pod.
+additionalEnvironmentVariables: []
+
+resources:
+  requests:
+    memory: 16Gi
+    cpu: "7"
+    # -- Guaranteed amount of storage space allocated to datastore.
+    ephemeral-storage: "30Gi"
+  limits:
+    # -- Maximum memory that can be consumed prior to pod eviction. 
+    memory: 32Gi
+    # -- Maximum compute of pod.  MUST match value used for request.
+    cpu: "7"
+    # -- Maximum amount of storage space available to datastore before pod is evicted.
+    ephemeral-storage: "30Gi"
+
+scandataStorage:
+  # -- (String) Sets the maximum amount of temporary data that can be stored for a scan.   Must be less than or equal to the amount of ephemeral storage defined.
+  sizeLimit: 15Gi
+
+# -- (pod.nodeSelector) Defines Node selection constraint configurations to add to
+# resulting Kubernetes Pod(s).
+# @default -- `kubernetes.io/os: linux`
+nodeSelector:
+  kubernetes.io/os: linux
+
+# -- (pod.affinity) Defines Node Affinity configurations to add to resulting
+# Kubernetes Pod(s).
+affinity: {}
+
+# -- (pod.tolerations) Defines Toleration configurations to add to resulting
+# Kubernetes Pod(s).
+tolerations: []
+
+# -- (pod.topologySpreadConstraints) Defines how Pods are spread across your
+# cluster among failure-domains such as regions, zones, nodes, and other
+# user-defined topology domains.
+topologySpreadConstraints: {}
+
+#-------------------------------------------------------------------------------
+# CUSTOM RESOURCES
+#-------------------------------------------------------------------------------
+
+# -- Custom map that lets you define Kubernetes resources you want installed and configured as part of this chart.
+# If you provide any resources, be sure to provide them as
+# quoted using `|`, and set `customResources.enabled` to `true`.
+customResources:
+  # -- Whether to enable custom resource creation.
+  enabled: false
+  # -- (Kubernetes YAML) Custom resources to generate.
+  resources: {}
+

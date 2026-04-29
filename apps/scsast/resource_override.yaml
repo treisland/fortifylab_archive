@@ -1,0 +1,6 @@
+controller:
+  resources: null
+
+workers:
+  linux:
+    resources: null

@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sonatype-ingress
+  namespace: fortify
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "1G"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header X-Forwarded-Proto "https";
+spec:
+  tls:
+  - hosts:
+    - sonatype.fortifydemo.com
+    secretName: tls
+
+  rules:
+  - host: sonatype.fortifydemo.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ssc-service
+            port:
+              number: 8070

@@ -1,0 +1,3 @@
+FROM fortifydocker/scancentral-dast-config:23.2.107.ubi.8
+
+COPY DefaultData.zip /app/

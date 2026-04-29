@@ -1,0 +1,33 @@
+# Certificates and private keys
+certs/*.pem
+certs/*.key
+certs/*.pfx
+certs/*.jks
+certs/*.p12
+certs/truststore
+certs/*.crt
+
+# User-provided files (licenses, etc.)
+secrets/input/*
+!secrets/input/README.md
+
+# Build artifacts (created by scripts/create-secrets.sh + create-certs.sh)
+secrets/generated/
+
+# Environment config (contains passwords)
+.env
+
+# Editor artifacts
+*.swp
+*.swo
+*~
+*.backup
+
+# Local Claude Code settings
+.claude/
+
+# Large licensed binary (Fortify SecureBase content); keep local but don't ship
+apps/scdast/core/DefaultData.zip
+
+# Local/scratch test values
+apps/scdast/scanner/values_test.yaml
