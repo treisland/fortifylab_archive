@@ -99,15 +99,30 @@ envsubst '${SSC_DB_USER} ${SSC_DB_PASSWORD}' \
   < "$TEMPLATES_DIR/ssc.autoconfig.template" \
   > "$SSC_GEN_DIR/ssc.autoconfig"
 
-# Generate SSC's credential-encryption key fresh, in SSC's PEM-like format.
-# WARNING: rotating this key invalidates any encrypted credentials already
-# stored in SSC's database. Only run on a fresh deploy or after wiping SSC.
-{
-  printf 'Created: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%6NZ)"
-  printf -- '-----BEGIN FORTIFY SECRET KEY V1-----\n'
-  openssl rand -base64 32
-  printf -- '-----END FORTIFY SECRET KEY V1-----\n'
-} > "$SSC_GEN_DIR/secret.key"
+# SSC's secret.key is NOT plain random bytes — it's a structured Fortify
+# keystore with a specific binary header. `openssl rand` output is rejected
+# by SSC's pwtool with "Unable to read secret key from Fortify key store".
+#
+# We use a committed sample key from templates/ for new deploys (fine for
+# a lab/demo — every clone gets the same key). For production, generate
+# a fresh one with Fortify's pwtool inside the SSC container and replace
+# this file.
+#
+# Once an SSC instance has stored encrypted credentials in its DB with
+# a given key, that key MUST stay constant. We therefore reuse the
+# existing $SSC_GEN_DIR/secret.key if it's already present (e.g. on a
+# re-run of create-secrets.sh against a live cluster) instead of
+# rotating it.
+if [ -s "$SSC_GEN_DIR/secret.key" ]; then
+    : # already exists from a previous run; keep it
+elif [ -s "$TEMPLATES_DIR/secret.key.sample" ]; then
+    cp "$TEMPLATES_DIR/secret.key.sample" "$SSC_GEN_DIR/secret.key"
+else
+    echo "❌ No secret.key.sample found in templates/ and no existing key in generated/."
+    echo "   For a fresh install you can copy a sample key from a Fortify SSC pod:"
+    echo "     kubectl -n $NAMESPACE exec ssc-webapp-0 -- /app/tools/...  # see SSC docs"
+    exit 1
+fi
 
 
 #--------------------------
