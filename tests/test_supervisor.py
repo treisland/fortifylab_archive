@@ -107,6 +107,31 @@ rejection_reasons = ["changes-required"]
             config = Config.load(config_file)
             self.assertEqual(config.notifications.mode, "failures")
 
+    def test_authorized_milestone_sequence_must_include_starting_milestone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_file = root / "supervisor.toml"
+            for name in ("token", "user", "chat"):
+                path = root / name
+                path.write_text(name, encoding="utf-8")
+                path.chmod(0o600)
+            config_file.write_text(
+                f"""
+[supervisor]
+repository = "owner/repository"
+milestone = "0.2"
+milestones = ["0.3"]
+state_file = "{root / 'state.db'}"
+telegram_token_file = "{root / 'token'}"
+telegram_user_file = "{root / 'user'}"
+telegram_chat_file = "{root / 'chat'}"
+""",
+                encoding="utf-8",
+            )
+            config_file.chmod(0o600)
+            with self.assertRaisesRegex(SupervisorError, "include milestone"):
+                Config.load(config_file)
+
 
 def passing_pr(number: int = 12, sha: str = "abc123") -> dict[str, Any]:
     return {
@@ -140,6 +165,8 @@ class FakeGitHub:
             "title": "Architecture decisions",
             "url": "https://github.test/issues/2",
         }
+        self.issues: dict[str, dict[str, Any] | None] = {}
+        self.milestones: dict[str, dict[str, Any]] = {}
 
     def pull_request(self, number: int) -> dict[str, Any]:
         assert number == int(self.pr["number"])
@@ -166,10 +193,15 @@ class FakeGitHub:
     def next_issue(
         self, milestone: str, excluded: set[int] | None = None
     ) -> dict[str, Any] | None:
-        assert milestone == "0.1 — Evaluation Foundation"
-        if self.issue and int(self.issue["number"]) in (excluded or set()):
+        issue = self.issues.get(milestone, self.issue)
+        if issue and int(issue["number"]) in (excluded or set()):
             return None
-        return self.issue
+        return issue
+
+    def milestone(self, title: str) -> dict[str, Any]:
+        return self.milestones.get(
+            title, {"title": title, "state": "open", "open_issues": 0}
+        )
 
 
 class FakeTelegram:
@@ -329,6 +361,104 @@ class SupervisorTest(unittest.TestCase):
         response = self.supervisor.handle_command("/approve", "101")
         self.assertIn("Milestone 0.1 — Evaluation Foundation is complete", response)
         self.assertNotIn("next issue was selected", response)
+
+    def test_closed_milestone_offers_approved_rollover_and_starts_next_issue(
+        self,
+    ) -> None:
+        following = "0.2 — Observable Manager MVP"
+        self.config = dataclasses.replace(
+            self.config,
+            milestones=(self.config.milestone, following),
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.github.issue = None
+        self.github.issues[following] = {
+            "number": 33,
+            "title": "Lifecycle engine",
+            "url": "https://github.test/issues/33",
+        }
+        self.github.milestones[self.config.milestone] = {
+            "title": self.config.milestone,
+            "state": "closed",
+            "open_issues": 0,
+        }
+
+        self.assertIsNone(self.supervisor.queue_next_issue())
+        approval = self.store.pending_approvals("milestone_rollover")
+        self.assertEqual(len(approval), 1)
+        self.assertTrue(
+            any(
+                {"Advance", "Stay"}.issubset(
+                    {action.label for action in actions}
+                )
+                for actions in self.telegram.actions
+            )
+        )
+
+        advance_token = next(
+            action.token
+            for actions in self.telegram.actions
+            for action in actions
+            if action.label == "Advance"
+        )
+        response = self.supervisor.execute_callback(advance_token, "101")
+
+        self.assertIn("issue #33 was started", response)
+        self.assertEqual(self.store.get("active_milestone"), following)
+        self.assertEqual(self.store.get("current_issue"), "33")
+        self.assertTrue(
+            self.store.has_event(
+                f"approval:{approval[0]['id']}:rollover"
+            )
+        )
+
+    def test_open_milestone_cannot_offer_or_approve_rollover(self) -> None:
+        following = "0.2 — Observable Manager MVP"
+        self.config = dataclasses.replace(
+            self.config,
+            milestones=(self.config.milestone, following),
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.github.issue = None
+        self.github.milestones[self.config.milestone] = {
+            "title": self.config.milestone,
+            "state": "open",
+            "open_issues": 0,
+        }
+
+        self.assertIsNone(self.supervisor.queue_next_issue())
+
+        self.assertEqual(
+            self.store.pending_approvals("milestone_rollover"), []
+        )
+        self.assertTrue(
+            any("Close it" in message for message in self.telegram.messages)
+        )
+
+    def test_rollover_revalidates_active_milestone_before_approval(self) -> None:
+        following = "0.2 — Observable Manager MVP"
+        self.config = dataclasses.replace(
+            self.config,
+            milestones=(self.config.milestone, following),
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.github.issue = None
+        self.github.milestones[self.config.milestone] = {
+            "title": self.config.milestone,
+            "state": "closed",
+            "open_issues": 0,
+        }
+        self.supervisor.queue_next_issue()
+        self.store.set("active_milestone", following)
+
+        with self.assertRaisesRegex(SupervisorError, "Active milestone changed"):
+            self.supervisor.handle_command("/advance", "101")
 
     def test_maintenance_merge_does_not_advance_issue_queue(self) -> None:
         self.github.pr["headRefName"] = "maintenance/supervisor-installer"

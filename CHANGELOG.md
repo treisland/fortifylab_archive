@@ -10,6 +10,9 @@ platform profiles.
 
 ### Added
 
+- Controlled Telegram-approved milestone rollover using an ordered external
+  allowlist, closed-milestone revalidation, durable audit state, and immediate
+  dispatch of the next eligible issue.
 - A versioned, machine-checked 0.2 observable-manager evaluation gate covering
   manager, health, workflow, Telegram, recovery, cadence, authorization, and
   cross-surface redaction scenarios with deterministic and live evidence kept

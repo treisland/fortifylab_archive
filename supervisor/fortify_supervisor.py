@@ -129,6 +129,7 @@ class Config:
     telegram_token_file: Path
     telegram_user_file: Path
     telegram_chat_file: Path
+    milestones: tuple[str, ...] = ()
     poll_seconds: int = 120
     approval_ttl_seconds: int = 3600
     runner_command: tuple[str, ...] = ()
@@ -155,9 +156,26 @@ class Config:
             raise SupervisorError(
                 f"Missing supervisor configuration: {', '.join(missing)}"
             )
+        configured_milestones = values.get("milestones", [])
+        if not isinstance(configured_milestones, list) or any(
+            not isinstance(item, str) or not item.strip()
+            for item in configured_milestones
+        ):
+            raise SupervisorError(
+                "Authorized milestones must be a list of non-empty titles"
+            )
+        milestones = tuple(configured_milestones)
+        if milestones and (
+            len(set(milestones)) != len(milestones)
+            or str(values["milestone"]) not in milestones
+        ):
+            raise SupervisorError(
+                "Authorized milestones must be unique and include milestone"
+            )
         config = cls(
             repository=str(values["repository"]),
             milestone=str(values["milestone"]),
+            milestones=milestones,
             state_file=Path(values["state_file"]).expanduser(),
             telegram_token_file=Path(values["telegram_token_file"]).expanduser(),
             telegram_user_file=Path(values["telegram_user_file"]).expanduser(),
@@ -618,6 +636,7 @@ class GitHubPort(Protocol):
     def next_issue(
         self, milestone: str, excluded: set[int] | None = None
     ) -> dict[str, Any] | None: ...
+    def milestone(self, title: str) -> dict[str, Any]: ...
 
 
 class GitHub:
@@ -804,6 +823,25 @@ class GitHub:
             else None
         )
 
+    def milestone(self, title: str) -> dict[str, Any]:
+        owner, repository = self.repository.split("/", 1)
+        milestones = self._json(
+            [
+                "api",
+                "--method",
+                "GET",
+                f"repos/{owner}/{repository}/milestones",
+                "-f",
+                "state=all",
+                "-f",
+                "per_page=100",
+            ]
+        )
+        matches = [item for item in milestones if item.get("title") == title]
+        if len(matches) != 1:
+            raise SupervisorError(f"Milestone is unavailable or ambiguous: {title}")
+        return matches[0]
+
 
 class TelegramPort(Protocol):
     def updates(self, offset: int, timeout: int) -> list[dict[str, Any]]: ...
@@ -903,6 +941,7 @@ class Telegram:
             {"command": "issue", "description": "Request an issue for a failure"},
             {"command": "pause", "description": "Pause new automated work"},
             {"command": "continue", "description": "Resume automated work"},
+            {"command": "advance", "description": "Approve milestone rollover"},
             {"command": "help", "description": "Show available commands"},
         ]
         self._api(
@@ -983,6 +1022,22 @@ class Supervisor:
             config.telegram_chat_file, "Telegram chat ID"
         )
 
+    def authorized_milestones(self) -> tuple[str, ...]:
+        return self.config.milestones or (self.config.milestone,)
+
+    def active_milestone(self) -> str:
+        active = self.store.get("active_milestone", self.config.milestone)
+        if active not in self.authorized_milestones():
+            raise SupervisorError(
+                "Active milestone is outside the configured authorization sequence"
+            )
+        return active
+
+    def next_milestone(self) -> str | None:
+        authorized = self.authorized_milestones()
+        position = authorized.index(self.active_milestone())
+        return authorized[position + 1] if position + 1 < len(authorized) else None
+
     def status_text(self) -> str:
         paused = self.store.get("paused", "false") == "true"
         pr = self.store.get("current_pr", "none")
@@ -993,7 +1048,7 @@ class Supervisor:
             else None
         )
         return render_card(
-            milestone=self.config.milestone,
+            milestone=self.active_milestone(),
             issue=issue,
             title=self.store.get("current_issue_title"),
             paused=paused,
@@ -1085,10 +1140,17 @@ class Supervisor:
         if candidate["approval_id"]:
             approval = self.store.approval(str(candidate["approval_id"]))
             approval_payload = json.loads(approval["payload"])
-            approval_pr = self.github.pull_request(
-                int(approval_payload["pull_request"])
-            )
-            self.verify_merge_plan(approval_pr, approval_payload, allow_draft=True)
+            if approval["action"] == "merge_pr":
+                approval_pr = self.github.pull_request(
+                    int(approval_payload["pull_request"])
+                )
+                self.verify_merge_plan(
+                    approval_pr, approval_payload, allow_draft=True
+                )
+            elif approval["action"] == "milestone_rollover":
+                self.verify_milestone_rollover(approval_payload)
+            else:
+                raise SupervisorError("Unsupported approval action")
         row = self.store.consume_callback_token(token, actor)
         action = str(row["action"])
         callback_payload = json.loads(str(row["payload"] or "{}"))
@@ -1152,7 +1214,24 @@ class Supervisor:
         approval_id = str(row["approval_id"] or "")
         approval = self.store.approval(approval_id)
         payload = json.loads(approval["payload"])
-        pr = approval_pr
+        pr = approval_pr if approval["action"] == "merge_pr" else None
+        if action == "advance-milestone":
+            return self.approve_milestone_rollover(approval_id, actor)
+        if action == "stay-milestone":
+            self.store.decide(
+                approval_id, "rejected", actor, "operator-deferred"
+            )
+            self.store.set("paused", "true")
+            self.store.event(
+                f"approval:{approval_id}:rollover-deferred",
+                "milestone.rollover_deferred",
+                {
+                    "actor": actor,
+                    "from": payload["from"],
+                    "to": payload["to"],
+                },
+            )
+            return "Milestone rollover deferred; supervisor paused"
         if action == "approve":
             return self.approve(approval_id, actor)
         if action == "reject":
@@ -1177,6 +1256,7 @@ class Supervisor:
             )
             return "Supervisor paused"
         if action == "details":
+            assert pr is not None
             return (
                 f"PR #{payload['pull_request']}\n"
                 f"Checks: {checks_state(pr)}\n"
@@ -1248,6 +1328,11 @@ class Supervisor:
                 {"actor": actor},
             )
             return "▶️ Supervisor resumed."
+        if command == "/advance":
+            if len(parts) != 1:
+                raise SupervisorError("Usage: /advance")
+            approval_id = self.current_approval_id("milestone_rollover")
+            return self.approve_milestone_rollover(approval_id, actor)
         if command == "/approve":
             if len(parts) > 2:
                 raise SupervisorError("Usage: /approve [approval-id]")
@@ -1328,7 +1413,7 @@ class Supervisor:
             return (
                 "/status\n/pr\n/approve\n/reject <predefined-reason>\n"
                 "/retry <idempotent-stage>\n/issue <failure-fingerprint>\n"
-                "/pause\n/continue\n/help"
+                "/pause\n/continue\n/advance\n/help"
             )
         raise SupervisorError("Unknown command. Use /help.")
 
@@ -1346,7 +1431,7 @@ class Supervisor:
             if len(current) > 1:
                 approvals = current
         if not approvals:
-            raise SupervisorError("No pending PR approval")
+            raise SupervisorError(f"No pending {action.replace('_', ' ')} approval")
         if len(approvals) > 1:
             raise SupervisorError(
                 "Multiple approvals are pending; use /approve <approval-id> "
@@ -1390,11 +1475,102 @@ class Supervisor:
                 )
             return (
                 f"✅ PR #{payload['pull_request']} merge approved and completed. "
-                f"Milestone {self.config.milestone} is complete."
+                f"Milestone {self.active_milestone()} is complete."
             )
         return (
             f"✅ PR #{payload['pull_request']} merge approved and completed; "
             f"issue #{next_issue['number']} was started."
+        )
+
+    def verify_milestone_rollover(self, payload: dict[str, Any]) -> None:
+        if payload.get("repository") != self.config.repository:
+            raise SupervisorError("Milestone rollover repository changed")
+        if payload.get("from") != self.active_milestone():
+            raise SupervisorError("Active milestone changed; request a new approval")
+        if payload.get("to") != self.next_milestone():
+            raise SupervisorError("Next authorized milestone changed")
+        milestone = self.github.milestone(self.active_milestone())
+        if milestone.get("state") != "closed":
+            raise SupervisorError("Current milestone must be closed before rollover")
+        if int(milestone.get("open_issues", 0)) != 0:
+            raise SupervisorError("Current milestone still has open issues")
+        if self.github.next_issue(self.active_milestone()) is not None:
+            raise SupervisorError("Current milestone has newly eligible work")
+        following = self.github.milestone(str(payload["to"]))
+        if following.get("state") != "open":
+            raise SupervisorError("Next authorized milestone must be open")
+
+    def approve_milestone_rollover(self, approval_id: str, actor: str) -> str:
+        row = self.store.approval(approval_id)
+        if row["action"] != "milestone_rollover":
+            raise SupervisorError("Unsupported approval action")
+        payload = json.loads(row["payload"])
+        self.verify_milestone_rollover(payload)
+        self.store.decide(approval_id, "approved", actor)
+        self.store.set("active_milestone", str(payload["to"]))
+        self.store.event(
+            f"approval:{approval_id}:rollover",
+            "milestone.rollover_approved",
+            {"actor": actor, "from": payload["from"], "to": payload["to"]},
+        )
+        issue = self.queue_next_issue()
+        if issue is None:
+            return f"Advanced to {payload['to']}; no eligible issue is available"
+        return f"Advanced to {payload['to']}; issue #{issue['number']} was started"
+
+    def offer_milestone_rollover(self) -> None:
+        current = self.active_milestone()
+        following = self.next_milestone()
+        if following is None:
+            return
+        milestone = self.github.milestone(current)
+        if (
+            milestone.get("state") != "closed"
+            or int(milestone.get("open_issues", 0)) != 0
+        ):
+            self.notify_once(
+                f"milestone:{current}:awaiting-close",
+                "milestone.awaiting_close",
+                f"Milestone {current} has no eligible issues. Close it after "
+                "confirming completion to enable rollover.",
+                {"milestone": current},
+            )
+            return
+        payload = {
+            "repository": self.config.repository,
+            "from": current,
+            "to": following,
+        }
+        self.verify_milestone_rollover(payload)
+        approval = self.store.pending_approval("milestone_rollover", payload)
+        if approval is None:
+            approval = self.store.create_approval(
+                "milestone_rollover",
+                payload,
+                self.config.approval_ttl_seconds,
+            )
+        actions = tuple(
+            InlineAction(
+                label,
+                self.store.create_callback_token(
+                    action,
+                    self.config.approval_ttl_seconds,
+                    str(approval["id"]),
+                    actor=self.allowed_user,
+                ),
+            )
+            for label, action in (
+                ("Advance", "advance-milestone"),
+                ("Stay", "stay-milestone"),
+            )
+        ) + self.workflow_actions()
+        self.notify_once(
+            f"milestone:{current}:rollover:{following}:{approval['id']}",
+            "milestone.rollover_ready",
+            f"🎯 {current} is complete. Advance to {following}?",
+            {"from": current, "to": following},
+            meaningful=True,
+            actions=actions,
         )
 
     def complete_merged_pull_request(
@@ -1842,14 +2018,16 @@ class Supervisor:
         if self.store.get("paused", "false") == "true":
             return None
         excluded = {completed_issue} if completed_issue is not None else None
-        issue = self.github.next_issue(self.config.milestone, excluded)
+        milestone = self.active_milestone()
+        issue = self.github.next_issue(milestone, excluded)
         if not issue:
             self.notify_once(
-                f"milestone:{self.config.milestone}:complete",
+                f"milestone:{milestone}:complete",
                 "milestone.complete",
-                f"🎉 No eligible issues remain in {self.config.milestone}.",
-                {"milestone": self.config.milestone},
+                f"🎉 No eligible issues remain in {milestone}.",
+                {"milestone": milestone},
             )
+            self.offer_milestone_rollover()
             return None
         number = str(issue["number"])
         self.store.set("current_issue", number)

@@ -1,6 +1,13 @@
 [supervisor]
 repository = "treisland/fortifylab"
 milestone = "0.1 — Evaluation Foundation"
+# Optional ordered authorization boundary for Telegram-approved rollover.
+# Values must match existing GitHub milestone titles exactly.
+milestones = [
+  "0.1 — Evaluation Foundation",
+  "0.2 — Observable Manager MVP",
+  "0.3 — Controlled Operations",
+]
 poll_seconds = 120
 approval_ttl_seconds = 3600
 

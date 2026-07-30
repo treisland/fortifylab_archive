@@ -62,6 +62,7 @@ journalctl --user -u fortify-supervisor-telegram.service
 /issue <failure-fingerprint>
 /pause
 /continue
+/advance
 /help
 ```
 
@@ -197,6 +198,36 @@ supervisor may race without turning a successful merge into an operator error.
 Eligible issues labeled `queue:next` are selected before the normal
 lowest-issue-number order. This is an explicit operator-controlled queue
 override; ordering remains deterministic within the prioritized group.
+
+## Milestone rollover
+
+The required `milestone` value is the initial active milestone and preserves
+compatibility with existing installations. To authorize controlled rollover,
+add an ordered sequence to the protected external configuration:
+
+```toml
+[supervisor]
+milestone = "0.2 — Observable Manager MVP"
+milestones = [
+  "0.2 — Observable Manager MVP",
+  "0.3 — Controlled Operations",
+]
+```
+
+The sequence is an allowlist, not a request to start every milestone silently.
+When the active milestone has no eligible issues, the supervisor verifies that
+its GitHub milestone is closed with zero open issues. It then sends the linked
+private chat an **Advance** or **Stay** decision. **Advance** (or `/advance`)
+revalidates the exact repository, current milestone, next configured
+milestone, closed state, and issue count before persisting the transition and
+immediately queuing the next issue. **Stay** rejects that approval and pauses
+new work; `/continue` permits a fresh rollover proposal.
+
+An open milestone produces guidance to close it but no approval. An unlisted,
+reordered, removed, ambiguous, or externally changed milestone fails closed.
+The supervisor never edits `supervisor.toml`; expanding the authorized
+sequence remains a local operator action. The bounded issue runner reads the
+persisted active milestone and rejects issues outside it.
 
 ## Optional runner
 
