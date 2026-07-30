@@ -161,7 +161,9 @@ microk8s kubectl delete namespace fortify         # nuke everything else
 
 ## Contributing
 
-PRs welcome. Issues with deploy errors should include:
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow,
+verification expectations, and sensitive-data rules. Issues with deploy
+errors should include:
 
 - Output of `microk8s kubectl -n fortify get pods`
 - The relevant pod's `kubectl logs --tail=200`

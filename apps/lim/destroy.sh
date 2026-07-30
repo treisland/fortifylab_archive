@@ -1,3 +1,5 @@
+#!/bin/bash
+
 #get the current directory where this script resides
 CURRENT_DIR="$( dirname -- "${BASH_SOURCE[0]}" )"
 

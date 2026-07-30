@@ -1,0 +1,4 @@
+# The repository contains vendor-derived Helm values with substantial legacy
+# style drift. Start the verification loop with YAML parsing enabled and add
+# style rules incrementally as those files are normalized.
+rules: {}

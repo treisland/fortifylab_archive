@@ -1,0 +1,25 @@
+name: Documentation improvement
+description: Correct or improve project guidance
+title: "[Docs]: "
+labels:
+  - documentation
+body:
+  - type: textarea
+    id: audience
+    attributes:
+      label: Audience and problem
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Current evidence
+      description: Link the behavior, configuration, or source that documentation must match.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true

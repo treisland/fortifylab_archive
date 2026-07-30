@@ -1,14 +1,14 @@
 #!/bin/bash
 
 # Namespace and StatefulSet name
-STATEFULSET="scancentral-sast-worker-linux"
+STATEFULSET="scancentral-sast-sensor-linux"
 
 # Function for scaling the StatefulSet
 scale_statefulset() {
-  read -p "Enter the number of scanners: " replicas
+  read -rp "Enter the number of scanners: " replicas
   if [[ "$replicas" =~ ^[0-9]+$ ]]; then
     echo "Scaling the number scanners to $replicas"
-    microk8s kubectl -n $NAMESPACE scale statefulset $STATEFULSET --replicas=$replicas
+    microk8s kubectl -n "$NAMESPACE" scale statefulset "$STATEFULSET" --replicas="$replicas"
     echo "Scaling operation completed."
   else
     echo "Invalid input. Please enter a valid number."
@@ -24,7 +24,7 @@ while true; do
   echo "1. Scale Scanners"
   echo "2. Exit"
   echo
-  read -p "Enter your choice (1-2): " choice
+  read -rp "Enter your choice (1-2): " choice
   echo
 
   case $choice in
@@ -40,4 +40,3 @@ while true; do
       ;;
   esac
 done
-
