@@ -1,10 +1,10 @@
-"""Minimal read-only WSGI API for manager component inventory."""
+"""Versioned read-only WSGI API for manager dashboard read models."""
 
 from __future__ import annotations
 
 import json
 from http import HTTPStatus
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable, Protocol
 
 from manager.component_inventory import ClusterObserver, ComponentInventory
 from manager.component_registry import ComponentRegistry, RegistryError
@@ -15,6 +15,19 @@ from manager.preflight import PreflightEngine, PreflightProbe
 COMPONENTS_PATH = "/api/v1alpha1/components"
 HEALTH_PATH = "/api/v1alpha1/health"
 PREFLIGHT_PATH = "/api/v1alpha1/preflight"
+HISTORY_PATH = "/api/v1alpha1/history"
+
+
+class HistoryReader(Protocol):
+    """Read sanitized manager-owned history, newest record first."""
+
+    def recent(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return at most ``limit`` already-sanitized records."""
+
+
+class EmptyHistoryReader:
+    def recent(self, limit: int = 20) -> list[dict[str, Any]]:
+        return []
 
 
 class ManagerAPI:
@@ -26,16 +39,18 @@ class ManagerAPI:
         observer: ClusterObserver | None = None,
         health_probe: HealthProbe | None = None,
         preflight_probe: PreflightProbe | None = None,
+        history_reader: HistoryReader | None = None,
     ) -> None:
         self._registry_loader = registry_loader
         self._observer = observer
         self._health_probe = health_probe
         self._preflight_probe = preflight_probe
+        self._history_reader = history_reader or EmptyHistoryReader()
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "")
-        if path not in {COMPONENTS_PATH, HEALTH_PATH, PREFLIGHT_PATH}:
+        if path not in {COMPONENTS_PATH, HEALTH_PATH, PREFLIGHT_PATH, HISTORY_PATH}:
             return self._response(
                 start_response,
                 HTTPStatus.NOT_FOUND,
@@ -51,21 +66,34 @@ class ManagerAPI:
                 (("Allow", "GET, HEAD"),),
             )
         try:
-            registry = self._registry_loader()
+            if path == HISTORY_PATH:
+                document = {
+                    "apiVersion": "fortifylab.io/v1alpha1",
+                    "kind": "OperationHistory",
+                    "items": self._history_reader.recent(20),
+                }
+            else:
+                registry = self._registry_loader()
             if path == HEALTH_PATH:
                 document = HealthEngine(registry, self._health_probe).document()
             elif path == PREFLIGHT_PATH:
                 document = PreflightEngine(registry, self._preflight_probe).document()
-            else:
+            elif path == COMPONENTS_PATH:
                 document = ComponentInventory(registry, self._observer).document()
-        except RegistryError:
+        except (RegistryError, RuntimeError, ValueError, TypeError):
             return self._response(
                 start_response,
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 {
-                    "code": "REGISTRY_UNAVAILABLE",
+                    "code": (
+                        "READ_MODEL_UNAVAILABLE"
+                        if path == HISTORY_PATH
+                        else "REGISTRY_UNAVAILABLE"
+                    ),
                     "message": (
-                        "health read model is unavailable"
+                        "operation history is unavailable"
+                        if path == HISTORY_PATH
+                        else "health read model is unavailable"
                         if path == HEALTH_PATH
                         else (
                             "preflight read model is unavailable"

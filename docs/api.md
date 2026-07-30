@@ -28,6 +28,22 @@ interpretation are documented in
 [Deployment preflight](deployment-preflight.md); its schema is
 [`registry/schemas/preflight-report.schema.json`](../registry/schemas/preflight-report.schema.json).
 
+Recent sanitized manager records are exposed at
+`GET /api/v1alpha1/history`. The response is an `OperationHistory` document
+with at most 20 newest-first items. Each item is limited to `id`, `kind`,
+`state`, `summary`, `subject`, and `occurredAt`; persistence sanitization is
+applied again before projection. An empty history is a successful response
+with an empty `items` array. The response schema is
+[`registry/schemas/operation-history.schema.json`](../registry/schemas/operation-history.schema.json).
+
+The integrated [Web dashboard](web-dashboard.md) requires a server-side
+session for every API endpoint above. `POST /api/v1alpha1/session` establishes
+that session and `DELETE` removes only the requesting session. The
+unauthenticated `GET /ready` response contains only `{"state":"ready"}`.
+The low-level `ManagerAPI` remains transport-composable; `DashboardApp`
+enforces authentication and same-origin browser security at the runtime
+boundary.
+
 The machine-readable response contract is
 [`registry/schemas/component-inventory.schema.json`](../registry/schemas/component-inventory.schema.json).
 

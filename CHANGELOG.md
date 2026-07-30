@@ -10,6 +10,10 @@ platform profiles.
 
 ### Added
 
+- A secure, same-origin read-only Web dashboard with authenticated sessions,
+  whole-lab summary, dependency/version map, health root cause and evidence,
+  remediation, preflight, sanitized recent history, accessible state badges,
+  and explicit loading, empty, failure, and disconnected-cluster views.
 - A repeatable, fail-closed deployment preflight report covering capacity,
   MicroK8s/addons, storage, ingress, DNS/TLS, licenses, registries/images,
   configuration, and compatibility with actionable, secret-safe blockers.
