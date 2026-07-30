@@ -27,6 +27,8 @@ platform profiles.
   access.
 - A schema-versioned, read-only manager component inventory API with desired
   resources, sanitized cluster observations, and explicit unavailable state.
+- Telegram inline PR approval controls backed by opaque expiring single-use
+  callbacks and one editable milestone, issue, runner, and PR workflow card.
 
 ### Fixed
 

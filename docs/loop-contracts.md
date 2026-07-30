@@ -63,6 +63,13 @@ cannot authorize another execution.
 The schemas define the portable record. A storage implementation must enforce
 the state transition and atomic single-use claim under concurrency.
 
+Communications adapters may render contextual controls for an approval, but
+their callback payloads are transport references rather than approval
+contracts. They must be opaque, expiring, and single-use, and must resolve
+back to the authoritative digest-bound approval before authorization is
+evaluated. Provider message IDs and delivery outcomes do not change approval
+semantics.
+
 ## Redaction and provenance
 
 All stored and exported traces must set `sanitized: true`. Trace fields reject
