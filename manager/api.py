@@ -9,10 +9,12 @@ from typing import Callable, Iterable
 from manager.component_inventory import ClusterObserver, ComponentInventory
 from manager.component_registry import ComponentRegistry, RegistryError
 from manager.health import HealthEngine, HealthProbe
+from manager.preflight import PreflightEngine, PreflightProbe
 
 
 COMPONENTS_PATH = "/api/v1alpha1/components"
 HEALTH_PATH = "/api/v1alpha1/health"
+PREFLIGHT_PATH = "/api/v1alpha1/preflight"
 
 
 class ManagerAPI:
@@ -23,15 +25,17 @@ class ManagerAPI:
         registry_loader: Callable[[], ComponentRegistry] = ComponentRegistry.load,
         observer: ClusterObserver | None = None,
         health_probe: HealthProbe | None = None,
+        preflight_probe: PreflightProbe | None = None,
     ) -> None:
         self._registry_loader = registry_loader
         self._observer = observer
         self._health_probe = health_probe
+        self._preflight_probe = preflight_probe
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "")
-        if path not in {COMPONENTS_PATH, HEALTH_PATH}:
+        if path not in {COMPONENTS_PATH, HEALTH_PATH, PREFLIGHT_PATH}:
             return self._response(
                 start_response,
                 HTTPStatus.NOT_FOUND,
@@ -48,11 +52,12 @@ class ManagerAPI:
             )
         try:
             registry = self._registry_loader()
-            document = (
-                HealthEngine(registry, self._health_probe).document()
-                if path == HEALTH_PATH
-                else ComponentInventory(registry, self._observer).document()
-            )
+            if path == HEALTH_PATH:
+                document = HealthEngine(registry, self._health_probe).document()
+            elif path == PREFLIGHT_PATH:
+                document = PreflightEngine(registry, self._preflight_probe).document()
+            else:
+                document = ComponentInventory(registry, self._observer).document()
         except RegistryError:
             return self._response(
                 start_response,
@@ -62,7 +67,11 @@ class ManagerAPI:
                     "message": (
                         "health read model is unavailable"
                         if path == HEALTH_PATH
-                        else "component inventory is unavailable"
+                        else (
+                            "preflight read model is unavailable"
+                            if path == PREFLIGHT_PATH
+                            else "component inventory is unavailable"
+                        )
                     ),
                 },
                 method,

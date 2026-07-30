@@ -9,7 +9,7 @@ reference.
 
 | Boundary | Manager owns | Manager does not own |
 | --- | --- | --- |
-| API | Versioned read models, health, catalog, sanitized manager history | Generic commands, Kubernetes proxying, secret reveal, lifecycle mutations |
+| API | Versioned inventory, health, preflight, catalog, sanitized manager history | Generic commands, Kubernetes proxying, secret reveal, lifecycle mutations |
 | Persistence | Local SQLite schema, manager history, health, sanitized derived-cache metadata | Secret values, Kubernetes credentials, licenses, SSC applications or findings |
 | Authentication | Local account bootstrap, server-side sessions, read-only authorization | Anonymous detail APIs, cross-origin access by default, production identity federation |
 | Web UI | Same-origin static assets and read-only views | Direct cluster/SSC credentials or write controls |

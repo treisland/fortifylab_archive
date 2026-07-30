@@ -18,6 +18,16 @@ documented in [Dependency-aware health checks](health-checks.md). The response
 schema is
 [`registry/schemas/health-report.schema.json`](../registry/schemas/health-report.schema.json).
 
+Deployment readiness is exposed at `GET /api/v1alpha1/preflight`. It performs
+fresh, read-only checks for host capacity, MicroK8s and required addons,
+storage, ingress, DNS/TLS, external-license readability, registry
+authentication, pinned-image reachability, configuration, and platform
+compatibility. The response fails closed, classifies blockers, warnings, and
+information, and gives safe remediation for every blocker. Execution and
+interpretation are documented in
+[Deployment preflight](deployment-preflight.md); its schema is
+[`registry/schemas/preflight-report.schema.json`](../registry/schemas/preflight-report.schema.json).
+
 The machine-readable response contract is
 [`registry/schemas/component-inventory.schema.json`](../registry/schemas/component-inventory.schema.json).
 
@@ -73,7 +83,7 @@ Each observed resource state is one of:
   found; or
 - `unknown`: current presence could not be determined.
 
-When the cluster adapter is unavailable or times out, the request still
+When the component-inventory cluster adapter is unavailable or times out, the request still
 returns the desired inventory with `observation.state` set to `unavailable`
 and every observed resource set to `unknown`. It does not report those
 resources as absent. A malformed or unavailable registry returns `503` with
