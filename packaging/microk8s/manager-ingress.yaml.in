@@ -35,7 +35,7 @@ spec:
   tls:
     - hosts:
         - lab.@DOMAIN@
-      secretName: fortify-tls
+      secretName: @TLS_SECRET@
   rules:
     - host: lab.@DOMAIN@
       http:
