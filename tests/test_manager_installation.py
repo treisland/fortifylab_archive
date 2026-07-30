@@ -44,7 +44,7 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertEqual(ingress["spec"]["rules"][0]["host"], "lab.fortifydemo.com")
         self.assertEqual(
             ingress["spec"]["tls"][0],
-            {"hosts": ["lab.fortifydemo.com"], "secretName": "fortify-tls"},
+            {"hosts": ["lab.fortifydemo.com"], "secretName": "tls"},
         )
         self.assertEqual(
             ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"],
@@ -161,6 +161,8 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertIn("DELETE MANAGER STATE", script)
         self.assertIn('port = $port', script)
         self.assertIn("kubectl diff", script)
+        self.assertIn("FORTIFY_MANAGER_TLS_SECRET", script)
+        self.assertIn("for _ in {1..15}", script)
         self.assertIn("prior manager release could not be restarted", script)
         self.assertNotIn("create-certs.sh", script)
 

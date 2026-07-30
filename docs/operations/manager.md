@@ -14,7 +14,7 @@ VPN CIDR. Do **not** allow TCP 8080, and do **not** use unrestricted
 `0.0.0.0/0` Internet exposure. Port 8080 is a private host backend reached
 only by ingress.
 
-The route reuses the existing `fortify-tls` Kubernetes Secret containing the
+The route reuses the existing `tls` Kubernetes Secret containing the
 mkcert wildcard certificate for `*.$DOMAIN`. Installation neither invokes
 `create-certs.sh` nor generates, replaces, or rotates a CA. mkcert provides
 encrypted transport with private lab trust; it is not a publicly trusted
@@ -84,7 +84,9 @@ history.
 `sudo ./scripts/fortify-manager diagnose` checks configuration/account
 permissions, systemd state, bounded backend readiness, server-side manifest
 acceptance, live Service/Endpoints/Ingress drift, and presence of the existing
-`fortify-tls` Secret. It reports categories without reading or printing
+`tls` Secret. Override its name with `FORTIFY_MANAGER_TLS_SECRET` when a lab
+uses a different existing wildcard Secret. Diagnostics report categories
+without reading or printing
 passwords, cookies, keys, certificate contents, environment dumps, external
 configuration directories, or response bodies. Route drift is remediated by
 re-running `configure`; a missing TLS Secret must be recovered through the
@@ -98,7 +100,7 @@ For failures, check in this order:
 3. `microk8s kubectl -n fortify get endpoints fortify-manager-host` for the
    expected private address and port.
 4. `microk8s kubectl -n fortify describe ingress fortify-manager` for host,
-   backend, ingress class, and `fortify-tls`.
+   backend, ingress class, and the configured TLS Secret.
 5. Check operator DNS and Security Group rules.
 6. Check the browser certificate hostname and existing lab CA.
 
