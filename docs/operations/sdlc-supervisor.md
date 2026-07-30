@@ -232,6 +232,9 @@ With no current issue, the card reports `idle` or `paused` and points to queue
 selection or operator resume. A selected issue without heartbeat evidence is
 `waiting`, never `running`; `running` is reserved for an issue with active
 runner evidence.
+On an enabled idle monitor cycle, the supervisor first reconciles any open
+agent PR. If none exists, it selects the next eligible milestone issue exactly
+once. A paused supervisor never performs this idle-to-queued transition.
 Repository validation is bounded by `FORTIFY_RUNNER_VALIDATION_TIMEOUT`
 (default `30m`). If validation or one of its child processes deadlocks, the
 runner terminates it, records validation failure, preserves the issue
