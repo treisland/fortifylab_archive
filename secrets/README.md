@@ -12,7 +12,8 @@ secrets/
 
 ## Workflow
 
-1. Drop your license file at `input/fortify.license` (see `input/README.md`).
+1. Set `FORTIFY_LICENSE_FILE` to a protected external file, or use the
+   backward-compatible `input/fortify.license` default (see `input/README.md`).
 2. Configure `.env` (domain, passwords, image versions).
 3. Run `scripts/create-certs.sh` to generate the mkcert root + leaf cert and
    build the JVM keystore + truststore into `generated/`.
@@ -46,7 +47,7 @@ The k8s Secret name and key are what the helm chart reads.
 
 | File path                                      | k8s Secret                       | Key                  | Consumer                            |
 |------------------------------------------------|----------------------------------|----------------------|-------------------------------------|
-| `input/fortify.license`                        | `fortify-secrets`                | `fortify.license`    | SSC, ScanCentral SAST controller    |
+| `$FORTIFY_LICENSE_FILE` (external or default)  | `fortify-secrets`                | `fortify.license`    | SSC, ScanCentral SAST controller    |
 | `templates/ssc.autoconfig.template` (rendered) | `fortify-secrets`                | `ssc.autoconfig`     | SSC (DB connection)                 |
 | `generated/ssc/secret.key`                     | `fortify-secrets`                | `secret.key`         | SSC (credential encryption)         |
 | `generated/certs/keystore.jks`                 | `fortify-secrets`                | `keystore.jks`       | SSC (HTTPS keystore)                |
@@ -67,6 +68,20 @@ The k8s Secret name and key are what the helm chart reads.
 Files in `input/` and `generated/` that aren't in the table are **not**
 loaded into any k8s Secret (no more "everything in the folder becomes a key"
 behavior — keys are added explicitly).
+
+### Existing-Secret contract
+
+The prepared consumer contract is the `fortify-secrets` Kubernetes Secret in
+`$NAMESPACE`, with the license stored under the exact `fortify.license` key.
+SSC and ScanCentral SAST use that name and key. `create-secrets.sh` currently
+materializes the Secret from `FORTIFY_LICENSE_FILE`; operators must not place
+the license in Helm values or command-line literals.
+
+Adopting a Secret that is managed outside Fortify Lab Manager is not yet an
+implemented source mode. Until that lifecycle is added, do not pre-create or
+manually replace `fortify-secrets`: the script rebuilds it together with other
+required keys. This explicit limitation prevents silently claiming ownership
+or rollback behavior that does not exist.
 
 ## Public CAs
 
