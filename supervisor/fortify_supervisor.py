@@ -463,6 +463,27 @@ class Store:
             self.connection.commit()
         return superseded
 
+    def supersede_approvals_for_pull_request(
+        self, pull_request: int, reason: str
+    ) -> int:
+        decided_at = int(self.now())
+        superseded = 0
+        for row in self.pending_approvals("merge_pr"):
+            payload = json.loads(row["payload"])
+            if int(payload.get("pull_request", -1)) == pull_request:
+                self.connection.execute(
+                    """
+                    UPDATE approvals
+                    SET state = 'superseded', decided_at = ?, reason = ?
+                    WHERE id = ?
+                    """,
+                    (decided_at, reason, row["id"]),
+                )
+                superseded += 1
+        if superseded:
+            self.connection.commit()
+        return superseded
+
     def decide(
         self, approval_id: str, state: str, actor: str, reason: str = ""
     ) -> sqlite3.Row:
@@ -717,7 +738,18 @@ class GitHub:
                 and "needs-triage" not in labels
             ):
                 eligible.append(issue)
-        return min(eligible, key=lambda item: int(item["number"])) if eligible else None
+        return (
+            min(
+                eligible,
+                key=lambda item: (
+                    "queue:next"
+                    not in {label["name"] for label in item.get("labels", [])},
+                    int(item["number"]),
+                ),
+            )
+            if eligible
+            else None
+        )
 
 
 class TelegramPort(Protocol):
@@ -1132,6 +1164,17 @@ class Supervisor:
 
     def current_approval_id(self, action: str) -> str:
         approvals = self.store.pending_approvals(action)
+        current_pr = self.store.get("current_pr")
+        if action == "merge_pr" and current_pr:
+            current = [
+                row
+                for row in approvals
+                if str(json.loads(row["payload"]).get("pull_request")) == current_pr
+            ]
+            if len(current) == 1:
+                return str(current[0]["id"])
+            if len(current) > 1:
+                approvals = current
         if not approvals:
             raise SupervisorError("No pending PR approval")
         if len(approvals) > 1:
@@ -1184,6 +1227,9 @@ class Supervisor:
         issue_number = int(match.group(1)) if match else None
         fingerprint = f"pr:{number}:completed:{sha}"
 
+        self.store.supersede_approvals_for_pull_request(
+            number, "pull request merged"
+        )
         if self.store.has_event(fingerprint):
             return None
 

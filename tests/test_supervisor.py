@@ -44,6 +44,30 @@ class GitHubTest(unittest.TestCase):
 
         GitHub("treisland/fortifylab", run=run).close_issue(5)
 
+    def test_next_issue_prioritizes_queue_next_then_number(self) -> None:
+        issues = [
+            {"number": 22, "title": "Health", "url": "", "labels": []},
+            {
+                "number": 31,
+                "title": "Telegram recovery",
+                "url": "",
+                "labels": [{"name": "queue:next"}],
+            },
+            {
+                "number": 30,
+                "title": "Telegram approvals",
+                "url": "",
+                "labels": [{"name": "queue:next"}],
+            },
+        ]
+
+        def run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess([], 0, json.dumps(issues), "")
+
+        issue = GitHub("treisland/fortifylab", run=run).next_issue("0.2")
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue["number"], 30)
+
 
 class ConfigTest(unittest.TestCase):
     def test_notification_preferences_require_protected_external_config(self) -> None:
@@ -619,6 +643,48 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(self.telegram.messages, [])
         self.assertEqual(self.telegram.edits[0][0].message_id, "77")
         self.assertIn(self.config.milestone, self.telegram.edits[0][1])
+
+    def test_implicit_approval_prefers_current_pull_request(self) -> None:
+        stale = self.store.create_approval(
+            "merge_pr",
+            {
+                "repository": self.config.repository,
+                "pull_request": 13,
+                "head_sha": "def456",
+            },
+            60,
+        )
+        current = self.store.create_approval(
+            "merge_pr",
+            {
+                "repository": self.config.repository,
+                "pull_request": 12,
+                "head_sha": "abc123",
+            },
+            60,
+        )
+        self.store.set("current_pr", "12")
+        response = self.supervisor.handle_command("/approve", "101")
+        self.assertIn("merge approved", response)
+        self.assertEqual(self.store.approval(current["id"])["state"], "approved")
+        self.assertEqual(self.store.approval(stale["id"])["state"], "pending")
+
+    def test_merged_pr_supersedes_its_pending_approvals(self) -> None:
+        approval = self.store.create_approval(
+            "merge_pr",
+            {
+                "repository": self.config.repository,
+                "pull_request": 12,
+                "head_sha": "abc123",
+            },
+            60,
+        )
+        self.github.pr["state"] = "MERGED"
+        self.github.pr["mergedAt"] = "2026-07-30T00:00:00Z"
+        self.supervisor.complete_merged_pull_request(self.github.pr)
+        row = self.store.approval(approval["id"])
+        self.assertEqual(row["state"], "superseded")
+        self.assertEqual(row["reason"], "pull request merged")
 
 
 if __name__ == "__main__":
