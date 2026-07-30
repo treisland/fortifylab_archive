@@ -157,6 +157,9 @@ See the [loop contracts reference](docs/loop-contracts.md) for versioned
 progress, health, event, incident, approval, and sanitized-trace records
 shared by lifecycle, health, development, and improvement loops.
 
+Representative deterministic regression scenarios are documented in the
+[loop evaluation corpus](docs/evaluation-corpus.md).
+
 ## Conventions and gotchas
 
 - **Run as your normal user**, never `sudo ./start_wizard.sh`. mkcert is

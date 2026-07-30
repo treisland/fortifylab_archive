@@ -82,3 +82,7 @@ Representative valid records are in `contracts/v1alpha1/examples.json`.
 `tests/test_loop_contracts.py` validates every example and negative cases for
 retry, timeout, cancellation, idempotency, causal references, approvals,
 redaction, and provenance without accessing a cluster.
+
+The [versioned evaluation corpus](evaluation-corpus.md) builds on these
+contracts with deterministic success and failure fixtures, expected
+classifications, safe actions, and redaction assertions.

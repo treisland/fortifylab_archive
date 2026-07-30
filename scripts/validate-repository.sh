@@ -37,6 +37,9 @@ bash tests/lifecycle-contracts.sh
 printf 'Checking loop contract schemas...\n'
 python3 -m unittest tests.test_loop_contracts
 
+printf 'Checking versioned evaluation corpus...\n'
+python3 -m unittest tests.test_evaluation_corpus
+
 printf 'Checking local Markdown links...\n'
 python3 scripts/check-local-links.py
 
