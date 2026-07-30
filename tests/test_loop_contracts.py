@@ -16,7 +16,7 @@ from manager.loop_contract_validation import validate_semantics
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_ROOT = ROOT / "contracts" / "v1alpha1"
 SCHEMA_ROOT = CONTRACT_ROOT / "schemas"
-SCHEMAS = ("progress", "health", "event", "incident", "approval", "trace")
+SCHEMAS = ("operation", "progress", "health", "event", "incident", "approval", "trace")
 
 
 def load_json(path: Path) -> dict:

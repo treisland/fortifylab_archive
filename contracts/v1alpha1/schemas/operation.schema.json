@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/contracts/v1alpha1/operation.schema.json",
+  "title": "Operation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "id", "loop", "subject", "operation", "requestedAt", "requestedBy", "provenance"],
+  "properties": {
+    "apiVersion": {"$ref": "common.schema.json#/$defs/apiVersion"},
+    "kind": {"const": "Operation"},
+    "id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "loop": {"$ref": "common.schema.json#/$defs/loop"},
+    "subject": {"$ref": "common.schema.json#/$defs/subject"},
+    "operation": {"$ref": "common.schema.json#/$defs/identifier"},
+    "requestedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+    "requestedBy": {"type": "string", "minLength": 1, "maxLength": 128},
+    "planDigest": {"$ref": "common.schema.json#/$defs/digest"},
+    "approvalId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "provenance": {"$ref": "common.schema.json#/$defs/provenance"}
+  }
+}

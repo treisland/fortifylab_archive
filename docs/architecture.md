@@ -11,8 +11,9 @@ The accepted component-registry decision is implemented by the
 definitions, and validation contracts.
 
 The technology-neutral control-loop decision is implemented at the data
-boundary by the [versioned loop contracts](loop-contracts.md). Runtime
-adapters and persistence remain separate implementation work.
+boundary by the [versioned loop contracts](loop-contracts.md), with local
+transactional, bounded, sanitized history behind that boundary. Runtime
+adapters remain separate implementation work.
 
 The minimum 0.2 service, API, persistence, authentication, and Kubernetes
 permission boundary is summarized in the

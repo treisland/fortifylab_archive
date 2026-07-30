@@ -1,4 +1,12 @@
 {
+  "operation": {
+    "apiVersion": "fortifylab.io/v1alpha1", "kind": "Operation", "id": "op-001", "loop": "lifecycle",
+    "subject": {"type": "component", "id": "ssc"}, "operation": "start",
+    "requestedAt": "2026-07-30T11:59:59Z", "requestedBy": "local-operator",
+    "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "approvalId": "approval-001",
+    "provenance": {"source": "manager", "observedAt": "2026-07-30T11:59:59Z", "collector": "operation-service", "correlationId": "loop-001"}
+  },
   "progress": {
     "apiVersion": "fortifylab.io/v1alpha1", "kind": "OperationProgress", "id": "op-001", "loop": "lifecycle",
     "subject": {"type": "component", "id": "ssc"}, "operation": "start", "state": "running", "attempt": 1,
