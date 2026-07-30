@@ -1,0 +1,11 @@
+[server]
+# The MicroK8s ingress reaches this private host listener. Do not expose it in
+# the AWS Security Group.
+host = "0.0.0.0"
+port = 8080
+
+[storage]
+database = "/var/lib/fortify-lab-manager/history.sqlite3"
+
+[authentication]
+accounts = "/var/lib/fortify-lab-manager/accounts.json"

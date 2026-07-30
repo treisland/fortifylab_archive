@@ -10,6 +10,10 @@ platform profiles.
 
 ### Added
 
+- A deterministic 0.2 manager host installation and upgrade path with
+  protected external configuration/state, systemd ownership, authentication
+  bootstrap, `lab.$DOMAIN` MicroK8s ingress using the existing wildcard TLS
+  Secret, sanitized diagnostics, and separate uninstall/state deletion.
 - A secure, same-origin read-only Web dashboard with authenticated sessions,
   whole-lab summary, dependency/version map, health root cause and evidence,
   remediation, preflight, sanitized recent history, accessible state badges,

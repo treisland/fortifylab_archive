@@ -11,10 +11,11 @@ actions are outside this release.
 
 ## Access and authentication
 
-The dashboard follows [ADR 0009](adr/0009-manager-runtime-boundary.md). Keep
-the manager listener on loopback by default. Remote access requires an
-operator-configured TLS reverse proxy and a trusted network boundary; this
-lab UI is not designed for Internet exposure.
+The dashboard follows [ADR 0009](adr/0009-manager-runtime-boundary.md).
+Supported remote lab access is only through MicroK8s nginx ingress at
+`https://lab.$DOMAIN`; the host backend listener is not a browser-facing
+route. See the [manager operator guide](operations/manager.md). This lab UI is
+not designed for public Internet exposure.
 
 An operator must bootstrap the local account outside the browser and pass
 only its PBKDF2 password verifier to `DashboardApp`. The helper

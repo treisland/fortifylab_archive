@@ -30,6 +30,7 @@ evidence boundary.
 | ScanCentral DAST | `https://dast.fortifydemo.com` | API + scanner, PostgreSQL 17 backed |
 | LIM | `https://lim.fortifydemo.com` | DAST license/pool server |
 | Kubernetes Dashboard | `https://dashboard.fortifydemo.com` | Optional |
+| Fortify Lab Manager | `https://lab.fortifydemo.com` | Authenticated, read-only 0.2 UI |
 
 ## Prerequisites
 
@@ -75,7 +76,7 @@ the cluster's node IP.
 **Client-side** (your laptop) — add to `/etc/hosts` (or Pi-hole):
 
 ```
-<host-ip>  ssc.fortifydemo.com sast.fortifydemo.com dast.fortifydemo.com lim.fortifydemo.com dashboard.fortifydemo.com
+<host-ip>  ssc.fortifydemo.com sast.fortifydemo.com dast.fortifydemo.com lim.fortifydemo.com dashboard.fortifydemo.com lab.fortifydemo.com
 ```
 
 **In-cluster** — pods can't reach `*.$DOMAIN` through nginx because
@@ -164,6 +165,11 @@ least-privilege Kubernetes contract.
 See the [read-only Web dashboard](docs/web-dashboard.md) for the one-page lab
 view, authentication and exposure posture, UI states, screenshots, and
 secret-disclosure boundary.
+
+See [Install and operate the 0.2 manager](docs/operations/manager.md) for the
+supported `https://lab.$DOMAIN` MicroK8s ingress route, systemd lifecycle,
+authentication bootstrap, diagnostics, upgrades, backups, and uninstall/data
+deletion boundary.
 
 Run and interpret the manager's read-only readiness report using
 [Deployment preflight](docs/deployment-preflight.md) before beginning a lab
