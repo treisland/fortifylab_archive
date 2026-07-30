@@ -986,7 +986,7 @@ class Supervisor:
     def status_text(self) -> str:
         paused = self.store.get("paused", "false") == "true"
         pr = self.store.get("current_pr", "none")
-        issue = self.store.get("current_issue", "none")
+        issue = self.store.get("current_issue")
         heartbeat = (
             read_heartbeat(self.config.heartbeat_root, int(issue))
             if self.config.heartbeat_root and issue.isdigit()

@@ -253,6 +253,22 @@ class SupervisorTest(unittest.TestCase):
         pr["statusCheckRollup"][0]["conclusion"] = "FAILURE"
         self.assertEqual(checks_state(pr), "failed")
 
+    def test_empty_paused_workflow_does_not_wait_for_runner_evidence(self) -> None:
+        self.store.set("paused", "true")
+        status = self.supervisor.status_text()
+        self.assertIn("Current: none", status)
+        self.assertIn("Workflow: paused", status)
+        self.assertIn("Next: operator resume or queue selection", status)
+        self.assertNotIn("waiting for runner evidence", status)
+
+    def test_issue_without_heartbeat_is_waiting_not_running(self) -> None:
+        self.store.set("current_issue", "26")
+        self.store.set("current_issue_title", "Live deployment")
+        status = self.supervisor.status_text()
+        self.assertIn("Current: Live deployment", status)
+        self.assertIn("Workflow: waiting", status)
+        self.assertIn("Next: runner startup or operator action", status)
+
     def test_unauthorized_and_group_commands_are_ignored(self) -> None:
         self.supervisor.handle_update(
             {

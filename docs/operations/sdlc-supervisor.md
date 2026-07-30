@@ -228,6 +228,10 @@ state, and the eventual PR reference without parsing Codex output or runner
 logs. See the [runner heartbeat contract](../runner-heartbeats.md) for phases,
 freshness classifications, restart behavior, bounded retention, and the
 security boundary. Heartbeats never authorize or advance the workflow.
+With no current issue, the card reports `idle` or `paused` and points to queue
+selection or operator resume. A selected issue without heartbeat evidence is
+`waiting`, never `running`; `running` is reserved for an issue with active
+runner evidence.
 Repository validation is bounded by `FORTIFY_RUNNER_VALIDATION_TIMEOUT`
 (default `30m`). If validation or one of its child processes deadlocks, the
 runner terminates it, records validation failure, preserves the issue
