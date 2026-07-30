@@ -144,8 +144,8 @@ status_prereqs() {
 }
 
 status_license() {
-    local f="$FORTIFY_HOME_K8S/secrets/input/fortify.license"
-    if [ -s "$f" ]; then
+    if ( source "$FORTIFY_HOME_K8S/scripts/lib/fortify-license.sh" &&
+         fortify_resolve_license_file ) 2>/dev/null; then
         printf '%s License file present\n' "$OK_MARK"
     else
         printf '%s License missing — option 4 to add\n' "$FAIL_MARK"
@@ -352,17 +352,16 @@ show_app_creds() {
 license_menu() {
     while true; do
         title "License files"
-        local f="$FORTIFY_HOME_K8S/secrets/input/fortify.license"
+        local default_file="$FORTIFY_HOME_K8S/secrets/input/fortify.license"
         echo
-        if [ -s "$f" ]; then
-            printf '  %s fortify.license  (%s bytes)\n' "$OK_MARK" "$(stat -c%s "$f")"
+        if ( source "$FORTIFY_HOME_K8S/scripts/lib/fortify-license.sh" &&
+             fortify_resolve_license_file ) 2>/dev/null; then
+            printf '  %s Configured Fortify license is readable\n' "$OK_MARK"
         else
-            printf '  %s fortify.license  not found\n' "$FAIL_MARK"
+            printf '  %s Configured Fortify license is unavailable\n' "$FAIL_MARK"
         fi
         echo
-        echo "  Path: $f"
-        echo
-        echo "  1. Import a license from a path"
+        echo "  1. Import to the backward-compatible repository-local location"
         echo "  2. Where to obtain a license"
         echo
         echo "  r. Return"
@@ -373,10 +372,10 @@ license_menu() {
             1)
                 ask src "Path to fortify.license file:"
                 if [ ! -s "$src" ]; then
-                    error "File not found or empty: $src"
+                    error "The selected file is missing, unreadable, or empty."
                 else
-                    mkdir -p "$(dirname "$f")"
-                    cp "$src" "$f" && note "Imported to $f"
+                    mkdir -p "$(dirname "$default_file")"
+                    cp "$src" "$default_file" && note "Imported license file."
                 fi
                 press_any ;;
             2)
@@ -385,8 +384,8 @@ license_menu() {
   Customers: download from your OpenText / Fortify customer portal.
   Trial:     request at https://www.opentext.com/products/fortify
 
-  Once you have the file, place it at:
-    $f
+  Set FORTIFY_LICENSE_FILE in .env to keep the file outside this repository,
+  or use option 1 for the backward-compatible gitignored location.
 
 EOF
                 press_any ;;
@@ -956,7 +955,8 @@ EOF
 }
 
 preflight_check() {
-    [ -s "$FORTIFY_HOME_K8S/secrets/input/fortify.license" ] || { error "Missing fortify.license"; return 1; }
+    source "$FORTIFY_HOME_K8S/scripts/lib/fortify-license.sh"
+    fortify_resolve_license_file || return 1
     cluster_reachable || { error "Cluster not reachable"; return 1; }
     return 0
 }

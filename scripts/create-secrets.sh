@@ -22,6 +22,7 @@ if [ -z "${FORTIFY_HOME_K8S:-}" ]; then
 fi
 
 source "$FORTIFY_HOME_K8S/.env"
+source "$FORTIFY_HOME_K8S/scripts/lib/fortify-license.sh"
 
 # Running under sudo would create files in secrets/generated/ owned by root,
 # which then block subsequent normal-user runs from rebuilding the directory.
@@ -55,24 +56,7 @@ trap cleanup EXIT
 # SECTION: PRE-FLIGHT CHECKS
 #--------------------------
 
-LICENSE_FILE="$INPUT_DIR/fortify.license"
-if [ ! -s "$LICENSE_FILE" ]; then
-  cat <<EOF
-❌ Missing required license file: $LICENSE_FILE
-
-  Fortify SSC and ScanCentral SAST require a valid fortify.license file.
-
-  How to obtain one:
-    • Customers: download from your OpenText / Fortify customer portal
-    • Trial:     request at https://www.opentext.com/products/fortify
-
-  Place the file at:
-    $LICENSE_FILE
-
-  Then re-run this script.
-EOF
-  exit 1
-fi
+fortify_resolve_license_file || exit 1
 
 if [ ! -f "$TRUSTSTORE" ] || [ ! -f "$JVM_KEYSTORE" ]; then
   echo "❌ Certs/keystores not found. Run scripts/create-certs.sh first."
@@ -172,7 +156,7 @@ $KUBECTL -n "$NAMESPACE" delete secret --ignore-not-found \
 # via secretKeyRef. Generated fresh per install so two clones of this repo
 # don't share authentication tokens.
 $KUBECTL -n "$NAMESPACE" create secret generic fortify-secrets \
-  --from-file=fortify.license="$LICENSE_FILE" \
+  --from-file=fortify.license="$FORTIFY_LICENSE_FILE" \
   --from-file=ssc.autoconfig="$SSC_GEN_DIR/ssc.autoconfig" \
   --from-file=secret.key="$SSC_GEN_DIR/secret.key" \
   --from-file=keystore.jks="$JVM_KEYSTORE" \

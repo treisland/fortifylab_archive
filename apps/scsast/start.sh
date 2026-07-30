@@ -11,15 +11,9 @@ source "$FORTIFY_HOME_K8S/.env"
 # Get the current directory where this script resides
 CURRENT_DIR="$(dirname -- "${BASH_SOURCE[0]}")"
 
-if [ ! -s "$FORTIFY_SECRETS_INPUT/fortify.license" ]; then
-  echo "❌ Missing $FORTIFY_SECRETS_INPUT/fortify.license — see secrets/input/README.md"
-  return 1 2>/dev/null || exit 1
-fi
-
 microk8s helm -n "$NAMESPACE" upgrade -i scancentral-sast oci://registry-1.docker.io/fortifydocker/helm-scancentral-sast --version "$FORTIFY_SCSAST_CHART_VERSION" \
 --create-namespace \
 --set imagePullSecrets[0].name=regcred \
---set-file secrets.fortifyLicense=$FORTIFY_SECRETS_INPUT/fortify.license \
 --set-file trustedCertificates[0]=$ROOTCA_CERT \
 --set-file trustedCertificates[1]=$SERVER_CERT \
 --set secrets.secretName=fortify-secrets \

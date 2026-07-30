@@ -36,7 +36,8 @@ evidence boundary.
 - Linux host (Ubuntu 22.04+ tested)
 - ~16 GB RAM, ~50 GB disk free
 - Browser reachability to the host (LAN IP, public IP, or VPN)
-- A Fortify license (`fortify.license`) — see [`secrets/input/README.md`](secrets/input/README.md)
+- A Fortify license (`fortify.license`), stored outside the repository when
+  desired — see [`secrets/input/README.md`](secrets/input/README.md)
 - A Docker Hub login that can pull from `fortifydocker/*` and `bitnamilegacy/*`
 
 ## Quick start
@@ -45,7 +46,8 @@ evidence boundary.
 git clone https://github.com/treisland/fortifylab.git
 cd fortifylab
 cp .env.example .env
-# Edit .env: at minimum set DOMAIN, DEFAULT_PASS, and check image versions.
+# Edit .env: at minimum set DOMAIN, DEFAULT_PASS, FORTIFY_LICENSE_FILE,
+# and check image versions. The repository-local license default still works.
 ./start_wizard.sh
 ```
 
@@ -169,8 +171,10 @@ shared by lifecycle, health, development, and improvement loops.
   with the committed lab sample. Do not replace that key after SSC stores
   data; recovery and deliberate migration guidance is in
   [`secrets/README.md`](secrets/README.md).
-- **`secrets/input/`** is the only place you put files manually
-  (license). `secrets/generated/` is owned by the scripts.
+- **`FORTIFY_LICENSE_FILE`** may reference a protected license outside the
+  repository. The default remains `secrets/input/fortify.license`.
+  `secrets/generated/` is owned by the scripts. License paths and content must
+  never be included in logs, artifacts, Telegram messages, or support bundles.
 - **Re-running `create-certs.sh`** rotates the root CA. Browsers will
   flag the new cert as untrusted until you re-import `rootCA.pem`.
 - **Postgres data directory is initialized by the running image**. If

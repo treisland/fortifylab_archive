@@ -9,11 +9,6 @@ source "$FORTIFY_HOME_K8S/.env"
 
 CURRENT_DIR="$( dirname "${BASH_SOURCE[0]}" )"
 
-if [ ! -s "$FORTIFY_SECRETS_INPUT/fortify.license" ]; then
-  echo "❌ Missing $FORTIFY_SECRETS_INPUT/fortify.license — see secrets/input/README.md"
-  return 1 2>/dev/null || exit 1
-fi
-
 microk8s helm -n "$NAMESPACE" upgrade -i ssc \
 		--create-namespace \
 		oci://registry-1.docker.io/fortifydocker/helm-ssc \
