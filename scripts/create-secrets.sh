@@ -39,8 +39,16 @@ INPUT_DIR="$FORTIFY_HOME_K8S/secrets/input"
 TEMPLATES_DIR="$FORTIFY_HOME_K8S/secrets/templates"
 GENERATED_DIR="$FORTIFY_SECRETS_GENERATED"
 SSC_GEN_DIR="$GENERATED_DIR/ssc"
+PRESERVED_SSC_KEY=""
 
 KUBECTL="microk8s kubectl"
+
+cleanup() {
+  if [ -n "$PRESERVED_SSC_KEY" ] && [ -d "$PRESERVED_SSC_KEY" ]; then
+    rm -rf "$PRESERVED_SSC_KEY"
+  fi
+}
+trap cleanup EXIT
 
 
 #--------------------------
@@ -84,9 +92,15 @@ $KUBECTL get namespace "$NAMESPACE" &>/dev/null \
 # SECTION: REBUILD GENERATED/
 #--------------------------
 # Wipe everything under generated/ so stale files (old backups, removed
-# license files, etc.) never leak into a Secret. Cert artifacts live in
-# $FORTIFY_CERTS, not here, so this is safe.
+# license files, etc.) never leak into a Secret. Preserve SSC's secret.key:
+# it encrypts data in the SSC database and changing it is a separate,
+# migration-backed operation, not part of rebuilding Kubernetes Secrets.
 
+if [ -s "$SSC_GEN_DIR/secret.key" ]; then
+  PRESERVED_SSC_KEY="$(mktemp -d)"
+  chmod 700 "$PRESERVED_SSC_KEY"
+  cp "$SSC_GEN_DIR/secret.key" "$PRESERVED_SSC_KEY/secret.key"
+fi
 rm -rf "$GENERATED_DIR"
 mkdir -p "$SSC_GEN_DIR"
 
@@ -103,24 +117,20 @@ envsubst '${SSC_DB_USER} ${SSC_DB_PASSWORD}' \
 # keystore with a specific binary header. `openssl rand` output is rejected
 # by SSC's pwtool with "Unable to read secret key from Fortify key store".
 #
-# We use a committed sample key from templates/ for new deploys (fine for
-# a lab/demo — every clone gets the same key). For production, generate
-# a fresh one with Fortify's pwtool inside the SSC container and replace
-# this file.
+# We use a committed sample key from templates/ for a fresh lab. It is a
+# convenience default, not a production secret.
 #
 # Once an SSC instance has stored encrypted credentials in its DB with
-# a given key, that key MUST stay constant. We therefore reuse the
-# existing $SSC_GEN_DIR/secret.key if it's already present (e.g. on a
-# re-run of create-secrets.sh against a live cluster) instead of
-# rotating it.
-if [ -s "$SSC_GEN_DIR/secret.key" ]; then
-    : # already exists from a previous run; keep it
+# a given key, that key MUST stay constant. A key saved before the generated
+# directory rebuild therefore takes precedence over the fresh-lab sample.
+if [ -n "$PRESERVED_SSC_KEY" ] && [ -s "$PRESERVED_SSC_KEY/secret.key" ]; then
+    cp "$PRESERVED_SSC_KEY/secret.key" "$SSC_GEN_DIR/secret.key"
 elif [ -s "$TEMPLATES_DIR/secret.key.sample" ]; then
     cp "$TEMPLATES_DIR/secret.key.sample" "$SSC_GEN_DIR/secret.key"
 else
-    echo "❌ No secret.key.sample found in templates/ and no existing key in generated/."
-    echo "   For a fresh install you can copy a sample key from a Fortify SSC pod:"
-    echo "     kubectl -n $NAMESPACE exec ssc-webapp-0 -- /app/tools/...  # see SSC docs"
+    echo "❌ No preserved SSC secret.key or fresh-lab sample was found."
+    echo "   Restore the key that matches the SSC database before continuing."
+    echo "   See secrets/README.md for recovery and rotation guidance."
     exit 1
 fi
 

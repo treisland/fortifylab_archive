@@ -12,6 +12,15 @@ mkcert-issued TLS. Every step driven by an interactive wizard or a single
 > Not a production deployment guide — opinionated defaults, single-node
 > cluster, NFS PVCs. Intended for lab and evaluation use.
 
+## Support boundary
+
+Fortify Lab Manager targets a local, single-node MicroK8s lab. Other
+Kubernetes distributions and ASPM are outside the current project scope.
+The pinned component versions in `.env.example` are intentional evaluation
+defaults, not a verified or vendor-supported platform profile. See
+[Platform compatibility](docs/platform-compatibility.md) for the precise
+evidence boundary.
+
 ## What you get
 
 | Component | Default URL | Notes |
@@ -140,9 +149,11 @@ apps/
 - **Image tags are pinned in `.env.example`** to specific versions of
   `bitnamilegacy/postgresql`, `bitnamilegacy/mysql`, etc. Bitnami's
   `:latest` tag has shifted under us before — always pin.
-- **`secret.key` rotates on every `create-secrets.sh` run**. SSC uses it
-  to encrypt credentials in its DB; rotating breaks decryption of anything
-  already stored. Treat the secret-creation step as fresh-install only.
+- **SSC `secret.key` is preserved across `create-secrets.sh` runs** because
+  SSC uses it to encrypt credentials in its database. A fresh clone starts
+  with the committed lab sample. Do not replace that key after SSC stores
+  data; recovery and deliberate migration guidance is in
+  [`secrets/README.md`](secrets/README.md).
 - **`secrets/input/`** is the only place you put files manually
   (license). `secrets/generated/` is owned by the scripts.
 - **Re-running `create-certs.sh`** rotates the root CA. Browsers will
