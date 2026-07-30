@@ -72,6 +72,14 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertNotIn("rotates on every `create-secrets.sh` run", readme)
         self.assertIn("preserved across `create-secrets.sh` runs", readme)
 
+    def test_supervisor_installer_copies_every_runtime_module(self) -> None:
+        script = (ROOT / "scripts/install-supervisor.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            '"$REPOSITORY_ROOT/supervisor/fortify_supervisor.py"', script
+        )
+        self.assertIn('"$REPOSITORY_ROOT/supervisor/workflow_status.py"', script)
+        self.assertIn('"$REPOSITORY_ROOT/manager/runner_heartbeat.py"', script)
+
 
 if __name__ == "__main__":
     unittest.main()

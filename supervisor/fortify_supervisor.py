@@ -1378,6 +1378,16 @@ class Supervisor:
         )
         next_issue = self.complete_merged_pull_request(pr)
         if next_issue is None:
+            if self.store.get("paused", "false") == "true":
+                return (
+                    f"✅ PR #{payload['pull_request']} merge approved and completed. "
+                    "The supervisor is paused; no new issue was started."
+                )
+            if not re.fullmatch(r"agent/issue-\d+", str(pr.get("headRefName") or "")):
+                return (
+                    f"✅ PR #{payload['pull_request']} merge approved and completed. "
+                    "The maintenance PR did not advance the issue queue."
+                )
             return (
                 f"✅ PR #{payload['pull_request']} merge approved and completed. "
                 f"Milestone {self.config.milestone} is complete."
@@ -1406,17 +1416,24 @@ class Supervisor:
         if issue_number is not None:
             self.github.close_issue(issue_number)
 
+        advances_queue = issue_number is not None
         self.notify_once(
             f"pr:{number}:merged-notice:{sha}",
             "pull_request.merged_notice",
-            f"✅ PR #{number} merged. Selecting next issue.",
+            (
+                f"✅ PR #{number} merged. Selecting next issue."
+                if advances_queue
+                else f"✅ Maintenance PR #{number} merged. Issue queue unchanged."
+            ),
             {"pull_request": number, "head_sha": sha},
         )
         if issue_number is not None and self.store.get("current_issue") == str(
             issue_number
         ):
             self.store.set("current_issue", "")
-        next_issue = self.queue_next_issue(issue_number)
+        next_issue = (
+            self.queue_next_issue(issue_number) if advances_queue else None
+        )
         self.store.set("current_pr", "")
         self.store.event(
             fingerprint,
@@ -1820,6 +1837,8 @@ class Supervisor:
     def queue_next_issue(
         self, completed_issue: int | None = None
     ) -> dict[str, Any] | None:
+        if self.store.get("paused", "false") == "true":
+            return None
         excluded = {completed_issue} if completed_issue is not None else None
         issue = self.github.next_issue(self.config.milestone, excluded)
         if not issue:
