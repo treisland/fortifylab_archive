@@ -42,6 +42,7 @@ class InlineAction:
 
     label: str
     token: str
+    row: int = 0
 
 
 @dataclasses.dataclass(frozen=True)
@@ -887,17 +888,17 @@ class Telegram:
 
     @staticmethod
     def _markup(actions: tuple[InlineAction, ...]) -> str:
+        rows: dict[int, list[dict[str, str]]] = {}
+        for action in actions:
+            rows.setdefault(action.row, []).append(
+                {
+                    "text": action.label,
+                    "callback_data": action.token,
+                }
+            )
         return json.dumps(
             {
-                "inline_keyboard": [
-                    [
-                        {
-                            "text": action.label,
-                            "callback_data": action.token,
-                        }
-                        for action in actions
-                    ]
-                ]
+                "inline_keyboard": list(rows.values())
             },
             separators=(",", ":"),
         )
@@ -941,6 +942,8 @@ class Telegram:
             {"command": "issue", "description": "Request an issue for a failure"},
             {"command": "pause", "description": "Pause new automated work"},
             {"command": "continue", "description": "Resume automated work"},
+            {"command": "watch", "description": "Enable routine status updates"},
+            {"command": "unwatch", "description": "Mute routine status updates"},
             {"command": "advance", "description": "Approve milestone rollover"},
             {"command": "help", "description": "Show available commands"},
         ]
@@ -1184,6 +1187,14 @@ class Supervisor:
                 {"actor": actor},
             )
             return "Supervisor paused"
+        if action == "continue-general":
+            self.store.set("paused", "false")
+            self.store.event(
+                f"continue:{int(self.store.now())}:{actor}",
+                "supervisor.continued",
+                {"actor": actor},
+            )
+            return "Supervisor resumed"
         if action == "stop":
             if not self.config.runner_stop_command:
                 raise SupervisorError("Stop is disabled by local policy")
@@ -1269,20 +1280,14 @@ class Supervisor:
 
     def workflow_actions(self) -> tuple[InlineAction, ...]:
         issue = self.store.get("current_issue")
-        actions = [
-            ("Status", "status"),
-            ("Details", "workflow-details"),
-            ("Refresh", "refresh"),
-            (
-                "Unwatch"
-                if self.store.get("watched", "true") == "true"
-                else "Watch",
-                "watch",
-            ),
-            ("Pause", "pause-general"),
-        ]
-        if issue.isdigit() and self.config.runner_stop_command:
+        paused = self.store.get("paused", "false") == "true"
+        actions = [("Details", "workflow-details")]
+        if paused:
+            actions.insert(0, ("Continue", "continue-general"))
+        elif issue.isdigit() and self.config.runner_stop_command:
             actions.append(("Stop", "stop"))
+        else:
+            actions.append(("Refresh", "refresh"))
         return tuple(
             InlineAction(
                 label,
@@ -1328,6 +1333,19 @@ class Supervisor:
                 {"actor": actor},
             )
             return "▶️ Supervisor resumed."
+        if command in {"/watch", "/unwatch"}:
+            watched = command == "/watch"
+            self.store.set("watched", "true" if watched else "false")
+            self.store.event(
+                f"watch-command:{int(self.store.now())}:{actor}",
+                "runner.watch_changed",
+                {"actor": actor, "watched": watched},
+            )
+            return (
+                "▶️ Routine status updates enabled."
+                if watched
+                else "🔕 Routine status updates muted."
+            )
         if command == "/advance":
             if len(parts) != 1:
                 raise SupervisorError("Usage: /advance")
@@ -1413,7 +1431,7 @@ class Supervisor:
             return (
                 "/status\n/pr\n/approve\n/reject <predefined-reason>\n"
                 "/retry <idempotent-stage>\n/issue <failure-fingerprint>\n"
-                "/pause\n/continue\n/advance\n/help"
+                "/pause\n/continue\n/watch\n/unwatch\n/advance\n/help"
             )
         raise SupervisorError("Unknown command. Use /help.")
 
@@ -1563,7 +1581,17 @@ class Supervisor:
                 ("Advance", "advance-milestone"),
                 ("Stay", "stay-milestone"),
             )
-        ) + self.workflow_actions()
+        ) + (
+            InlineAction(
+                "Details",
+                self.store.create_callback_token(
+                    "workflow-details",
+                    self.config.approval_ttl_seconds,
+                    actor=self.allowed_user,
+                ),
+                row=1,
+            ),
+        )
         self.notify_once(
             f"milestone:{current}:rollover:{following}:{approval['id']}",
             "milestone.rollover_ready",
@@ -1797,8 +1825,15 @@ class Supervisor:
                 for label, action in (
                     ("Approve", "approve"),
                     ("Reject", "reject"),
+                    ("Details", "details"),
                 )
-            ) + self.workflow_actions()
+            )
+            actions = tuple(
+                dataclasses.replace(action, row=1)
+                if action.label == "Details"
+                else action
+                for action in actions
+            )
             self.notify_once(
                 fingerprint,
                 "pull_request.approval_ready",

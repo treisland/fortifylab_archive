@@ -62,6 +62,8 @@ journalctl --user -u fortify-supervisor-telegram.service
 /issue <failure-fingerprint>
 /pause
 /continue
+/watch
+/unwatch
 /advance
 /help
 ```
@@ -163,11 +165,18 @@ Approval ready: no
 Next: scanning
 ```
 
-The card offers **Status**, **Details**, **Refresh**, **Watch/Unwatch**, and
-**Pause**. Details is a new durable sanitized message, not a callback toast.
-Watch controls routine heartbeat delivery only; urgent notifications continue.
-If protected local configuration supplies `runner_stop_command`, **Stop** is
-also shown. It creates a separate confirmation message, and only the second
+The card shows only controls relevant to its current state so Telegram labels
+remain readable. Normal status offers **Details** and **Refresh**; an active
+runner with a configured stop command offers **Details** and **Stop**; paused
+state offers **Continue** and **Details**. PR approval uses **Approve** and
+**Reject** on the first row with **Details** on a second row. Milestone
+rollover similarly uses **Advance** and **Stay**, then **Details**. Status,
+pause, and routine delivery preferences remain available through `/status`,
+`/pause`, `/watch`, and `/unwatch`.
+
+Details is a new durable sanitized message, not a callback toast. Watch
+controls routine heartbeat delivery only; urgent notifications continue. Stop
+creates a separate confirmation message, and only the second
 identity-bound, expiring, single-use callback launches that fixed command with
 the numeric issue as its sole appended argument. Confirmation records a
 `runner.stop_requested` audit event. Stop is hidden by default and never

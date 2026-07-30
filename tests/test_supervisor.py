@@ -23,6 +23,7 @@ from fortify_supervisor import (  # noqa: E402
     Store,
     Supervisor,
     SupervisorError,
+    Telegram,
     checks_state,
     sanitize_diagnostics,
 )
@@ -30,6 +31,24 @@ from workflow_status import heartbeat_interval, render_stall  # noqa: E402
 
 
 class GitHubTest(unittest.TestCase):
+    def test_telegram_keyboard_preserves_compact_rows(self) -> None:
+        markup = json.loads(
+            Telegram._markup(
+                (
+                    InlineAction("Approve", "one"),
+                    InlineAction("Reject", "two"),
+                    InlineAction("Details", "three", row=1),
+                )
+            )
+        )
+        self.assertEqual(
+            [
+                [button["text"] for button in row]
+                for row in markup["inline_keyboard"]
+            ],
+            [["Approve", "Reject"], ["Details"]],
+        )
+
     def test_close_issue_accepts_native_closure_race(self) -> None:
         responses = iter(
             [
@@ -301,6 +320,27 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("Workflow: waiting", status)
         self.assertIn("Next: runner startup or operator action", status)
 
+    def test_workflow_actions_are_compact_and_contextual(self) -> None:
+        self.assertEqual(
+            [action.label for action in self.supervisor.workflow_actions()],
+            ["Details", "Refresh"],
+        )
+        self.store.set("paused", "true")
+        self.assertEqual(
+            [action.label for action in self.supervisor.workflow_actions()],
+            ["Continue", "Details"],
+        )
+
+    def test_watch_preferences_use_slash_commands(self) -> None:
+        self.assertIn(
+            "muted", self.supervisor.handle_command("/unwatch", "101")
+        )
+        self.assertEqual(self.store.get("watched"), "false")
+        self.assertIn(
+            "enabled", self.supervisor.handle_command("/watch", "101")
+        )
+        self.assertEqual(self.store.get("watched"), "true")
+
     def test_unauthorized_and_group_commands_are_ignored(self) -> None:
         self.supervisor.handle_update(
             {
@@ -520,15 +560,11 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(len(self.telegram.messages), 3)
         self.assertEqual(
             [action.label for action in self.telegram.actions[-1]],
-            [
-                "Approve",
-                "Reject",
-                "Status",
-                "Details",
-                "Refresh",
-                "Unwatch",
-                "Pause",
-            ],
+            ["Approve", "Reject", "Details"],
+        )
+        self.assertEqual(
+            [action.row for action in self.telegram.actions[-1]],
+            [0, 0, 1],
         )
         for action in self.telegram.actions[-1]:
             self.assertNotIn("apr-", action.token)
@@ -916,7 +952,7 @@ class SupervisorTest(unittest.TestCase):
     def test_details_callback_sends_visible_message(self) -> None:
         token = self.action_token("Details")
         self.supervisor.handle_update(self.callback_update(token))
-        self.assertIn("PR / CI: #12", self.telegram.messages[-1])
+        self.assertIn("PR #12", self.telegram.messages[-1])
         self.assertIn("Checks: passed", self.telegram.messages[-1])
         self.assertIn("https://github.test/pull/12", self.telegram.messages[-1])
         self.assertEqual(self.telegram.callback_answers[-1][1], "Details sent")
@@ -955,7 +991,7 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("already used", self.telegram.callback_answers[-1][1])
 
     def test_unauthorized_callback_is_ignored(self) -> None:
-        token = self.action_token("Pause")
+        token = self.action_token("Details")
         update = self.callback_update(token)
         update["callback_query"]["from"]["id"] = 999
         self.supervisor.handle_update(update)
@@ -990,7 +1026,7 @@ class SupervisorTest(unittest.TestCase):
         )
         self.assertEqual(
             [action.label for action in self.telegram.actions[approval_message]],
-            ["Approve", "Reject", "Status", "Details", "Refresh", "Unwatch", "Pause"],
+            ["Approve", "Reject", "Details"],
         )
         self.assertEqual(self.telegram.edits[0][0].message_id, "77")
         self.assertIn(self.config.milestone, self.telegram.edits[0][1])
