@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "docs" / "architecture.md"
 ADR_DIRECTORY = ROOT / "docs" / "adr"
-FOUNDATIONAL_ADRS = tuple(range(1, 9))
+FOUNDATIONAL_ADRS = tuple(range(1, 10))
 
 
 class ArchitectureDecisionTests(unittest.TestCase):
@@ -49,6 +49,39 @@ class ArchitectureDecisionTests(unittest.TestCase):
             content = document.read_text(encoding="utf-8")
             task_lines = re.findall(r"(?m)^\s*[-*]\s+\[[ xX]\]\s+", content)
             self.assertEqual(task_lines, [], document.name)
+
+    def test_manager_runtime_boundary_is_explicit_and_fail_closed(self) -> None:
+        document = ADR_DIRECTORY / "0009-manager-runtime-boundary.md"
+        content = document.read_text(encoding="utf-8")
+        normalized_content = " ".join(content.split())
+
+        required_contracts = (
+            "/api/v1alpha1",
+            "POST /api/v1alpha1/session",
+            "apiVersion",
+            "SQLite",
+            "server-side session",
+            "loopback-only",
+            "SameSite=Strict",
+            "dedicated ServiceAccount",
+            "`get`, `list`, and `watch` only",
+            "no access to `secrets`",
+            "SSC remains the application-security system of record",
+            "Follow-up implementation stays in ordered GitHub issues",
+        )
+        for contract in required_contracts:
+            with self.subTest(contract=contract):
+                self.assertIn(contract, normalized_content)
+
+        forbidden_capabilities = (
+            "There is no raw Kubernetes proxy",
+            "browser-triggered install",
+            "It does not store secret values",
+            "It is neither a ClusterRole",
+        )
+        for capability in forbidden_capabilities:
+            with self.subTest(capability=capability):
+                self.assertIn(capability, normalized_content)
 
 
 if __name__ == "__main__":

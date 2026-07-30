@@ -157,6 +157,10 @@ See the [loop contracts reference](docs/loop-contracts.md) for versioned
 progress, health, event, incident, approval, and sanitized-trace records
 shared by lifecycle, health, development, and improvement loops.
 
+See the [manager runtime boundary](docs/manager-runtime-boundary.md) for the
+0.2 read-only API, local persistence, authentication, Web UI, and
+least-privilege Kubernetes contract.
+
 Representative deterministic regression scenarios are documented in the
 [loop evaluation corpus](docs/evaluation-corpus.md).
 
