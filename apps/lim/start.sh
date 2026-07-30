@@ -1,3 +1,5 @@
+#!/bin/bash
+
 #load the environment variables
 if [ -z "$FORTIFY_HOME_K8S" ]; then
     FORTIFY_HOME_K8S="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

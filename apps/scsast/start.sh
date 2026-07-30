@@ -47,4 +47,4 @@ microk8s helm -n "$NAMESPACE" upgrade -i scancentral-sast oci://registry-1.docke
 -f $CURRENT_DIR/resource_override.yaml
 
 microk8s kubectl -n "$NAMESPACE" scale statefulset scancentral-sast-controller --replicas=1
-microk8s kubectl -n "$NAMESPACE" scale statefulset scancentral-sast-worker-linux --replicas=1
+microk8s kubectl -n "$NAMESPACE" scale statefulset scancentral-sast-sensor-linux --replicas=1
