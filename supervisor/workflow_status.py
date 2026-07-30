@@ -97,15 +97,29 @@ def render_card(
     now: float,
 ) -> str:
     if not heartbeat:
+        if not issue:
+            workflow = "paused" if paused else "idle"
+            next_step = (
+                "operator resume or queue selection"
+                if paused
+                else "eligible issue selection"
+            )
+        else:
+            workflow = "paused" if paused else "waiting"
+            next_step = (
+                "operator action"
+                if paused
+                else "runner startup or operator action"
+            )
         return (
             f"Fortify SDLC Workflow — {milestone}\n"
             f"Milestone progress: issue #{issue or 'none'}\n"
             f"Current: {title or 'none'}\n"
-            f"Workflow: {'paused' if paused else 'running'}\n"
+            f"Workflow: {workflow}\n"
             "Runner: no heartbeat\n"
             f"PR / CI: {pr_state} / {ci_state}\n"
             f"Approval ready: {'yes' if approval_ready else 'no'}\n"
-            "Next: waiting for runner evidence"
+            f"Next: {next_step}"
         )
     started = parse_time(str(heartbeat["started_at"]))
     phase_started = parse_time(str(heartbeat["phase_started_at"]))
