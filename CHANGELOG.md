@@ -18,6 +18,8 @@ platform profiles.
 - An authoritative, schema-validated component registry shared by lifecycle
   and monitoring contracts for MySQL, PostgreSQL, SSC, LIM, ScanCentral SAST,
   and ScanCentral DAST.
+- Versioned, technology-neutral contracts for operation progress, health,
+  events, incidents, expiring plan approvals, and sanitized traces.
 
 ### Fixed
 

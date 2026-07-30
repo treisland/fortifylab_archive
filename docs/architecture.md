@@ -10,6 +10,10 @@ The accepted component-registry decision is implemented by the
 [component registry reference](component-registry.md), its machine-readable
 definitions, and validation contracts.
 
+The technology-neutral control-loop decision is implemented at the data
+boundary by the [versioned loop contracts](loop-contracts.md). Runtime
+adapters and persistence remain separate implementation work.
+
 ## Accepted decisions
 
 | ADR | Decision |

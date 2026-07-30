@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/contracts/v1alpha1/trace.schema.json",
+  "title": "Sanitized trace",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "id", "loop", "operationId", "sanitized", "redactions", "entries", "provenance"],
+  "properties": {
+    "apiVersion": {"$ref": "common.schema.json#/$defs/apiVersion"},
+    "kind": {"const": "SanitizedTrace"},
+    "id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "loop": {"$ref": "common.schema.json#/$defs/loop"},
+    "operationId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "sanitized": {"const": true},
+    "redactions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"enum": ["credential", "token", "license", "private-key", "certificate", "environment", "path"]}
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["at", "level", "code", "message"],
+        "properties": {
+          "at": {"$ref": "common.schema.json#/$defs/timestamp"},
+          "level": {"enum": ["debug", "info", "warning", "error"]},
+          "code": {"$ref": "common.schema.json#/$defs/identifier"},
+          "message": {"type": "string", "minLength": 1, "maxLength": 2048},
+          "fields": {
+            "type": "object",
+            "propertyNames": {"pattern": "^(?!.*(?:password|passwd|secret|token|credential|license|private.?key|authorization|cookie)).*$"},
+            "additionalProperties": {"type": ["string", "number", "integer", "boolean", "null"]}
+          }
+        }
+      }
+    },
+    "provenance": {"$ref": "common.schema.json#/$defs/provenance"}
+  }
+}

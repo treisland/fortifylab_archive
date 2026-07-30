@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/contracts/v1alpha1/progress.schema.json",
+  "title": "Operation progress",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "id", "loop", "subject", "operation", "state", "attempt", "policy", "idempotency", "cancellation", "updatedAt", "provenance"],
+  "properties": {
+    "apiVersion": {"$ref": "common.schema.json#/$defs/apiVersion"},
+    "kind": {"const": "OperationProgress"},
+    "id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "loop": {"$ref": "common.schema.json#/$defs/loop"},
+    "subject": {"$ref": "common.schema.json#/$defs/subject"},
+    "operation": {"$ref": "common.schema.json#/$defs/identifier"},
+    "state": {"enum": ["pending", "running", "retry-wait", "cancelling", "cancelled", "verifying", "succeeded", "failed", "timed-out"]},
+    "attempt": {"type": "integer", "minimum": 1},
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timeoutSeconds", "maxAttempts", "backoffSeconds"],
+      "properties": {
+        "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "maxAttempts": {"type": "integer", "minimum": 1, "maximum": 20},
+        "backoffSeconds": {"type": "integer", "minimum": 0, "maximum": 3600}
+      }
+    },
+    "idempotency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "key"],
+      "properties": {
+        "mode": {"enum": ["idempotent", "keyed", "non-idempotent"]},
+        "key": {"type": ["string", "null"], "maxLength": 256}
+      }
+    },
+    "cancellation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "supported"],
+      "properties": {
+        "requested": {"type": "boolean"},
+        "supported": {"type": "boolean"},
+        "requestedAt": {"$ref": "common.schema.json#/$defs/timestamp"}
+      }
+    },
+    "updatedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+    "error": {"$ref": "common.schema.json#/$defs/error"},
+    "provenance": {"$ref": "common.schema.json#/$defs/provenance"}
+  }
+}

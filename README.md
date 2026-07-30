@@ -129,6 +129,8 @@ scripts/
 registry/
   components.json         Authoritative component and dependency definitions.
   schemas/                Versioned structural contracts for the registry.
+contracts/
+  v1alpha1/               Technology-neutral loop schemas and examples.
 manager/
   component_registry.py   Shared lifecycle and monitoring registry API.
 secrets/
@@ -148,6 +150,10 @@ apps/
 See the [component registry reference](docs/component-registry.md) for the
 dependency graph, lifecycle safety metadata, health evidence, diagnostics,
 and schema evolution rules.
+
+See the [loop contracts reference](docs/loop-contracts.md) for versioned
+progress, health, event, incident, approval, and sanitized-trace records
+shared by lifecycle, health, development, and improvement loops.
 
 ## Conventions and gotchas
 
