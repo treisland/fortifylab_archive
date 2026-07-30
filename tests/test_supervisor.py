@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import json
 import subprocess
 import sys
@@ -25,6 +26,7 @@ from fortify_supervisor import (  # noqa: E402
     checks_state,
     sanitize_diagnostics,
 )
+from workflow_status import heartbeat_interval, render_stall  # noqa: E402
 
 
 class GitHubTest(unittest.TestCase):
@@ -209,6 +211,7 @@ class SupervisorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
+        self.root = root
         self.clock = [1_000.0]
         self.user_file = root / "user"
         self.chat_file = root / "chat"
@@ -342,12 +345,20 @@ class SupervisorTest(unittest.TestCase):
             "SELECT COUNT(*) AS count FROM approvals"
         ).fetchone()["count"]
         self.assertEqual(approvals, 1)
-        self.assertEqual(len(self.telegram.messages), 1)
+        self.assertEqual(len(self.telegram.messages), 3)
         self.assertEqual(
-            [action.label for action in self.telegram.actions[0]],
-            ["Approve", "Reject", "Details", "Pause"],
+            [action.label for action in self.telegram.actions[-1]],
+            [
+                "Approve",
+                "Reject",
+                "Status",
+                "Details",
+                "Refresh",
+                "Unwatch",
+                "Pause",
+            ],
         )
-        for action in self.telegram.actions[0]:
+        for action in self.telegram.actions[-1]:
             self.assertNotIn("apr-", action.token)
             self.assertNotIn("/", action.token)
 
@@ -455,6 +466,138 @@ class SupervisorTest(unittest.TestCase):
         self.telegram.fail_sends = False
         self.supervisor.notify_once("transient-1", "test.failure", "failed", {}, "failure")
         self.assertEqual(self.telegram.messages, ["failed\nOccurrences: 2"])
+
+    def write_heartbeat(
+        self,
+        *,
+        elapsed: int = 0,
+        phase: str = "implementing",
+        health: str = "active",
+        revision: int = 1,
+        activity_age: int = 0,
+    ) -> None:
+        root = self.root / "runner-heartbeats"
+        root.mkdir(exist_ok=True)
+        started = self.clock[0] - elapsed
+        activity = self.clock[0] - activity_age
+        stamp = lambda value: datetime.datetime.fromtimestamp(  # noqa: E731
+            value, datetime.timezone.utc
+        ).isoformat().replace("+00:00", "Z")
+        (root / "issue-2.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "issue": 2,
+                    "milestone": self.config.milestone,
+                    "writer_id": "a" * 32,
+                    "generation": 1,
+                    "revision": revision,
+                    "phase": phase,
+                    "phase_started_at": stamp(started),
+                    "started_at": stamp(started),
+                    "total_elapsed_seconds": elapsed,
+                    "last_activity_at": stamp(activity),
+                    "runner_health": health,
+                    "changed_file_count": 3,
+                    "validation_state": "running",
+                    "pr_reference": None,
+                    "next_expected_transition": "testing",
+                    "last_completed_safe_step": "repository inspection",
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.config = dataclasses.replace(self.config, heartbeat_root=root)
+        self.store.set("current_issue", "2")
+        self.store.set("current_issue_title", "Detailed workflow cards")
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+
+    def test_adaptive_heartbeat_intervals(self) -> None:
+        self.assertEqual(heartbeat_interval(599), 600)
+        self.assertEqual(heartbeat_interval(600), 900)
+        self.assertEqual(heartbeat_interval(3599), 900)
+        self.assertEqual(heartbeat_interval(3600), 1800)
+
+    def test_start_and_ten_minute_heartbeat_are_real_notifications(self) -> None:
+        self.clock[0] = 10_000
+        self.write_heartbeat(elapsed=600)
+        self.supervisor.monitor_runner()
+        self.assertEqual(len(self.telegram.messages), 2)
+        self.assertIn("Work started", self.telegram.messages[0])
+        self.assertIn("Changed files: 3", self.telegram.messages[1])
+
+    def test_restart_deduplicates_heartbeat_delivery(self) -> None:
+        self.clock[0] = 10_000
+        self.write_heartbeat(elapsed=600)
+        self.supervisor.monitor_runner()
+        delivered = len(self.telegram.messages)
+        restarted = Supervisor(self.config, self.store, self.github, self.telegram)
+        restarted.monitor_runner()
+        self.assertEqual(len(self.telegram.messages), delivered)
+
+    def test_quiet_hours_suppress_routine_but_not_stall(self) -> None:
+        self.clock[0] = 1_800
+        self.write_heartbeat(elapsed=900, health="stalled", activity_age=900)
+        self.config = dataclasses.replace(
+            self.config,
+            notifications=NotificationPreferences(
+                quiet_start="00:00", quiet_end="01:00", timezone="UTC"
+            ),
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.supervisor.monitor_runner()
+        self.assertEqual(len(self.telegram.messages), 3)
+        self.assertTrue(any("stalled" in item for item in self.telegram.messages))
+
+    def test_stall_recovery_and_no_output_evidence(self) -> None:
+        self.clock[0] = 10_000
+        self.write_heartbeat(elapsed=1800, health="stalled", activity_age=1800)
+        self.supervisor.monitor_runner()
+        self.assertTrue(
+            any(
+                "Last safe step: repository inspection" in item
+                for item in self.telegram.messages
+            )
+        )
+        self.write_heartbeat(
+            elapsed=1810, health="active", activity_age=0, revision=2
+        )
+        self.supervisor.monitor_runner()
+        self.assertTrue(any("recovered" in item for item in self.telegram.messages))
+
+    def test_stop_requires_second_identity_bound_confirmation(self) -> None:
+        calls: list[list[str]] = []
+
+        def run(command: list[str], **kwargs: Any) -> None:
+            calls.append(command)
+
+        self.config = dataclasses.replace(
+            self.config, runner_stop_command=("/bin/true",)
+        )
+        self.store.set("current_issue", "2")
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram, run=run
+        )
+        stop = next(
+            action.token
+            for action in self.supervisor.workflow_actions()
+            if action.label == "Stop"
+        )
+        outcome = self.supervisor.execute_callback(stop, "101")
+        confirm = outcome.split(":", 1)[1]
+        with self.assertRaisesRegex(SupervisorError, "another identity"):
+            self.supervisor.execute_callback(confirm, "999")
+        self.assertEqual(calls, [])
+        self.supervisor.execute_callback(confirm, "101")
+        self.assertEqual(calls, [["/bin/true", "2"]])
+        event = self.store.connection.execute(
+            "SELECT kind FROM events WHERE kind = 'runner.stop_requested'"
+        ).fetchone()
+        self.assertIsNotNone(event)
 
     def test_retry_requires_allowlisted_stage_and_matching_failure(self) -> None:
         self.supervisor.notify_once(
@@ -585,7 +728,7 @@ class SupervisorTest(unittest.TestCase):
     def test_details_callback_sends_visible_message(self) -> None:
         token = self.action_token("Details")
         self.supervisor.handle_update(self.callback_update(token))
-        self.assertIn("PR #12", self.telegram.messages[-1])
+        self.assertIn("PR / CI: #12", self.telegram.messages[-1])
         self.assertIn("Checks: passed", self.telegram.messages[-1])
         self.assertIn("https://github.test/pull/12", self.telegram.messages[-1])
         self.assertEqual(self.telegram.callback_answers[-1][1], "Details sent")
@@ -649,7 +792,9 @@ class SupervisorTest(unittest.TestCase):
     def test_existing_status_card_is_edited_in_place(self) -> None:
         self.store.set("status_message_id", "77")
         self.supervisor.monitor_once()
-        self.assertEqual(self.telegram.messages, [])
+        self.assertTrue(
+            any("PR #12 created" in message for message in self.telegram.messages)
+        )
         self.assertEqual(self.telegram.edits[0][0].message_id, "77")
         self.assertIn(self.config.milestone, self.telegram.edits[0][1])
 

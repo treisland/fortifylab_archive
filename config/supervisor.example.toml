@@ -13,6 +13,12 @@ telegram_chat_file = "/home/ubuntu/.config/fortify-lab-manager/telegram/private-
 # Optional bounded Codex runner. The selected issue number is appended as the
 # final argument. Keep commented until the supervisor-only loop is verified.
 # runner_command = ["/home/ubuntu/.local/bin/fortify-issue-dispatch"]
+# heartbeat_root = "/home/ubuntu/.local/share/fortify-lab-manager/runner-heartbeats"
+
+# Stop is hidden unless a separately reviewed, fixed executable is configured.
+# The issue number is appended as its only user-derived argument. Telegram
+# still requires a second, identity-bound confirmation.
+# runner_stop_command = ["/home/ubuntu/.local/bin/fortify-issue-stop"]
 
 [notifications]
 # "all" delivers actionable events immediately outside quiet hours.

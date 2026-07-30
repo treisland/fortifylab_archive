@@ -21,6 +21,7 @@
     "changed_file_count": {"type": "integer", "minimum": 0},
     "validation_state": {"enum": ["not-started", "running", "passed", "failed"]},
     "pr_reference": {"type": ["string", "null"], "maxLength": 200},
+    "last_completed_safe_step": {"type": "string", "minLength": 1, "maxLength": 40},
     "next_expected_transition": {"type": ["string", "null"]}
   }
 }

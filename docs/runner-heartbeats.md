@@ -16,7 +16,8 @@ It contains only:
 - enumerated phase, phase start, run start, total elapsed time, last activity,
   health classification, and next expected transition;
 - writer generation and revision used for concurrency protection;
-- changed-file count and validation state; and
+- changed-file count, validation state, and the last completed enumerated safe
+  phase (or runner initialization);
 - an optional PR reference.
 
 The phases are `preparing`, `inspecting`, `planning`, `implementing`, `testing`,

@@ -132,10 +132,55 @@ approvals for the completed PR.
 ## Workflow status card
 
 The supervisor maintains one durable card reference and edits that message as
-the loop changes. The card shows the configured milestone, queued issue,
-runner state, tracked PR, and whether new work is running or paused. A missing
-or uneditable card is replaced, and its new message reference becomes the
-durable reference. Telegram is never the authoritative workflow store.
+the loop changes. The detailed card shows milestone and issue progress, the
+sanitized issue title, workflow state, start and elapsed time, last activity,
+phase and phase age, runner health, changed-file count, validation, PR/CI
+state, approval readiness, and the next expected transition. A missing or
+uneditable card is replaced, and its new message reference becomes the durable
+reference. Telegram is never the authoritative workflow store.
+
+For example:
+
+```text
+Fortify SDLC Workflow — 0.2 — Observable Manager MVP
+Milestone progress: issue #53 · 40m elapsed
+Current: Add detailed Telegram workflow cards and adaptive long-running updates
+Workflow: running
+Started: 2026-07-30T10:00:00Z
+Last activity: 2m ago
+Phase: validating · 6m
+Runner: active
+Changed files: 5
+Validation: running
+PR / CI: none / not started
+Approval ready: no
+Next: scanning
+```
+
+The card offers **Status**, **Details**, **Refresh**, **Watch/Unwatch**, and
+**Pause**. Details is a new durable sanitized message, not a callback toast.
+Watch controls routine heartbeat delivery only; urgent notifications continue.
+If protected local configuration supplies `runner_stop_command`, **Stop** is
+also shown. It creates a separate confirmation message, and only the second
+identity-bound, expiring, single-use callback launches that fixed command with
+the numeric issue as its sole appended argument. Confirmation records a
+`runner.stop_requested` audit event. Stop is hidden by default and never
+deletes a worktree or persistent data.
+
+Work start sends a new Telegram message. The first routine heartbeat is due at
+10 minutes, then every 15 minutes through the first hour, and every 30 minutes
+afterward. Routine updates are suppressed during quiet hours, while unwatched,
+or when a meaningful notification was delivered recently. Phase changes
+requiring attention, suspected stalls, recovery, PR creation, CI completion,
+failure, and approval readiness notify immediately. A stall warning contains
+phase, elapsed time, activity age, the last recorded safe step, and bounded
+controls; it never includes a raw log tail.
+
+Delivery fingerprints, schedule checkpoints, watch state, and provider message
+references are persisted in the supervisor database. Consequently monitor
+overlap and service restart do not duplicate delivery. A provider outage leaves
+delivery pending for retry and cannot pause, stop, approve, merge, or otherwise
+change workflow authority.
 
 After an approved PR merges, the supervisor closes the issue identified by its
 `agent/issue-N` branch and immediately starts the lowest-numbered eligible open
@@ -230,3 +275,9 @@ runner takes a new writer generation, which prevents the old process from
 overwriting it. A missing heartbeat is unknown evidence, not proof that the
 runner failed; use the systemd unit state and configured timeout to decide
 whether operator action is needed.
+
+The optional `heartbeat_root` defaults to the `runner-heartbeats` directory
+beside `state_file`. It is read-only evidence. Heartbeat files with an
+unexpected identity, schema version, symlink, or invalid JSON are ignored
+rather than rendered. No external configuration, runner logs, or secret
+directories are read to build a card.

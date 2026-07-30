@@ -169,6 +169,7 @@ class HeartbeatStore:
                 "changed_file_count": 0,
                 "validation_state": "not-started",
                 "pr_reference": None,
+                "last_completed_safe_step": "runner initialized",
                 "next_expected_transition": "inspecting",
             }
             self._write_unlocked(issue, document)
@@ -234,6 +235,7 @@ class HeartbeatStore:
                     and PHASES.index(phase) < PHASES.index(current["phase"])
                 ):
                     raise HeartbeatError("stale heartbeat phase")
+                document["last_completed_safe_step"] = str(current["phase"])[:40]
                 document["phase"] = phase
                 document["phase_started_at"] = _timestamp(now)
             if changed_file_count is not None:
