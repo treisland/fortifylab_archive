@@ -15,6 +15,7 @@ ISSUE_NUMBER="${1:-}"
 REPOSITORY="${FORTIFY_GITHUB_REPOSITORY:-treisland/fortifylab}"
 SOURCE_ROOT="${FORTIFY_REPOSITORY_ROOT:-/home/ubuntu/lab}"
 STATE_ROOT="${FORTIFY_MANAGER_STATE_DIR:-$HOME/.local/share/fortify-lab-manager}"
+SUPERVISOR_CONFIG="${FORTIFY_SUPERVISOR_CONFIG:-$HOME/.config/fortify-lab-manager/supervisor.toml}"
 CODEX_BIN="${FORTIFY_CODEX_BIN:-$HOME/.local/bin/codex}"
 export GIT_SSH_COMMAND="${FORTIFY_GIT_SSH_COMMAND:-ssh -F /dev/null}"
 WORKSPACE_ROOT="$STATE_ROOT/workspaces"
@@ -48,6 +49,13 @@ for command in git gh python3; do
   command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
 done
 [ -x "$CODEX_BIN" ] || fail "Codex CLI is not executable: $CODEX_BIN"
+[ -r "$SUPERVISOR_CONFIG" ] || fail "supervisor configuration is not readable"
+APPROVED_MILESTONE="$(
+  python3 -c \
+    'import sys,tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["supervisor"]["milestone"])' \
+    "$SUPERVISOR_CONFIG"
+)"
+[ -n "$APPROVED_MILESTONE" ] || fail "approved milestone is empty"
 
 ISSUE_JSON="$(gh issue view "$ISSUE_NUMBER" --repo "$REPOSITORY" \
   --json number,title,body,state,milestone,url)"
@@ -59,7 +67,7 @@ ISSUE_TITLE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])
   <<<"$ISSUE_JSON")"
 
 [ "$ISSUE_STATE" = "OPEN" ] || fail "issue is not open"
-[ "$ISSUE_MILESTONE" = "0.1 — Evaluation Foundation" ] \
+[ "$ISSUE_MILESTONE" = "$APPROVED_MILESTONE" ] \
   || fail "issue is outside the approved milestone"
 [ ! -e "$WORKTREE" ] || fail "workspace already exists: $WORKTREE"
 

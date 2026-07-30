@@ -95,7 +95,8 @@ bounded runner at:
 
 When configured, the supervisor appends the selected issue number and launches
 it without a shell. The runner accepts only open issues in the approved
-milestone, creates a clean worktree from `origin/main`, runs Codex with a
+milestone read from the protected external `supervisor.toml`, creates a clean
+worktree from `origin/main`, runs Codex with a
 dedicated externally constrained systemd service, validates and scans staged
 changes, pushes an `agent/issue-N` branch, and opens a draft PR. Codex's nested
 Bubblewrap sandbox is disabled because Ubuntu hosts may restrict unprivileged
