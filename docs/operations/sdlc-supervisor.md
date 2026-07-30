@@ -123,6 +123,10 @@ Use `/approve` or `/reject [reason]` as a compatible fallback; these commands
 apply the same merge-plan validation. Explicit approval IDs remain available
 only if multiple approvals somehow coexist.
 
+When stale approvals from older PRs coexist with the tracked PR, implicit
+commands select the tracked PR. Merge reconciliation supersedes any remaining
+approvals for the completed PR.
+
 ## Workflow status card
 
 The supervisor maintains one durable card reference and edits that message as
