@@ -20,6 +20,8 @@ platform profiles.
   and ScanCentral DAST.
 - Versioned, technology-neutral contracts for operation progress, health,
   events, incidents, expiring plan approvals, and sanitized traces.
+- A versioned, deterministic loop evaluation corpus with representative
+  success and failure classifications, safe actions, and redaction assertions.
 
 ### Fixed
 

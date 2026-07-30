@@ -1,0 +1,85 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "LoopEvaluationCorpus",
+  "corpusVersion": "1.0.0",
+  "cases": [
+    {
+      "id": "healthy-component",
+      "description": "A required database query and application readiness check both succeed.",
+      "input": {"loop": "health", "subject": "ssc", "signals": [{"code": "database.query", "value": "pass"}, {"code": "application.ready", "value": true}]},
+      "expected": {"classification": "healthy", "safeAction": {"code": "record-observation", "automatic": true, "destructive": false, "requiresApproval": false}, "redaction": {"required": false, "categories": [], "forbiddenSubstrings": []}}
+    },
+    {
+      "id": "database-unavailable",
+      "description": "The database network endpoint cannot be reached before the bounded check timeout.",
+      "input": {"loop": "health", "subject": "ssc", "signals": [{"code": "database.connectivity", "value": "timeout"}, {"code": "application.ready", "value": false}]},
+      "expected": {"classification": "dependency-unavailable", "safeAction": {"code": "check-database-health", "automatic": true, "destructive": false, "requiresApproval": false}, "redaction": {"required": true, "categories": ["environment"], "forbiddenSubstrings": ["db.internal.example"]}}
+    },
+    {
+      "id": "database-authentication-failure",
+      "description": "The database responds but rejects the supplied write-only credential.",
+      "input": {"loop": "health", "subject": "ssc", "signals": [{"code": "database.connectivity", "value": "pass"}, {"code": "database.authentication", "value": "rejected"}]},
+      "expected": {"classification": "authentication-failed", "safeAction": {"code": "verify-secret-reference", "automatic": false, "destructive": false, "requiresApproval": false}, "redaction": {"required": true, "categories": ["credential"], "forbiddenSubstrings": ["example-db-password"]}}
+    },
+    {
+      "id": "application-not-ready",
+      "description": "The pod is running but its authenticated application readiness probe fails.",
+      "input": {"loop": "health", "subject": "ssc", "signals": [{"code": "pod.phase", "value": "running"}, {"code": "application.ready", "value": false}]},
+      "expected": {"classification": "application-not-ready", "safeAction": {"code": "inspect-sanitized-diagnostics", "automatic": true, "destructive": false, "requiresApproval": false}, "redaction": {"required": true, "categories": ["environment", "path"], "forbiddenSubstrings": ["/opt/fortify/runtime"]}}
+    },
+    {
+      "id": "slow-initialization",
+      "description": "Initialization remains within its explicit readiness deadline.",
+      "input": {"loop": "health", "subject": "scancentral-sast", "signals": [{"code": "initialization.elapsed-seconds", "value": 420}, {"code": "initialization.deadline-seconds", "value": 900}]},
+      "expected": {"classification": "initialization-in-progress", "safeAction": {"code": "continue-bounded-wait", "automatic": true, "destructive": false, "requiresApproval": false}, "redaction": {"required": false, "categories": [], "forbiddenSubstrings": []}}
+    },
+    {
+      "id": "path-symlink-attack",
+      "description": "A supplied artifact reference resolves through a symbolic link outside its allowed root.",
+      "input": {"loop": "lifecycle", "subject": "ssc", "signals": [{"code": "artifact.path-check", "value": "symlink-escape"}]},
+      "expected": {"classification": "unsafe-path", "safeAction": {"code": "reject-artifact", "automatic": true, "destructive": false, "requiresApproval": false}, "redaction": {"required": true, "categories": ["path"], "forbiddenSubstrings": ["/protected/external/config"]}}
+    },
+    {
+      "id": "tls-verification-failure",
+      "description": "The peer certificate cannot be validated against the configured trust reference.",
+      "input": {"loop": "health", "subject": "lim", "signals": [{"code": "tls.verify", "value": "unknown-authority"}]},
+      "expected": {"classification": "tls-failed", "safeAction": {"code": "verify-trust-reference", "automatic": false, "destructive": false, "requiresApproval": false}, "redaction": {"required": true, "categories": ["certificate", "path"], "forbiddenSubstrings": ["-----BEGIN CERTIFICATE-----"]}}
+    },
+    {
+      "id": "missing-lim-pool",
+      "description": "ScanCentral DAST cannot resolve its required LIM pool reference.",
+      "input": {"loop": "health", "subject": "scancentral-dast", "signals": [{"code": "lim.pool", "value": "missing"}]},
+      "expected": {"classification": "configuration-missing", "safeAction": {"code": "configure-lim-pool-reference", "automatic": false, "destructive": false, "requiresApproval": false}, "redaction": {"required": true, "categories": ["credential"], "forbiddenSubstrings": ["example-pool-password"]}}
+    },
+    {
+      "id": "scanner-registration-failure",
+      "description": "A scanner starts but does not register with its controller before the deadline.",
+      "input": {"loop": "health", "subject": "scancentral-sast", "signals": [{"code": "scanner.process", "value": "running"}, {"code": "scanner.registered", "value": false}]},
+      "expected": {"classification": "registration-failed", "safeAction": {"code": "verify-controller-and-token-reference", "automatic": false, "destructive": false, "requiresApproval": false}, "redaction": {"required": true, "categories": ["token", "environment"], "forbiddenSubstrings": ["example-controller-token"]}}
+    },
+    {
+      "id": "retry-exhaustion",
+      "description": "An idempotent operation reaches its finite maximum attempt count.",
+      "input": {"loop": "lifecycle", "subject": "mysql", "signals": [{"code": "operation.attempt", "value": 3}, {"code": "operation.max-attempts", "value": 3}, {"code": "operation.result", "value": "failed"}]},
+      "expected": {"classification": "retry-exhausted", "safeAction": {"code": "stop-and-report", "automatic": true, "destructive": false, "requiresApproval": false}, "redaction": {"required": true, "categories": ["environment"], "forbiddenSubstrings": ["node-private-address"]}}
+    },
+    {
+      "id": "duplicate-event",
+      "description": "The same immutable observation is delivered twice with one deduplication key.",
+      "input": {"loop": "improvement", "subject": "health-observation", "signals": [{"code": "event.deduplication-key", "value": "observation-001"}, {"code": "event.delivery-count", "value": 2}]},
+      "expected": {"classification": "duplicate-observation", "safeAction": {"code": "retain-single-observation", "automatic": true, "destructive": false, "requiresApproval": false}, "redaction": {"required": false, "categories": [], "forbiddenSubstrings": []}}
+    },
+    {
+      "id": "secret-leakage",
+      "description": "Diagnostic output contains a recognizable bearer credential.",
+      "input": {"loop": "development", "subject": "sanitized-trace", "signals": [{"code": "trace.sensitive-pattern", "value": "bearer-credential"}]},
+      "expected": {"classification": "sensitive-output", "safeAction": {"code": "reject-and-redact-output", "automatic": true, "destructive": false, "requiresApproval": false}, "redaction": {"required": true, "categories": ["token"], "forbiddenSubstrings": ["Bearer example.token.value"]}}
+    },
+    {
+      "id": "persistent-data-deletion",
+      "description": "A request to delete retained component data is distinct from uninstall.",
+      "input": {"loop": "lifecycle", "subject": "postgresql", "signals": [{"code": "operation.type", "value": "delete-persistent-data"}, {"code": "approval.state", "value": "missing"}]},
+      "expected": {"classification": "destructive-approval-required", "safeAction": {"code": "block-pending-explicit-approval", "automatic": true, "destructive": false, "requiresApproval": true}, "redaction": {"required": true, "categories": ["path", "environment"], "forbiddenSubstrings": ["pvc-host-path"]}}
+    }
+  ]
+}
