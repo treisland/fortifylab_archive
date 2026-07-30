@@ -17,6 +17,8 @@ install -m 700 "$REPOSITORY_ROOT/scripts/fortify-issue-runner.sh" \
   "$BIN_ROOT/fortify-issue-runner"
 install -m 700 "$REPOSITORY_ROOT/scripts/fortify-issue-dispatch.sh" \
   "$BIN_ROOT/fortify-issue-dispatch"
+install -m 600 "$REPOSITORY_ROOT/manager/runner_heartbeat.py" \
+  "$LIB_ROOT/runner_heartbeat.py"
 
 if [ ! -f "$CONFIG_ROOT/supervisor.toml" ]; then
   install -m 600 "$REPOSITORY_ROOT/config/supervisor.example.toml" \

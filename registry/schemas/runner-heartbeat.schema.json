@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.example/schemas/runner-heartbeat.schema.json",
+  "title": "Bounded issue runner heartbeat",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "issue", "milestone", "writer_id", "generation", "revision", "phase", "phase_started_at", "started_at", "total_elapsed_seconds", "last_activity_at", "runner_health", "changed_file_count", "validation_state", "pr_reference", "next_expected_transition"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "issue": {"type": "integer", "minimum": 1},
+    "milestone": {"type": "string", "minLength": 1, "maxLength": 200},
+    "writer_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+    "generation": {"type": "integer", "minimum": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "phase": {"enum": ["preparing", "inspecting", "planning", "implementing", "testing", "validating", "scanning", "committing", "pushing", "creating-pr", "waiting-for-ci", "waiting-for-approval", "completed", "failed"]},
+    "phase_started_at": {"type": "string", "format": "date-time"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "total_elapsed_seconds": {"type": "integer", "minimum": 0},
+    "last_activity_at": {"type": "string", "format": "date-time"},
+    "runner_health": {"enum": ["active", "quiet", "possibly-stalled", "stalled", "completed", "failed"]},
+    "changed_file_count": {"type": "integer", "minimum": 0},
+    "validation_state": {"enum": ["not-started", "running", "passed", "failed"]},
+    "pr_reference": {"type": ["string", "null"], "maxLength": 200},
+    "next_expected_transition": {"type": ["string", "null"]}
+  }
+}
