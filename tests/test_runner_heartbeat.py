@@ -86,6 +86,7 @@ class RunnerHeartbeatTests(unittest.TestCase):
         self.assertEqual(recovered["revision"], expected["revision"])
         self.assertEqual(recovered["phase"], "validating")
         self.assertEqual(recovered["changed_file_count"], 4)
+        self.assertEqual(recovered["last_completed_safe_step"], "preparing")
 
     def test_runner_restart_takes_over_and_rejects_stale_writer(self) -> None:
         replacement = self.store.start(52, "0.2 — Observable Manager MVP")

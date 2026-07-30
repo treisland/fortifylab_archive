@@ -10,6 +10,9 @@ platform profiles.
 
 ### Added
 
+- Detailed private Telegram workflow cards, adaptive real heartbeat
+  notifications, restart-safe deduplication, stall/recovery alerts, durable
+  details, watch controls, and policy-gated two-step audited runner Stop.
 - Atomic, sanitized bounded-runner heartbeat documents with explicit phases,
   activity-age health, restart fencing, bounded terminal retention, and
   operator/JSON-schema contracts.

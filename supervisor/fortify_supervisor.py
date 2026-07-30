@@ -25,6 +25,12 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from workflow_status import (
+    heartbeat_interval,
+    read_heartbeat,
+    render_card,
+    render_stall,
+)
 
 class SupervisorError(RuntimeError):
     """Expected, user-actionable supervisor failure."""
@@ -126,6 +132,8 @@ class Config:
     poll_seconds: int = 120
     approval_ttl_seconds: int = 3600
     runner_command: tuple[str, ...] = ()
+    runner_stop_command: tuple[str, ...] = ()
+    heartbeat_root: Path | None = None
     notifications: NotificationPreferences = NotificationPreferences()
 
     @classmethod
@@ -159,6 +167,16 @@ class Config:
                 60, int(values.get("approval_ttl_seconds", 3600))
             ),
             runner_command=tuple(str(item) for item in values.get("runner_command", [])),
+            runner_stop_command=tuple(
+                str(item) for item in values.get("runner_stop_command", [])
+            ),
+            heartbeat_root=Path(
+                values.get(
+                    "heartbeat_root",
+                    Path(values["state_file"]).expanduser().parent
+                    / "runner-heartbeats",
+                )
+            ).expanduser(),
             notifications=NotificationPreferences(
                 mode=str(notification_values.get("mode", "all")),
                 quiet_start=str(notification_values.get("quiet_start", "")),
@@ -185,6 +203,8 @@ class Config:
         )
         if config.runner_command:
             validate_runner(config.runner_command[0])
+        if config.runner_stop_command:
+            validate_runner(config.runner_stop_command[0])
         return config
 
 
@@ -257,6 +277,8 @@ class Store:
                 token_hash TEXT PRIMARY KEY,
                 approval_id TEXT,
                 action TEXT NOT NULL,
+                actor TEXT,
+                payload TEXT NOT NULL DEFAULT '{}',
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL,
                 consumed_at INTEGER,
@@ -277,6 +299,16 @@ class Store:
             );
             """
         )
+        columns = {
+            str(row["name"])
+            for row in self.connection.execute("PRAGMA table_info(callback_tokens)")
+        }
+        if "actor" not in columns:
+            self.connection.execute("ALTER TABLE callback_tokens ADD COLUMN actor TEXT")
+        if "payload" not in columns:
+            self.connection.execute(
+                "ALTER TABLE callback_tokens ADD COLUMN payload TEXT NOT NULL DEFAULT '{}'"
+            )
         self.connection.commit()
 
     def get(self, key: str, default: str = "") -> str:
@@ -511,7 +543,13 @@ class Store:
         return self.approval(approval_id)
 
     def create_callback_token(
-        self, action: str, ttl: int, approval_id: str | None = None
+        self,
+        action: str,
+        ttl: int,
+        approval_id: str | None = None,
+        *,
+        actor: str | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> str:
         token = secrets.token_urlsafe(24)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -519,10 +557,18 @@ class Store:
         self.connection.execute(
             """
             INSERT INTO callback_tokens(
-                token_hash, approval_id, action, created_at, expires_at
-            ) VALUES(?, ?, ?, ?, ?)
+                token_hash, approval_id, action, actor, payload, created_at, expires_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?)
             """,
-            (token_hash, approval_id, action, created, created + ttl),
+            (
+                token_hash,
+                approval_id,
+                action,
+                actor,
+                json.dumps(payload or {}, sort_keys=True),
+                created,
+                created + ttl,
+            ),
         )
         self.connection.commit()
         return token
@@ -540,6 +586,8 @@ class Store:
                 raise SupervisorError("This action was already used")
             if int(row["expires_at"]) <= now:
                 raise SupervisorError("This action has expired")
+            if row["actor"] is not None and str(row["actor"]) != actor:
+                raise SupervisorError("This action belongs to another identity")
             changed = self.connection.execute(
                 """
                 UPDATE callback_tokens
@@ -934,13 +982,21 @@ class Supervisor:
         paused = self.store.get("paused", "false") == "true"
         pr = self.store.get("current_pr", "none")
         issue = self.store.get("current_issue", "none")
-        runner = self.store.get("runner_state", "idle")
-        return (
-            f"Fortify SDLC Workflow — {self.config.milestone}\n"
-            f"State: {'paused' if paused else 'running'}\n"
-            f"Issue: {issue or 'none'}\n"
-            f"Runner: {runner}\n"
-            f"PR: {pr or 'none'}"
+        heartbeat = (
+            read_heartbeat(self.config.heartbeat_root, int(issue))
+            if self.config.heartbeat_root and issue.isdigit()
+            else None
+        )
+        return render_card(
+            milestone=self.config.milestone,
+            issue=issue,
+            title=self.store.get("current_issue_title"),
+            paused=paused,
+            heartbeat=heartbeat,
+            pr_state=f"#{pr}" if pr and pr != "none" else "none",
+            ci_state=self.store.get("ci_state", "not started"),
+            approval_ready=bool(self.store.pending_approvals("merge_pr")),
+            now=self.store.now(),
         )
 
     def authorized_message(
@@ -990,7 +1046,15 @@ class Supervisor:
         reference = MessageReference(str(message.get("message_id") or ""))
         try:
             outcome = self.execute_callback(token, actor)
-            if outcome.startswith("PR #"):
+            if outcome.startswith("CONFIRM_STOP:"):
+                confirm_token = outcome.split(":", 1)[1]
+                self.telegram.send(
+                    "⚠ Confirm stopping the active bounded runner. "
+                    "This does not delete its worktree or data.",
+                    (InlineAction("Confirm Stop", confirm_token),),
+                )
+                self.telegram.answer_callback(callback_id, "Confirmation sent")
+            elif outcome.startswith("PR #") or outcome.startswith("Workflow details"):
                 self.telegram.send(outcome)
                 self.telegram.answer_callback(callback_id, "Details sent")
             else:
@@ -1008,17 +1072,82 @@ class Supervisor:
 
     def execute_callback(self, token: str, actor: str) -> str:
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        row = self.store.connection.execute(
+        candidate = self.store.connection.execute(
             "SELECT * FROM callback_tokens WHERE token_hash = ?", (token_hash,)
         ).fetchone()
-        if not row:
+        if not candidate:
             raise SupervisorError("This action is invalid or no longer available")
+        if candidate["approval_id"]:
+            approval = self.store.approval(str(candidate["approval_id"]))
+            approval_payload = json.loads(approval["payload"])
+            approval_pr = self.github.pull_request(
+                int(approval_payload["pull_request"])
+            )
+            self.verify_merge_plan(approval_pr, approval_payload, allow_draft=True)
+        row = self.store.consume_callback_token(token, actor)
+        action = str(row["action"])
+        callback_payload = json.loads(str(row["payload"] or "{}"))
+        if action in {"status", "refresh"}:
+            return self.status_text()
+        if action == "workflow-details":
+            details = "Workflow details\n" + self.status_text()
+            number = self.store.get("current_pr")
+            if number.isdigit():
+                pr = self.github.pull_request(int(number))
+                details += (
+                    f"\nChecks: {checks_state(pr)}"
+                    f"\nMerge: {pr.get('mergeStateStatus', 'unknown')}"
+                    f"\n{pr.get('url', '')}"
+                )
+            return details
+        if action == "watch":
+            watched = self.store.get("watched", "true") == "true"
+            self.store.set("watched", "false" if watched else "true")
+            self.store.event(
+                f"watch:{int(self.store.now())}:{actor}",
+                "runner.watch_changed",
+                {"actor": actor, "watched": not watched},
+            )
+            return "Workflow watched" if not watched else "Routine updates muted"
+        if action == "pause-general":
+            self.store.set("paused", "true")
+            self.store.event(
+                f"pause:{int(self.store.now())}:{actor}",
+                "supervisor.paused",
+                {"actor": actor},
+            )
+            return "Supervisor paused"
+        if action == "stop":
+            if not self.config.runner_stop_command:
+                raise SupervisorError("Stop is disabled by local policy")
+            confirm = self.store.create_callback_token(
+                "stop-confirm",
+                min(300, self.config.approval_ttl_seconds),
+                actor=actor,
+                payload=callback_payload,
+            )
+            return f"CONFIRM_STOP:{confirm}"
+        if action == "stop-confirm":
+            issue = int(callback_payload.get("issue", 0))
+            if not self.config.runner_stop_command or issue < 1:
+                raise SupervisorError("Stop is disabled by local policy")
+            self.run(
+                [*self.config.runner_stop_command, str(issue)],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            self.store.event(
+                f"runner:{issue}:stop:{int(self.store.now())}",
+                "runner.stop_requested",
+                {"actor": actor, "issue": issue},
+            )
+            return f"Stop requested for issue #{issue}"
         approval_id = str(row["approval_id"] or "")
         approval = self.store.approval(approval_id)
         payload = json.loads(approval["payload"])
-        pr = self.github.pull_request(int(payload["pull_request"]))
-        self.verify_merge_plan(pr, payload, allow_draft=True)
-        action = str(self.store.consume_callback_token(token, actor)["action"])
+        pr = approval_pr
         if action == "approve":
             return self.approve(approval_id, actor)
         if action == "reject":
@@ -1052,6 +1181,35 @@ class Supervisor:
                 f"{pr.get('url', '')}"
             )
         raise SupervisorError("Unsupported callback action")
+
+    def workflow_actions(self) -> tuple[InlineAction, ...]:
+        issue = self.store.get("current_issue")
+        actions = [
+            ("Status", "status"),
+            ("Details", "workflow-details"),
+            ("Refresh", "refresh"),
+            (
+                "Unwatch"
+                if self.store.get("watched", "true") == "true"
+                else "Watch",
+                "watch",
+            ),
+            ("Pause", "pause-general"),
+        ]
+        if issue.isdigit() and self.config.runner_stop_command:
+            actions.append(("Stop", "stop"))
+        return tuple(
+            InlineAction(
+                label,
+                self.store.create_callback_token(
+                    action,
+                    self.config.approval_ttl_seconds,
+                    actor=self.allowed_user,
+                    payload={"issue": int(issue)} if issue.isdigit() else {},
+                ),
+            )
+            for label, action in actions
+        )
 
     def handle_command(self, text: str, actor: str) -> str:
         parts = shlex.split(text)
@@ -1290,6 +1448,7 @@ class Supervisor:
 
     def monitor_once(self) -> None:
         self.deliver_digest()
+        self.monitor_runner()
         if self.store.get("paused", "false") == "true":
             return
         number = self.store.get("current_pr")
@@ -1302,6 +1461,13 @@ class Supervisor:
             if len(candidates) == 1:
                 number = str(candidates[0]["number"])
                 self.store.set("current_pr", number)
+                self.notify_once(
+                    f"pr:{number}:created",
+                    "pull_request.created",
+                    f"🔀 PR #{number} created for the active workflow.",
+                    {"pull_request": int(number)},
+                    meaningful=True,
+                )
             elif len(candidates) > 1:
                 self.notify_once(
                     "pr:ambiguous",
@@ -1365,6 +1531,19 @@ class Supervisor:
             )
             return
         check_state = checks_state(pr)
+        previous_ci = self.store.get(f"pr:{number}:ci")
+        self.store.set("ci_state", check_state)
+        self.store.set(f"pr:{number}:ci", check_state)
+        if previous_ci == "pending" and check_state in {"passed", "failed"}:
+            self.notify_once(
+                f"pr:{number}:ci:{sha}:{check_state}",
+                "pull_request.ci_completed",
+                f"{'✅' if check_state == 'passed' else '❌'} "
+                f"CI {check_state} for PR #{number}.",
+                {"pull_request": int(number), "ci_state": check_state},
+                severity="failure" if check_state == "failed" else "info",
+                meaningful=True,
+            )
         if check_state == "failed":
             self.notify_once(
                 f"pr:{number}:checks-failed:{sha}",
@@ -1402,6 +1581,13 @@ class Supervisor:
             approval = self.store.create_approval(
                 "merge_pr", payload, self.config.approval_ttl_seconds
             )
+            self.notify_once(
+                f"pr:{number}:approval-ready:{sha}",
+                "pull_request.approval_ready",
+                f"✅ PR #{number} is ready for operator approval.",
+                {"pull_request": int(number), "head_sha": sha},
+                meaningful=True,
+            )
             actions = tuple(
                 InlineAction(
                     label,
@@ -1409,20 +1595,110 @@ class Supervisor:
                         action,
                         self.config.approval_ttl_seconds,
                         str(approval["id"]),
+                        actor=self.allowed_user,
                     ),
                 )
                 for label, action in (
                     ("Approve", "approve"),
                     ("Reject", "reject"),
-                    ("Details", "details"),
-                    ("Pause", "pause"),
                 )
-            )
+            ) + self.workflow_actions()
             self.update_status_card(actions)
+
+    def monitor_runner(self) -> None:
+        """Observe durable runner evidence; never advance runner authority."""
+
+        issue = self.store.get("current_issue")
+        if not issue.isdigit() or not self.config.heartbeat_root:
+            return
+        heartbeat = read_heartbeat(self.config.heartbeat_root, int(issue))
+        if not heartbeat:
+            return
+        now = self.store.now()
+        generation = int(heartbeat["generation"])
+        phase = str(heartbeat["phase"])
+        health = str(heartbeat["runner_health"])
+        prefix = f"runner:{issue}:{generation}"
+        previous_phase = self.store.get(f"{prefix}:phase")
+        previous_health = self.store.get(f"{prefix}:health")
+
+        if not self.store.has_event(f"{prefix}:started"):
+            self.notify_once(
+                f"{prefix}:started",
+                "runner.started",
+                f"▶️ Work started on issue #{issue}: "
+                f"{self.store.get('current_issue_title', 'title unavailable')}",
+                {"issue": int(issue), "phase": phase},
+                meaningful=True,
+            )
+
+        attention_phases = {"waiting-for-approval", "failed"}
+        if previous_phase and phase != previous_phase and phase in attention_phases:
+            self.notify_once(
+                f"{prefix}:phase:{phase}",
+                "runner.phase_attention",
+                f"🔔 Issue #{issue} entered {phase}.",
+                {"issue": int(issue), "phase": phase},
+                severity="failure" if phase == "failed" else "info",
+                meaningful=True,
+            )
+
+        stalled = health in {"possibly-stalled", "stalled"}
+        was_stalled = previous_health in {"possibly-stalled", "stalled"}
+        if stalled and health != previous_health:
+            self.notify_once(
+                f"{prefix}:health:{health}",
+                "runner.stalled",
+                render_stall(heartbeat, now),
+                {
+                    "issue": int(issue),
+                    "phase": phase,
+                    "runner_health": health,
+                },
+                severity="failure",
+                meaningful=True,
+            )
+        elif was_stalled and not stalled:
+            self.notify_once(
+                f"{prefix}:recovered:{heartbeat['revision']}",
+                "runner.recovered",
+                f"✅ Runner recovered on issue #{issue}; phase {phase}.",
+                {"issue": int(issue), "phase": phase},
+                meaningful=True,
+            )
+
+        elapsed = max(0, now - datetime.datetime.fromisoformat(
+            str(heartbeat["started_at"]).replace("Z", "+00:00")
+        ).timestamp())
+        last_routine = float(self.store.get(f"{prefix}:last-routine", "0") or 0)
+        due = elapsed >= 600 and (
+            last_routine == 0 or now - last_routine >= heartbeat_interval(elapsed)
+        )
+        meaningful_at = float(self.store.get("last_meaningful_notification", "0") or 0)
+        if (
+            due
+            and self.store.get("watched", "true") == "true"
+            and not self.config.notifications.quiet(now)
+            and now - meaningful_at >= min(600, heartbeat_interval(elapsed))
+        ):
+            slot = int(elapsed // heartbeat_interval(elapsed))
+            self.notify_once(
+                f"{prefix}:heartbeat:{slot}",
+                "runner.heartbeat",
+                self.status_text(),
+                {"issue": int(issue), "phase": phase, "slot": slot},
+            )
+            self.store.set(f"{prefix}:last-routine", str(int(now)))
+
+        self.store.set(f"{prefix}:phase", phase)
+        self.store.set(f"{prefix}:health", health)
+        self.update_status_card()
 
     def update_status_card(
         self, actions: tuple[InlineAction, ...] = ()
     ) -> None:
+        if not actions:
+            actions = self.workflow_actions()
         message = self.status_text()
         message_id = self.store.get("status_message_id")
         if message_id:
@@ -1445,13 +1721,18 @@ class Supervisor:
         message: str,
         payload: dict[str, Any],
         severity: str = "info",
+        meaningful: bool = False,
     ) -> None:
         sanitized = sanitize_diagnostics(payload)
         if not isinstance(sanitized, dict):
             sanitized = {}
         preferences = self.config.notifications
-        deferred = preferences.quiet(self.store.now()) or (
-            preferences.mode == "failures" and severity != "failure"
+        deferred = (
+            preferences.quiet(self.store.now()) and not meaningful
+        ) or (
+            preferences.mode == "failures"
+            and severity != "failure"
+            and not meaningful
         )
         bucket = preferences.digest_bucket(self.store.now()) if deferred else None
         row, created = self.store.upsert_notification(
@@ -1477,6 +1758,10 @@ class Supervisor:
                 self.store.mark_notification(
                     fingerprint, "delivered", reference.message_id
                 )
+                if meaningful:
+                    self.store.set(
+                        "last_meaningful_notification", str(int(self.store.now()))
+                    )
         except SupervisorError:
             self.store.mark_notification(fingerprint, "pending")
             self.store.event(
@@ -1534,6 +1819,7 @@ class Supervisor:
             return None
         number = str(issue["number"])
         self.store.set("current_issue", number)
+        self.store.set("current_issue_title", str(issue["title"])[:200])
         self.notify_once(
             f"issue:{number}:queued",
             "issue.queued",
