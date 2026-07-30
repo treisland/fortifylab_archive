@@ -428,6 +428,22 @@ class SupervisorTest(unittest.TestCase):
             1,
         )
 
+    def test_idle_monitor_selects_next_issue_once(self) -> None:
+        self.github.discovered = []
+        self.supervisor.monitor_once()
+        self.supervisor.monitor_once()
+        self.assertEqual(self.store.get("current_issue"), "2")
+        self.assertEqual(
+            len([message for message in self.telegram.messages if "Queued issue" in message]),
+            1,
+        )
+
+    def test_paused_idle_monitor_does_not_select_issue(self) -> None:
+        self.github.discovered = []
+        self.store.set("paused", "true")
+        self.supervisor.monitor_once()
+        self.assertEqual(self.store.get("current_issue"), "")
+
     def test_reject_command_records_reason(self) -> None:
         payload = {
             "repository": self.config.repository,

@@ -1500,6 +1500,8 @@ class Supervisor:
                 )
                 return
             else:
+                if not self.store.get("current_issue"):
+                    self.queue_next_issue()
                 return
         pr = self.github.pull_request(int(number))
         state = str(pr.get("state"))
