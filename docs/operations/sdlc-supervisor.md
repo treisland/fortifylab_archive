@@ -70,11 +70,28 @@ ignored or rejected.
 ## Merge approval
 
 When a tracked pull request is unchanged, mergeable, and passing, the
-supervisor creates one expiring approval. `/approve` targets that current
-approval automatically, re-fetches the PR, and fails closed if the head SHA,
-checks, state, or mergeability changed. `/reject [reason]` rejects it.
-Explicit IDs remain available only as a safe fallback if multiple approvals
-somehow coexist.
+supervisor creates one expiring approval and adds **Approve**, **Reject**,
+**Details**, and **Pause** buttons to the workflow status card. Button payloads
+are random, opaque, single-use values; they contain no approval identifier,
+secret, or command text, and only their SHA-256 digests are stored. Every
+button press revalidates the linked identity, private chat, token expiry,
+exact PR head, checks, open state, and mergeability before acting. Expired,
+replayed, changed-head, or duplicate callbacks fail closed.
+
+The original card is edited after a decision and the decision is recorded as
+a sanitized event. If Telegram cannot edit the card, the authoritative
+decision remains durable and a sanitized delivery-failure event is recorded.
+Use `/approve` or `/reject [reason]` as a compatible fallback; these commands
+apply the same merge-plan validation. Explicit approval IDs remain available
+only if multiple approvals somehow coexist.
+
+## Workflow status card
+
+The supervisor maintains one durable card reference and edits that message as
+the loop changes. The card shows the configured milestone, queued issue,
+runner state, tracked PR, and whether new work is running or paused. A missing
+or uneditable card is replaced, and its new message reference becomes the
+durable reference. Telegram is never the authoritative workflow store.
 
 After an approved PR merges, the supervisor closes the issue identified by its
 `agent/issue-N` branch and immediately starts the lowest-numbered eligible open
@@ -137,3 +154,6 @@ SQLite state is stored outside the checkout at:
 ```text
 ~/.local/share/fortify-lab-manager/supervisor.db
 ```
+
+Existing databases are upgraded in place by creating the callback-token table
+on startup. No Telegram credential or identity value is migrated into it.

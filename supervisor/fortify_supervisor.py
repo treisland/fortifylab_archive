@@ -29,6 +29,21 @@ class SupervisorError(RuntimeError):
 
 
 @dataclasses.dataclass(frozen=True)
+class InlineAction:
+    """Provider-neutral contextual action rendered by a communications adapter."""
+
+    label: str
+    token: str
+
+
+@dataclasses.dataclass(frozen=True)
+class MessageReference:
+    """Opaque provider message reference used only for later replacement."""
+
+    message_id: str
+
+
+@dataclasses.dataclass(frozen=True)
 class Config:
     repository: str
     milestone: str
@@ -139,6 +154,16 @@ class Store:
                 kind TEXT NOT NULL,
                 payload TEXT NOT NULL,
                 created_at INTEGER NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS callback_tokens (
+                token_hash TEXT PRIMARY KEY,
+                approval_id TEXT,
+                action TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                consumed_at INTEGER,
+                consumed_by TEXT,
+                FOREIGN KEY(approval_id) REFERENCES approvals(id)
             );
             """
         )
@@ -282,6 +307,50 @@ class Store:
         )
         self.connection.commit()
         return self.approval(approval_id)
+
+    def create_callback_token(
+        self, action: str, ttl: int, approval_id: str | None = None
+    ) -> str:
+        token = secrets.token_urlsafe(24)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        created = int(self.now())
+        self.connection.execute(
+            """
+            INSERT INTO callback_tokens(
+                token_hash, approval_id, action, created_at, expires_at
+            ) VALUES(?, ?, ?, ?, ?)
+            """,
+            (token_hash, approval_id, action, created, created + ttl),
+        )
+        self.connection.commit()
+        return token
+
+    def consume_callback_token(self, token: str, actor: str) -> sqlite3.Row:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        now = int(self.now())
+        with self.connection:
+            row = self.connection.execute(
+                "SELECT * FROM callback_tokens WHERE token_hash = ?", (token_hash,)
+            ).fetchone()
+            if not row:
+                raise SupervisorError("This action is invalid or no longer available")
+            if row["consumed_at"] is not None:
+                raise SupervisorError("This action was already used")
+            if int(row["expires_at"]) <= now:
+                raise SupervisorError("This action has expired")
+            changed = self.connection.execute(
+                """
+                UPDATE callback_tokens
+                SET consumed_at = ?, consumed_by = ?
+                WHERE token_hash = ? AND consumed_at IS NULL AND expires_at > ?
+                """,
+                (now, actor, token_hash, now),
+            ).rowcount
+            if changed != 1:
+                raise SupervisorError("This action was already used")
+        return self.connection.execute(
+            "SELECT * FROM callback_tokens WHERE token_hash = ?", (token_hash,)
+        ).fetchone()
 
 
 class GitHubPort(Protocol):
@@ -448,7 +517,16 @@ class GitHub:
 
 class TelegramPort(Protocol):
     def updates(self, offset: int, timeout: int) -> list[dict[str, Any]]: ...
-    def send(self, message: str) -> None: ...
+    def send(
+        self, message: str, actions: tuple[InlineAction, ...] = ()
+    ) -> MessageReference: ...
+    def edit(
+        self,
+        reference: MessageReference,
+        message: str,
+        actions: tuple[InlineAction, ...] = (),
+    ) -> None: ...
+    def answer_callback(self, callback_id: str, message: str) -> None: ...
 
 
 class Telegram:
@@ -479,8 +557,51 @@ class Telegram:
             "getUpdates", {"offset": offset, "timeout": max(1, min(timeout, 30))}
         )
 
-    def send(self, message: str) -> None:
-        self._api("sendMessage", {"chat_id": self.chat_id, "text": message})
+    @staticmethod
+    def _markup(actions: tuple[InlineAction, ...]) -> str:
+        return json.dumps(
+            {
+                "inline_keyboard": [
+                    [
+                        {
+                            "text": action.label,
+                            "callback_data": action.token,
+                        }
+                        for action in actions
+                    ]
+                ]
+            },
+            separators=(",", ":"),
+        )
+
+    def send(
+        self, message: str, actions: tuple[InlineAction, ...] = ()
+    ) -> MessageReference:
+        parameters: dict[str, Any] = {"chat_id": self.chat_id, "text": message}
+        if actions:
+            parameters["reply_markup"] = self._markup(actions)
+        result = self._api("sendMessage", parameters)
+        return MessageReference(str(result["message_id"]))
+
+    def edit(
+        self,
+        reference: MessageReference,
+        message: str,
+        actions: tuple[InlineAction, ...] = (),
+    ) -> None:
+        parameters: dict[str, Any] = {
+            "chat_id": self.chat_id,
+            "message_id": reference.message_id,
+            "text": message,
+            "reply_markup": self._markup(actions),
+        }
+        self._api("editMessageText", parameters)
+
+    def answer_callback(self, callback_id: str, message: str) -> None:
+        self._api(
+            "answerCallbackQuery",
+            {"callback_query_id": callback_id, "text": message[:200]},
+        )
 
     def register_commands(self) -> None:
         commands = [
@@ -543,18 +664,25 @@ class Supervisor:
         paused = self.store.get("paused", "false") == "true"
         pr = self.store.get("current_pr", "none")
         issue = self.store.get("current_issue", "none")
+        runner = self.store.get("runner_state", "idle")
         return (
-            "Fortify SDLC Supervisor\n"
+            f"Fortify SDLC Workflow — {self.config.milestone}\n"
             f"State: {'paused' if paused else 'running'}\n"
-            f"Tracked PR: {pr}\n"
-            f"Queued issue: {issue}"
+            f"Issue: {issue or 'none'}\n"
+            f"Runner: {runner}\n"
+            f"PR: {pr or 'none'}"
         )
 
-    def authorized_message(self, update: dict[str, Any]) -> dict[str, Any] | None:
-        message = update.get("message")
+    def authorized_message(
+        self, update: dict[str, Any], callback: bool = False
+    ) -> dict[str, Any] | None:
+        envelope = update.get("callback_query") if callback else update
+        message = (envelope or {}).get("message")
         if not message:
             return None
-        sender = message.get("from") or {}
+        sender = (
+            (envelope or {}).get("from") if callback else message.get("from")
+        ) or {}
         chat = message.get("chat") or {}
         if (
             chat.get("type") != "private"
@@ -565,6 +693,9 @@ class Supervisor:
         return message
 
     def handle_update(self, update: dict[str, Any]) -> None:
+        if update.get("callback_query"):
+            self.handle_callback(update)
+            return
         message = self.authorized_message(update)
         if not message:
             return
@@ -577,6 +708,68 @@ class Supervisor:
         except SupervisorError as error:
             response = f"❌ {error}"
         self.telegram.send(response)
+
+    def handle_callback(self, update: dict[str, Any]) -> None:
+        callback = update.get("callback_query") or {}
+        message = self.authorized_message(update, callback=True)
+        if not message:
+            return
+        callback_id = str(callback.get("id") or "")
+        token = str(callback.get("data") or "")
+        actor = str((callback.get("from") or {}).get("id"))
+        reference = MessageReference(str(message.get("message_id") or ""))
+        try:
+            outcome = self.execute_callback(token, actor)
+            if not outcome.startswith("PR #"):
+                try:
+                    self.telegram.edit(reference, self.status_text())
+                except SupervisorError:
+                    self.store.event(
+                        f"callback-edit:{hashlib.sha256(token.encode()).hexdigest()}",
+                        "communications.message_edit_failed",
+                        {"provider": "telegram", "outcome": "failed"},
+                    )
+            self.telegram.answer_callback(callback_id, outcome)
+        except SupervisorError as error:
+            self.telegram.answer_callback(callback_id, f"❌ {error}")
+
+    def execute_callback(self, token: str, actor: str) -> str:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        row = self.store.connection.execute(
+            "SELECT * FROM callback_tokens WHERE token_hash = ?", (token_hash,)
+        ).fetchone()
+        if not row:
+            raise SupervisorError("This action is invalid or no longer available")
+        approval_id = str(row["approval_id"] or "")
+        approval = self.store.approval(approval_id)
+        payload = json.loads(approval["payload"])
+        pr = self.github.pull_request(int(payload["pull_request"]))
+        self.verify_merge_plan(pr, payload, allow_draft=True)
+        action = str(self.store.consume_callback_token(token, actor)["action"])
+        if action == "approve":
+            return self.approve(approval_id, actor)
+        if action == "reject":
+            self.store.decide(approval_id, "rejected", actor, "inline rejection")
+            self.store.event(
+                f"approval:{approval_id}:rejected",
+                "pull_request.merge_rejected",
+                {"pull_request": int(payload["pull_request"]), "actor": actor},
+            )
+            return "PR merge rejected"
+        if action == "pause":
+            self.store.set("paused", "true")
+            self.store.event(
+                f"callback:{approval_id}:paused",
+                "supervisor.paused",
+                {"actor": actor, "pull_request": int(payload["pull_request"])},
+            )
+            return "Supervisor paused"
+        if action == "details":
+            return (
+                f"PR #{payload['pull_request']}: checks passed; "
+                f"merge state {pr.get('mergeStateStatus', 'unknown')}"
+            )
+        raise SupervisorError("Unsupported callback action")
 
     def handle_command(self, text: str, actor: str) -> str:
         parts = shlex.split(text)
@@ -665,13 +858,13 @@ class Supervisor:
         self.store.event(
             f"approval:{approval_id}:merge",
             "pull_request.merge_approved",
-            {"approval_id": approval_id, "pull_request": payload["pull_request"]},
+            {"pull_request": payload["pull_request"], "actor": actor},
         )
         next_issue = self.complete_merged_pull_request(pr)
         if next_issue is None:
             return (
                 f"✅ PR #{payload['pull_request']} merge approved and completed. "
-                "No eligible issues remain; the milestone queue is complete."
+                f"Milestone {self.config.milestone} is complete."
             )
         return (
             f"✅ PR #{payload['pull_request']} merge approved and completed; "
@@ -805,12 +998,41 @@ class Supervisor:
             approval = self.store.create_approval(
                 "merge_pr", payload, self.config.approval_ttl_seconds
             )
-            self.telegram.send(
-                f"✅ PR #{number} is passing and mergeable.\n"
-                "Approve: /approve\n"
-                "Reject: /reject <reason>\n"
-                f"Expires: {approval['expires_at']}"
+            actions = tuple(
+                InlineAction(
+                    label,
+                    self.store.create_callback_token(
+                        action,
+                        self.config.approval_ttl_seconds,
+                        str(approval["id"]),
+                    ),
+                )
+                for label, action in (
+                    ("Approve", "approve"),
+                    ("Reject", "reject"),
+                    ("Details", "details"),
+                    ("Pause", "pause"),
+                )
             )
+            self.update_status_card(actions)
+
+    def update_status_card(
+        self, actions: tuple[InlineAction, ...] = ()
+    ) -> None:
+        message = self.status_text()
+        message_id = self.store.get("status_message_id")
+        if message_id:
+            try:
+                self.telegram.edit(MessageReference(message_id), message, actions)
+                return
+            except SupervisorError:
+                self.store.event(
+                    f"status-card-edit:{int(self.store.now())}",
+                    "communications.message_edit_failed",
+                    {"provider": "telegram", "outcome": "failed"},
+                )
+        reference = self.telegram.send(message, actions)
+        self.store.set("status_message_id", reference.message_id)
 
     def notify_once(
         self,
@@ -851,6 +1073,7 @@ class Supervisor:
                 "runner.started",
                 {"issue": int(number)},
             )
+            self.store.set("runner_state", f"started for issue #{number}")
         return issue
 
 

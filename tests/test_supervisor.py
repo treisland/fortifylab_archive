@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT / "supervisor"))
 from fortify_supervisor import (  # noqa: E402
     Config,
     GitHub,
+    InlineAction,
+    MessageReference,
     Store,
     Supervisor,
     SupervisorError,
@@ -102,12 +104,33 @@ class FakeGitHub:
 class FakeTelegram:
     def __init__(self) -> None:
         self.messages: list[str] = []
+        self.actions: list[tuple[InlineAction, ...]] = []
+        self.edits: list[tuple[MessageReference, str, tuple[InlineAction, ...]]] = []
+        self.callback_answers: list[tuple[str, str]] = []
+        self.fail_edits = False
 
     def updates(self, offset: int, timeout: int) -> list[dict[str, Any]]:
         return []
 
-    def send(self, message: str) -> None:
+    def send(
+        self, message: str, actions: tuple[InlineAction, ...] = ()
+    ) -> MessageReference:
         self.messages.append(message)
+        self.actions.append(actions)
+        return MessageReference(str(len(self.messages)))
+
+    def edit(
+        self,
+        reference: MessageReference,
+        message: str,
+        actions: tuple[InlineAction, ...] = (),
+    ) -> None:
+        if self.fail_edits:
+            raise SupervisorError("Telegram edit failed")
+        self.edits.append((reference, message, actions))
+
+    def answer_callback(self, callback_id: str, message: str) -> None:
+        self.callback_answers.append((callback_id, message))
 
 
 class SupervisorTest(unittest.TestCase):
@@ -212,7 +235,7 @@ class SupervisorTest(unittest.TestCase):
         }
         self.store.create_approval("merge_pr", payload, 60)
         response = self.supervisor.handle_command("/approve", "101")
-        self.assertIn("milestone queue is complete", response)
+        self.assertIn("Milestone 0.1 — Evaluation Foundation is complete", response)
         self.assertNotIn("next issue was selected", response)
 
     def test_changed_head_rejects_approval(self) -> None:
@@ -247,7 +270,13 @@ class SupervisorTest(unittest.TestCase):
         ).fetchone()["count"]
         self.assertEqual(approvals, 1)
         self.assertEqual(len(self.telegram.messages), 1)
-        self.assertIn("Approve: /approve", self.telegram.messages[0])
+        self.assertEqual(
+            [action.label for action in self.telegram.actions[0]],
+            ["Approve", "Reject", "Details", "Pause"],
+        )
+        for action in self.telegram.actions[0]:
+            self.assertNotIn("apr-", action.token)
+            self.assertNotIn("/", action.token)
 
     def test_monitor_supersedes_approval_after_head_change(self) -> None:
         self.supervisor.monitor_once()
@@ -322,6 +351,107 @@ class SupervisorTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(SupervisorError, "Multiple approvals"):
             self.supervisor.handle_command("/approve", "101")
+
+    def callback_update(self, token: str, callback_id: str = "cb-1") -> dict[str, Any]:
+        return {
+            "callback_query": {
+                "id": callback_id,
+                "data": token,
+                "from": {"id": 101},
+                "message": {
+                    "message_id": 44,
+                    "chat": {"id": 202, "type": "private"},
+                },
+            }
+        }
+
+    def action_token(self, label: str) -> str:
+        self.supervisor.monitor_once()
+        return next(
+            action.token
+            for action in self.telegram.actions[-1]
+            if action.label == label
+        )
+
+    def test_inline_approval_consumes_token_and_edits_card(self) -> None:
+        token = self.action_token("Approve")
+        self.supervisor.handle_update(self.callback_update(token))
+        self.assertEqual(self.github.merges, [(12, "abc123")])
+        self.assertIn("merge approved", self.telegram.callback_answers[-1][1])
+        self.assertEqual(self.telegram.edits[-1][0].message_id, "44")
+        event = self.store.connection.execute(
+            "SELECT payload FROM events WHERE kind = 'pull_request.merge_approved'"
+        ).fetchone()
+        self.assertNotIn("approval_id", json.loads(event["payload"]))
+
+    def test_inline_rejection_is_single_use(self) -> None:
+        token = self.action_token("Reject")
+        self.supervisor.handle_update(self.callback_update(token))
+        self.supervisor.handle_update(self.callback_update(token, "cb-2"))
+        self.assertIn("rejected", self.telegram.callback_answers[0][1])
+        self.assertIn("already used", self.telegram.callback_answers[1][1])
+
+    def test_expired_callback_fails_closed(self) -> None:
+        token = self.action_token("Approve")
+        self.clock[0] += 61
+        self.supervisor.handle_update(self.callback_update(token))
+        self.assertEqual(self.github.merges, [])
+        self.assertIn("expired", self.telegram.callback_answers[-1][1])
+
+    def test_callback_revalidates_changed_head(self) -> None:
+        token = self.action_token("Approve")
+        self.github.pr["headRefOid"] = "changed"
+        self.supervisor.handle_update(self.callback_update(token))
+        self.assertEqual(self.github.merges, [])
+        self.assertIn("head changed", self.telegram.callback_answers[-1][1])
+
+    def test_callback_revalidates_checks_and_merge_state(self) -> None:
+        token = self.action_token("Approve")
+        self.github.pr["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+        self.supervisor.handle_update(self.callback_update(token))
+        self.assertIn("checks are not passing", self.telegram.callback_answers[-1][1])
+        self.github.pr["statusCheckRollup"][0]["conclusion"] = "SUCCESS"
+        self.github.pr["mergeStateStatus"] = "DIRTY"
+        self.supervisor.handle_update(self.callback_update(token, "cb-2"))
+        self.assertIn("merge state is DIRTY", self.telegram.callback_answers[-1][1])
+
+    def test_duplicate_callback_delivery_merges_once(self) -> None:
+        token = self.action_token("Approve")
+        update = self.callback_update(token)
+        self.supervisor.handle_update(update)
+        self.supervisor.handle_update(update)
+        self.assertEqual(self.github.merges, [(12, "abc123")])
+        self.assertIn("already used", self.telegram.callback_answers[-1][1])
+
+    def test_unauthorized_callback_is_ignored(self) -> None:
+        token = self.action_token("Pause")
+        update = self.callback_update(token)
+        update["callback_query"]["from"]["id"] = 999
+        self.supervisor.handle_update(update)
+        self.assertEqual(self.store.get("paused", "false"), "false")
+        self.assertEqual(self.telegram.callback_answers, [])
+
+    def test_telegram_edit_failure_keeps_decision_and_audits_failure(self) -> None:
+        token = self.action_token("Reject")
+        self.telegram.fail_edits = True
+        self.supervisor.handle_update(self.callback_update(token))
+        approval = self.store.pending_approvals("merge_pr")
+        self.assertEqual(approval, [])
+        event = self.store.connection.execute(
+            "SELECT payload FROM events "
+            "WHERE kind = 'communications.message_edit_failed'"
+        ).fetchone()
+        self.assertEqual(
+            json.loads(event["payload"]),
+            {"outcome": "failed", "provider": "telegram"},
+        )
+
+    def test_existing_status_card_is_edited_in_place(self) -> None:
+        self.store.set("status_message_id", "77")
+        self.supervisor.monitor_once()
+        self.assertEqual(self.telegram.messages, [])
+        self.assertEqual(self.telegram.edits[0][0].message_id, "77")
+        self.assertIn(self.config.milestone, self.telegram.edits[0][1])
 
 
 if __name__ == "__main__":
