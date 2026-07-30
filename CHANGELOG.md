@@ -10,6 +10,9 @@ platform profiles.
 
 ### Added
 
+- Bounded, secret-safe, dependency-aware environment health for MicroK8s
+  infrastructure and managed Fortify components, including explicit degraded,
+  unhealthy, unknown, blocked, and stale states.
 - Repository governance and contribution guidance.
 - Baseline repository validation and lifecycle regression checks.
 - Foundational Fortify Lab Manager architecture decisions and their index.

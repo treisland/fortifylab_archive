@@ -137,7 +137,18 @@
             "required": ["id", "type", "target", "required", "timeoutSeconds"],
             "properties": {
               "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
-              "type": {"enum": ["workload-ready", "tcp", "https", "database-query"]},
+              "type": {
+                "enum": [
+                  "workload-ready",
+                  "tcp",
+                  "https",
+                  "database-query",
+                  "application-ready",
+                  "dependency-connectivity",
+                  "configuration",
+                  "registration"
+                ]
+              },
               "target": {"type": "string", "minLength": 1},
               "required": {"type": "boolean"},
               "timeoutSeconds": {"type": "integer", "minimum": 1, "maximum": 600}
