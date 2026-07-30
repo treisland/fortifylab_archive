@@ -115,6 +115,8 @@ secret, or command text, and only their SHA-256 digests are stored. Every
 button press revalidates the linked identity, private chat, token expiry,
 exact PR head, checks, open state, and mergeability before acting. Expired,
 replayed, changed-head, or duplicate callbacks fail closed.
+**Details** sends a durable, sanitized PR summary to the private chat rather
+than relying on Telegram's short-lived callback toast.
 
 The original card is edited after a decision and the decision is recorded as
 a sanitized event. If Telegram cannot edit the card, the authoritative
