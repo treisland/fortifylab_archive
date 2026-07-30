@@ -22,6 +22,9 @@ platform profiles.
   events, incidents, expiring plan approvals, and sanitized traces.
 - A versioned, deterministic loop evaluation corpus with representative
   success and failure classifications, safe actions, and redaction assertions.
+- The accepted minimum 0.2 manager runtime boundary for its read-only API,
+  local persistence, authentication, Web UI, and namespace-scoped Kubernetes
+  access.
 
 ### Fixed
 

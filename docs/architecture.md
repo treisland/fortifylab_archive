@@ -14,6 +14,11 @@ The technology-neutral control-loop decision is implemented at the data
 boundary by the [versioned loop contracts](loop-contracts.md). Runtime
 adapters and persistence remain separate implementation work.
 
+The minimum 0.2 service, API, persistence, authentication, and Kubernetes
+permission boundary is summarized in the
+[manager runtime boundary](manager-runtime-boundary.md). Its adapters remain
+ordered implementation work.
+
 ## Accepted decisions
 
 | ADR | Decision |
@@ -26,6 +31,7 @@ adapters and persistence remain separate implementation work.
 | [0006](adr/0006-provider-neutral-communications.md) | Use provider-neutral communications with private Telegram first |
 | [0007](adr/0007-deduplicated-github-observations.md) | File deduplicated GitHub observations automatically |
 | [0008](adr/0008-ssc-system-of-record.md) | Keep SSC as the application-security system of record |
+| [0009](adr/0009-manager-runtime-boundary.md) | Define the minimum manager runtime boundary |
 
 ## Process
 
