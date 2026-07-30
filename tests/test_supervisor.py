@@ -795,8 +795,44 @@ class SupervisorTest(unittest.TestCase):
         self.assertTrue(
             any("PR #12 created" in message for message in self.telegram.messages)
         )
+        approval_message = next(
+            index
+            for index, message in enumerate(self.telegram.messages)
+            if "PR #12 is ready for operator approval" in message
+        )
+        self.assertEqual(
+            [action.label for action in self.telegram.actions[approval_message]],
+            ["Approve", "Reject", "Status", "Details", "Refresh", "Unwatch", "Pause"],
+        )
         self.assertEqual(self.telegram.edits[0][0].message_id, "77")
         self.assertIn(self.config.milestone, self.telegram.edits[0][1])
+
+    def test_approval_notification_retries_with_actions_after_provider_failure(
+        self,
+    ) -> None:
+        self.store.set("status_message_id", "77")
+        self.telegram.fail_sends = True
+        self.supervisor.monitor_once()
+        fingerprint = "pr:12:approval-ready:abc123"
+        self.assertEqual(self.store.notification(fingerprint)["state"], "pending")
+
+        self.telegram.fail_sends = False
+        self.supervisor.monitor_once()
+        approval_message = next(
+            index
+            for index, message in enumerate(self.telegram.messages)
+            if "PR #12 is ready for operator approval" in message
+        )
+        self.assertEqual(
+            [action.label for action in self.telegram.actions[approval_message]][:2],
+            ["Approve", "Reject"],
+        )
+        self.assertEqual(self.store.notification(fingerprint)["state"], "delivered")
+
+        delivered = len(self.telegram.messages)
+        restarted = Supervisor(self.config, self.store, self.github, self.telegram)
+        restarted.monitor_once()
+        self.assertEqual(len(self.telegram.messages), delivered)
 
     def test_implicit_approval_prefers_current_pull_request(self) -> None:
         stale = self.store.create_approval(

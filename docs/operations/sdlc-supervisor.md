@@ -117,6 +117,11 @@ exact PR head, checks, open state, and mergeability before acting. Expired,
 replayed, changed-head, or duplicate callbacks fail closed.
 **Details** sends a durable, sanitized PR summary to the private chat rather
 than relying on Telegram's short-lived callback toast.
+Approval readiness sends a new notification carrying the same actions as the
+durable workflow card, because editing an existing Telegram message does not
+notify the operator. Failed delivery remains pending; a later monitor pass
+creates fresh opaque callback tokens and retries the notification without
+duplicating a successfully delivered alert.
 
 The original card is edited after a decision and the decision is recorded as
 a sanitized event. If Telegram cannot edit the card, the authoritative
