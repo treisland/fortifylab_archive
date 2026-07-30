@@ -184,6 +184,19 @@ class RunnerHeartbeatTests(unittest.TestCase):
             self.clock.advance(1)
         self.assertEqual(len(list(self.root.glob("issue-*.json"))), 3)
 
+    def test_runner_validation_has_a_hard_timeout(self) -> None:
+        runner = (
+            Path(__file__).resolve().parents[1] / "scripts/fortify-issue-runner.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'VALIDATION_TIMEOUT="${FORTIFY_RUNNER_VALIDATION_TIMEOUT:-30m}"',
+            runner,
+        )
+        self.assertIn(
+            'timeout --signal=TERM --kill-after=10s "$VALIDATION_TIMEOUT"',
+            runner,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -26,6 +26,7 @@ LOCK_FILE="$STATE_ROOT/runner.lock"
 HEARTBEAT_ROOT="$STATE_ROOT/runner-heartbeats"
 HEARTBEAT_TOOL="${FORTIFY_HEARTBEAT_TOOL:-$HOME/.local/lib/fortify-lab-manager/runner_heartbeat.py}"
 HEARTBEAT_INTERVAL="${FORTIFY_HEARTBEAT_INTERVAL_SECONDS:-30}"
+VALIDATION_TIMEOUT="${FORTIFY_RUNNER_VALIDATION_TIMEOUT:-30m}"
 HEARTBEAT_WRITER=""
 HEARTBEAT_GENERATION=""
 HEARTBEAT_TERMINAL=0
@@ -55,7 +56,7 @@ fail() {
   exit 1
 }
 
-for command in git gh python3; do
+for command in git gh python3 timeout; do
   command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
 done
 [ -x "$CODEX_BIN" ] || fail "Codex CLI is not executable: $CODEX_BIN"
@@ -166,7 +167,8 @@ heartbeat_phase testing
   CHANGED_FILE_COUNT="$(git status --short --untracked-files=all | wc -l)"
   heartbeat_update --changed-file-count "$CHANGED_FILE_COUNT"
   heartbeat_update --phase validating --validation-state running
-  if ! ./scripts/validate-repository.sh || ! git diff --check; then
+  if ! timeout --signal=TERM --kill-after=10s "$VALIDATION_TIMEOUT" \
+      ./scripts/validate-repository.sh || ! git diff --check; then
     heartbeat_update --validation-state failed
     fail "repository validation failed"
   fi

@@ -69,6 +69,55 @@ class ManagerInstallationTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
 
+    def test_failed_route_apply_preserves_external_configuration(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_root = root / "config"
+            state_root = root / "state"
+            install_root = root / "install"
+            bin_root = root / "bin"
+            for path in (config_root, state_root, install_root, bin_root):
+                path.mkdir()
+            config = config_root / "manager.toml"
+            original = (
+                '[server]\nhost = "0.0.0.0"\nport = 8080\n'
+                f'[storage]\ndatabase = "{state_root / "history.sqlite3"}"\n'
+                f'[authentication]\naccounts = "{state_root / "accounts.json"}"\n'
+            )
+            config.write_text(original)
+            microk8s = bin_root / "microk8s"
+            microk8s.write_text("#!/bin/sh\nexit 1\n")
+            microk8s.chmod(0o755)
+            fake_id = bin_root / "id"
+            fake_id.write_text("#!/bin/sh\n[ \"$1\" = \"-u\" ] && echo 0\n")
+            fake_id.chmod(0o755)
+            environment = {
+                **os.environ,
+                "PATH": f"{bin_root}:{os.environ['PATH']}",
+                "FORTIFY_MANAGER_CONFIG_ROOT": str(config_root),
+                "FORTIFY_MANAGER_STATE_ROOT": str(state_root),
+                "FORTIFY_MANAGER_INSTALL_ROOT": str(install_root),
+                "FORTIFY_MANAGER_MANIFEST_PATH": str(state_root / "route.yaml"),
+            }
+            result = subprocess.run(
+                [
+                    "bash",
+                    "scripts/fortify-manager",
+                    "configure",
+                    "fortifydemo.com",
+                    "10.0.0.10",
+                    "9080",
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("existing configuration was preserved", result.stderr)
+            self.assertEqual(config.read_text(), original)
+            self.assertFalse((state_root / "route.yaml").exists())
+
     def test_external_config_and_account_verifier_build_secure_app(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -111,6 +160,8 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertIn("Configuration and state preserved", script)
         self.assertIn("DELETE MANAGER STATE", script)
         self.assertIn('port = $port', script)
+        self.assertIn("kubectl diff", script)
+        self.assertIn("prior manager release could not be restarted", script)
         self.assertNotIn("create-certs.sh", script)
 
 

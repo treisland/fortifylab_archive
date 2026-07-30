@@ -223,6 +223,10 @@ state, and the eventual PR reference without parsing Codex output or runner
 logs. See the [runner heartbeat contract](../runner-heartbeats.md) for phases,
 freshness classifications, restart behavior, bounded retention, and the
 security boundary. Heartbeats never authorize or advance the workflow.
+Repository validation is bounded by `FORTIFY_RUNNER_VALIDATION_TIMEOUT`
+(default `30m`). If validation or one of its child processes deadlocks, the
+runner terminates it, records validation failure, preserves the issue
+workspace, and stops instead of holding the queue indefinitely.
 
 Enable it only after the supervisor-only path is verified:
 
