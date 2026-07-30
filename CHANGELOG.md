@@ -10,6 +10,9 @@ platform profiles.
 
 ### Added
 
+- A repeatable, fail-closed deployment preflight report covering capacity,
+  MicroK8s/addons, storage, ingress, DNS/TLS, licenses, registries/images,
+  configuration, and compatibility with actionable, secret-safe blockers.
 - Bounded, secret-safe, dependency-aware environment health for MicroK8s
   infrastructure and managed Fortify components, including explicit degraded,
   unhealthy, unknown, blocked, and stale states.

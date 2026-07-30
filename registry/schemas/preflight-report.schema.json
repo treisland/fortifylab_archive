@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/registry/schemas/preflight-report.schema.json",
+  "title": "Read-only deployment preflight report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "generatedAt", "ready", "summary", "evidence", "items"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/v1alpha1"},
+    "kind": {"const": "DeploymentPreflight"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "ready": {"type": "boolean"},
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blocker", "warning", "information"],
+      "properties": {
+        "blocker": {"type": "integer", "minimum": 0},
+        "warning": {"type": "integer", "minimum": 0},
+        "information": {"type": "integer", "minimum": 0}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "mode"],
+      "properties": {
+        "source": {"enum": ["runtime-adapter", "unavailable"]},
+        "mode": {"const": "read-only"}
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "category", "classification", "status", "summary", "latencyMs"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+          "category": {"enum": ["capacity", "microk8s", "storage", "ingress", "dns-tls", "license", "registry", "configuration", "compatibility"]},
+          "classification": {"enum": ["blocker", "warning", "information"]},
+          "status": {"enum": ["pass", "warning", "fail"]},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 256},
+          "latencyMs": {"type": "integer", "minimum": 0},
+          "remediation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["summary", "href", "safe"],
+            "properties": {
+              "summary": {"type": "string", "minLength": 1},
+              "href": {"type": "string", "pattern": "^/docs/deployment-preflight\\.md#[a-z0-9-]+$"},
+              "safe": {"const": true}
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {"properties": {"classification": {"const": "blocker"}}},
+            "then": {"required": ["remediation"]},
+            "else": {"not": {"required": ["remediation"]}}
+          }
+        ]
+      }
+    }
+  }
+}
