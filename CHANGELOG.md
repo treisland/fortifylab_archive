@@ -12,6 +12,8 @@ platform profiles.
 
 - Repository governance and contribution guidance.
 - Baseline repository validation and lifecycle regression checks.
+- Private Telegram and GitHub SDLC supervisor with durable approvals,
+  merge-state monitoring, and automatic next-issue queueing.
 
 ### Fixed
 

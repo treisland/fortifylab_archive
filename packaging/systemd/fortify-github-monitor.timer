@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll supervised GitHub pull requests
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+Persistent=true
+RandomizedDelaySec=15s
+
+[Install]
+WantedBy=timers.target

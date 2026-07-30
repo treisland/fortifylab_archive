@@ -159,6 +159,14 @@ microk8s helm -n fortify list                     # confirm none remain
 microk8s kubectl delete namespace fortify         # nuke everything else
 ```
 
+## Development supervisor
+
+Maintainers can use the optional private Telegram and GitHub
+[SDLC supervisor](docs/operations/sdlc-supervisor.md) to monitor pull requests,
+approve qualifying merges, and queue the next milestone issue while away from
+the deployment host. The supervisor does not have authority to mutate live
+Fortify workloads or sensitive data.
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the development workflow,

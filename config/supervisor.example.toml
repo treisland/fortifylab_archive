@@ -1,0 +1,15 @@
+[supervisor]
+repository = "treisland/fortifylab"
+milestone = "0.1 — Evaluation Foundation"
+poll_seconds = 120
+approval_ttl_seconds = 3600
+
+# Runtime files remain outside the checkout.
+state_file = "/home/ubuntu/.local/share/fortify-lab-manager/supervisor.db"
+telegram_token_file = "/home/ubuntu/.config/fortify-lab-manager/telegram/bot-token"
+telegram_user_file = "/home/ubuntu/.config/fortify-lab-manager/telegram/allowed-user-id"
+telegram_chat_file = "/home/ubuntu/.config/fortify-lab-manager/telegram/private-chat-id"
+
+# Optional bounded Codex runner. The selected issue number is appended as the
+# final argument. Keep commented until the supervisor-only loop is verified.
+# runner_command = ["/home/ubuntu/.local/bin/fortify-issue-dispatch"]

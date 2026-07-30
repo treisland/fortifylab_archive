@@ -1,0 +1,13 @@
+[Unit]
+Description=Fortify Lab Manager GitHub PR monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/fortify-supervisor monitor-once
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/fortify-lab-manager

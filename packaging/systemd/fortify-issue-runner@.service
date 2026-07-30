@@ -1,0 +1,14 @@
+[Unit]
+Description=Fortify bounded Codex runner for issue %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/fortify-issue-runner %i
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/fortify-lab-manager %h/lab/.git
+TimeoutStartSec=2h

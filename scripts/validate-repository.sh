@@ -36,4 +36,10 @@ bash tests/lifecycle-contracts.sh
 printf 'Checking local Markdown links...\n'
 python3 scripts/check-local-links.py
 
+printf 'Running Python unit tests...\n'
+python3 -m unittest discover -s tests -p 'test_*.py'
+
+printf 'Checking staged changes for secret patterns...\n'
+python3 scripts/check-staged-secrets.py
+
 printf 'Repository validation passed.\n'
