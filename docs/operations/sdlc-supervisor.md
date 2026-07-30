@@ -171,6 +171,14 @@ After the branch is pushed and the draft PR is created, the runner removes its
 clean local worktree and branch. The remote PR branch remains available for
 review and recovery.
 
+The runner also persists atomic, sanitized heartbeat evidence throughout its
+active lifetime. This is the supported way for an operator or future UI to
+observe phase, elapsed time, last activity, changed-file count, validation
+state, and the eventual PR reference without parsing Codex output or runner
+logs. See the [runner heartbeat contract](../runner-heartbeats.md) for phases,
+freshness classifications, restart behavior, bounded retention, and the
+security boundary. Heartbeats never authorize or advance the workflow.
+
 Enable it only after the supervisor-only path is verified:
 
 ```toml
@@ -215,3 +223,10 @@ notification delivery cannot reconstruct lost provider messages or repair GitHub
 runner, or a live MicroK8s workload. Inspect the authoritative local state and
 the original system before resuming. Raw logs must stay in their protected
 source and must not be pasted into Telegram.
+
+Runner heartbeat files recover independently from the SQLite supervisor state.
+A restarted observer reads the last atomically completed document. A restarted
+runner takes a new writer generation, which prevents the old process from
+overwriting it. A missing heartbeat is unknown evidence, not proof that the
+runner failed; use the systemd unit state and configured timeout to decide
+whether operator action is needed.

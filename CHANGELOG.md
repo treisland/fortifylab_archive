@@ -10,6 +10,9 @@ platform profiles.
 
 ### Added
 
+- Atomic, sanitized bounded-runner heartbeat documents with explicit phases,
+  activity-age health, restart fencing, bounded terminal retention, and
+  operator/JSON-schema contracts.
 - A deterministic 0.2 manager host installation and upgrade path with
   protected external configuration/state, systemd ownership, authentication
   bootstrap, `lab.$DOMAIN` MicroK8s ingress using the existing wildcard TLS
