@@ -16,8 +16,10 @@ adapters and persistence remain separate implementation work.
 
 The minimum 0.2 service, API, persistence, authentication, and Kubernetes
 permission boundary is summarized in the
-[manager runtime boundary](manager-runtime-boundary.md). Its adapters remain
-ordered implementation work.
+[manager runtime boundary](manager-runtime-boundary.md). The first read-only
+contract is the [component inventory API](api.md); listener, authentication,
+and concrete Kubernetes adapter integration remain ordered implementation
+work.
 
 ## Accepted decisions
 

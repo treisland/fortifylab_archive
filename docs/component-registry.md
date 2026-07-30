@@ -25,6 +25,7 @@ Core.
 
 Each component declares:
 
+- desired chart and image versions for the pinned evaluation bundle;
 - stable dependencies and Kubernetes workloads;
 - bounded lifecycle operations, adapter paths, disruption and destruction;
 - Kubernetes Secret references and classifications, never values;
@@ -32,7 +33,9 @@ Each component declares:
 - required workload and application health evidence;
 - sanitized diagnostic sources, with potentially sensitive logs marked.
 
-Lifecycle consumers use `ComponentRegistry.lifecycle_operations()` and
+All runtime consumers load the validated document through
+`ComponentRegistry.load()`. Lifecycle consumers use
+`ComponentRegistry.lifecycle_operations()` and
 dependency ordering. Monitoring consumers use
 `ComponentRegistry.monitoring_checks()`. Both methods return data from the
 same loaded component definition; runtime observations remain separate.
@@ -74,3 +77,6 @@ Change an existing contract and its consumers together. A breaking field or
 meaning change requires a new `apiVersion`; do not silently reinterpret
 `v1alpha1`. Registry membership represents manager support, not vendor
 certification or evidence that a component is deployed and healthy.
+
+The read-only [manager API](api.md) projects the non-sensitive identity,
+version, dependency, and workload fields from this same loaded registry.

@@ -14,7 +14,6 @@ from manager.registry_validation import validate_registry
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REGISTRY_PATH = ROOT / "registry" / "components.json"
 SCHEMA_DIR = ROOT / "registry" / "schemas"
 
 
@@ -25,7 +24,7 @@ def load_json(path: Path) -> dict:
 
 class ComponentRegistryTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.document = load_json(REGISTRY_PATH)
+        self.document = ComponentRegistry.load().document
 
     def test_registry_matches_json_schemas(self) -> None:
         registry_schema = load_json(SCHEMA_DIR / "component-registry.schema.json")

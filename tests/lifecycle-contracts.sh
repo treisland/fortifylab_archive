@@ -18,11 +18,11 @@ assert_contains() {
 while IFS=$'\t' read -r adapter workload; do
     assert_contains "$adapter" "$workload"
 done < <(python3 - <<'PY'
-import json
+from manager.component_registry import ComponentRegistry
 
-with open("registry/components.json", encoding="utf-8") as stream:
-    registry = json.load(stream)
-for component in registry["components"]:
+registry = ComponentRegistry.load()
+for component_id in registry.component_ids:
+    component = registry.component(component_id)
     workloads = component["workloads"]
     for operation in component["operations"]:
         if operation["id"] not in {"start", "stop"}:

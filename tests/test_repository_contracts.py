@@ -6,6 +6,8 @@ import re
 import unittest
 from pathlib import Path
 
+from manager.component_registry import ComponentRegistry
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -45,6 +47,17 @@ class RepositoryContractTests(unittest.TestCase):
         for version in expected.values():
             self.assertIn(f"`{version}`", compatibility)
         self.assertIn("**unverified**", compatibility)
+
+        registry = ComponentRegistry.load()
+        registered_pins = {
+            pin
+            for component_id in registry.component_ids
+            for pin in (
+                registry.component(component_id)["version"]["chart"],
+                *registry.component(component_id)["version"]["images"].values(),
+            )
+        }
+        self.assertEqual(registered_pins, set(expected.values()))
 
     def test_secret_key_is_saved_before_generated_directory_is_removed(self) -> None:
         script = (ROOT / "scripts/create-secrets.sh").read_text(encoding="utf-8")
