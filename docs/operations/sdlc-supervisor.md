@@ -57,7 +57,9 @@ journalctl --user -u fortify-supervisor-telegram.service
 /status
 /pr
 /approve
-/reject [reason]
+/reject <predefined-reason>
+/retry <idempotent-stage>
+/issue <failure-fingerprint>
 /pause
 /continue
 /help
@@ -66,6 +68,42 @@ journalctl --user -u fortify-supervisor-telegram.service
 Only the linked numeric user and private chat are accepted. Groups, channels,
 other users, arbitrary shell commands, and arbitrary GitHub operations are
 ignored or rejected.
+
+## Notification policy
+
+Notification preferences live only in the protected external
+`supervisor.toml`; they are not Telegram commands, database preferences, or
+repository state. The installer creates that file mode `0600`, and startup
+rejects a symlink, a file owned by another user, or group/world-readable
+permissions.
+
+`[notifications]` selects immediate `all` events or `failures` only, an IANA
+timezone, quiet-hour start/end, daily digest time, idempotent retry stages, and
+predefined rejection reasons. Quiet hours may cross midnight. Deferred
+observations are grouped into the digest bucket ending at the configured
+digest time. Duplicate fingerprints increment one durable record; an already
+delivered notification is edited instead of sending another message.
+
+Failure cards contain only a code, stage, affected PR, retry eligibility, and
+typed recovery commands. Diagnostics are bounded, newlines are flattened,
+secret-like fields and raw logs are dropped, and protected paths are replaced.
+Telegram never receives raw command output or filesystem paths.
+
+The default retry allowlist is empty. Add a stage only after its operation is
+known to be idempotent:
+
+```toml
+[notifications]
+retry_stages = ["checks"]
+```
+
+`/retry checks` records a typed recovery request for the latest matching
+failure; it does not execute shell text. `/issue <failure-fingerprint>` creates
+one fixed-format, sanitized GitHub issue and records its URL. The operator
+cannot supply a title or body, and duplicate requests do not create another
+issue. It does not copy logs or create arbitrary issue content. `/pause` stops
+selection of new work while monitoring continues. Rejections accept only the
+configured reason slugs, so audit records stay consistent.
 
 ## Merge approval
 
@@ -148,7 +186,10 @@ configuration.
 ## Recovery
 
 Telegram or GitHub failures leave durable state unchanged and are retried by
-the service or next timer invocation. Use `/pause` before maintenance. The
+the service or next timer invocation. Notification delivery failure cannot
+approve, reject, retry, merge, queue, or advance work. A failed immediate send
+remains pending; a failed digest remains in its original bucket. Use `/pause`
+before maintenance. The
 SQLite state is stored outside the checkout at:
 
 ```text
@@ -156,4 +197,12 @@ SQLite state is stored outside the checkout at:
 ```
 
 Existing databases are upgraded in place by creating the callback-token table
-on startup. No Telegram credential or identity value is migrated into it.
+and durable notification table on startup. No Telegram credential, protected
+configuration value, diagnostic log, or identity value is migrated into it.
+
+Recovery is deliberately limited: retry requests apply only to configured
+idempotent stages, created issues still need operator processing, and
+notification delivery cannot reconstruct lost provider messages or repair GitHub, CI, the
+runner, or a live MicroK8s workload. Inspect the authoritative local state and
+the original system before resuming. Raw logs must stay in their protected
+source and must not be pasted into Telegram.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 import sys
@@ -17,10 +18,12 @@ from fortify_supervisor import (  # noqa: E402
     GitHub,
     InlineAction,
     MessageReference,
+    NotificationPreferences,
     Store,
     Supervisor,
     SupervisorError,
     checks_state,
+    sanitize_diagnostics,
 )
 
 
@@ -40,6 +43,43 @@ class GitHubTest(unittest.TestCase):
             return next(responses)
 
         GitHub("treisland/fortifylab", run=run).close_issue(5)
+
+
+class ConfigTest(unittest.TestCase):
+    def test_notification_preferences_require_protected_external_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_file = root / "supervisor.toml"
+            for name in ("token", "user", "chat"):
+                path = root / name
+                path.write_text(name, encoding="utf-8")
+                path.chmod(0o600)
+            config_file.write_text(
+                f"""
+[supervisor]
+repository = "owner/repository"
+milestone = "test"
+state_file = "{root / 'state.db'}"
+telegram_token_file = "{root / 'token'}"
+telegram_user_file = "{root / 'user'}"
+telegram_chat_file = "{root / 'chat'}"
+
+[notifications]
+mode = "failures"
+quiet_start = "22:00"
+quiet_end = "07:00"
+timezone = "UTC"
+retry_stages = ["checks"]
+rejection_reasons = ["changes-required"]
+""",
+                encoding="utf-8",
+            )
+            config_file.chmod(0o644)
+            with self.assertRaisesRegex(SupervisorError, "group/world"):
+                Config.load(config_file)
+            config_file.chmod(0o600)
+            config = Config.load(config_file)
+            self.assertEqual(config.notifications.mode, "failures")
 
 
 def passing_pr(number: int = 12, sha: str = "abc123") -> dict[str, Any]:
@@ -68,6 +108,7 @@ class FakeGitHub:
         self.merges: list[tuple[int, str]] = []
         self.readied: list[int] = []
         self.closed_issues: list[int] = []
+        self.created_issues: list[tuple[str, str]] = []
         self.issue: dict[str, Any] | None = {
             "number": 2,
             "title": "Architecture decisions",
@@ -92,6 +133,10 @@ class FakeGitHub:
     def close_issue(self, number: int) -> None:
         self.closed_issues.append(number)
 
+    def create_failure_issue(self, title: str, body: str) -> str:
+        self.created_issues.append((title, body))
+        return "https://github.test/issues/99"
+
     def next_issue(
         self, milestone: str, excluded: set[int] | None = None
     ) -> dict[str, Any] | None:
@@ -108,6 +153,7 @@ class FakeTelegram:
         self.edits: list[tuple[MessageReference, str, tuple[InlineAction, ...]]] = []
         self.callback_answers: list[tuple[str, str]] = []
         self.fail_edits = False
+        self.fail_sends = False
 
     def updates(self, offset: int, timeout: int) -> list[dict[str, Any]]:
         return []
@@ -115,6 +161,8 @@ class FakeTelegram:
     def send(
         self, message: str, actions: tuple[InlineAction, ...] = ()
     ) -> MessageReference:
+        if self.fail_sends:
+            raise SupervisorError("Telegram send failed")
         self.messages.append(message)
         self.actions.append(actions)
         return MessageReference(str(len(self.messages)))
@@ -156,6 +204,7 @@ class SupervisorTest(unittest.TestCase):
             telegram_user_file=self.user_file,
             telegram_chat_file=self.chat_file,
             approval_ttl_seconds=60,
+            notifications=NotificationPreferences(retry_stages=("checks",)),
         )
         self.store = Store(self.config.state_file, now=lambda: self.clock[0])
         self.github = FakeGitHub()
@@ -310,12 +359,12 @@ class SupervisorTest(unittest.TestCase):
         }
         approval = self.store.create_approval("merge_pr", payload, 60)
         response = self.supervisor.handle_command(
-            f"/reject {approval['id']} needs changes", "101"
+            f"/reject {approval['id']} changes-required", "101"
         )
         self.assertIn("rejected", response)
         row = self.store.approval(approval["id"])
         self.assertEqual(row["state"], "rejected")
-        self.assertEqual(row["reason"], "needs changes")
+        self.assertEqual(row["reason"], "changes-required")
 
     def test_reject_command_resolves_current_approval(self) -> None:
         payload = {
@@ -324,11 +373,129 @@ class SupervisorTest(unittest.TestCase):
             "head_sha": "abc123",
         }
         approval = self.store.create_approval("merge_pr", payload, 60)
-        response = self.supervisor.handle_command("/reject needs changes", "101")
+        response = self.supervisor.handle_command("/reject changes-required", "101")
         self.assertIn("rejected", response)
         row = self.store.approval(approval["id"])
         self.assertEqual(row["state"], "rejected")
-        self.assertEqual(row["reason"], "needs changes")
+        self.assertEqual(row["reason"], "changes-required")
+
+    def test_rejection_reason_must_be_predefined(self) -> None:
+        self.store.create_approval(
+            "merge_pr",
+            {
+                "repository": self.config.repository,
+                "pull_request": 12,
+                "head_sha": "abc123",
+            },
+            60,
+        )
+        with self.assertRaisesRegex(SupervisorError, "Choose a rejection reason"):
+            self.supervisor.handle_command("/reject free-form", "101")
+
+    def test_quiet_hours_defer_and_digest_rolls_over(self) -> None:
+        self.config = dataclasses.replace(
+            self.config,
+            notifications=NotificationPreferences(
+                quiet_start="00:00",
+                quiet_end="01:00",
+                timezone="UTC",
+                digest_hour=1,
+            ),
+        )
+        self.clock[0] = 1_800.0  # 1970-01-01 00:30 UTC
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.supervisor.notify_once("quiet-1", "test.info", "deferred", {})
+        self.assertEqual(self.telegram.messages, [])
+        self.clock[0] = 90_000.0  # next day, after the digest boundary
+        self.supervisor.deliver_digest()
+        self.assertIn("Fortify SDLC digest", self.telegram.messages[0])
+
+    def test_duplicate_events_edit_one_notification(self) -> None:
+        self.supervisor.notify_once("duplicate-1", "test.failure", "failed", {}, "failure")
+        self.supervisor.notify_once("duplicate-1", "test.failure", "failed", {}, "failure")
+        self.assertEqual(len(self.telegram.messages), 1)
+        self.assertEqual(len(self.telegram.edits), 1)
+        self.assertIn("Occurrences: 2", self.telegram.edits[0][1])
+
+    def test_transient_delivery_failure_never_advances_and_retries(self) -> None:
+        self.telegram.fail_sends = True
+        self.supervisor.notify_once("transient-1", "test.failure", "failed", {}, "failure")
+        self.assertEqual(self.store.get("paused", "false"), "false")
+        self.assertEqual(self.github.merges, [])
+        row = self.store.connection.execute(
+            "SELECT state FROM notifications WHERE fingerprint = 'transient-1'"
+        ).fetchone()
+        self.assertEqual(row["state"], "pending")
+        self.telegram.fail_sends = False
+        self.supervisor.notify_once("transient-1", "test.failure", "failed", {}, "failure")
+        self.assertEqual(self.telegram.messages, ["failed\nOccurrences: 2"])
+
+    def test_retry_requires_allowlisted_stage_and_matching_failure(self) -> None:
+        self.supervisor.notify_once(
+            "checks-1",
+            "test.failure",
+            "checks failed",
+            {"stage": "checks"},
+            "failure",
+        )
+        self.assertIn(
+            "Retry requested",
+            self.supervisor.handle_command("/retry checks", "101"),
+        )
+        with self.assertRaisesRegex(SupervisorError, "not allowed"):
+            self.supervisor.handle_command("/retry deploy", "101")
+
+    def test_github_issue_action_is_sanitized_and_idempotent(self) -> None:
+        self.supervisor.notify_once(
+            "checks-issue-1",
+            "test.failure",
+            "checks failed",
+            {"stage": "checks", "raw_logs": "excluded"},
+            "failure",
+        )
+        response = self.supervisor.handle_command(
+            "/issue checks-issue-1", "101"
+        )
+        self.assertIn("issue created", response)
+        self.assertEqual(len(self.github.created_issues), 1)
+        title, body = self.github.created_issues[0]
+        self.assertIn("checks", title)
+        self.assertNotIn("raw_logs", body)
+        self.assertIn("intentionally excluded", body)
+        duplicate = self.supervisor.handle_command(
+            "/issue checks-issue-1", "101"
+        )
+        self.assertIn("already created", duplicate)
+        self.assertEqual(len(self.github.created_issues), 1)
+        event = self.store.connection.execute(
+            "SELECT payload FROM events "
+            "WHERE kind = 'recovery.github_issue_created'"
+        ).fetchone()
+        self.assertEqual(
+            json.loads(event["payload"]),
+            {
+                "actor": "101",
+                "fingerprint": "checks-issue-1",
+                "url": "https://github.test/issues/99",
+            },
+        )
+        self.assertEqual(self.github.closed_issues, [])
+
+    def test_diagnostics_are_bounded_and_sanitized(self) -> None:
+        sanitized = sanitize_diagnostics(
+            {
+                "stage": "checks",
+                "raw_logs": "do not send",
+                "config_path": "/home/operator/.config/private",
+                "message": "password=hidden " + ("x" * 300),
+            }
+        )
+        self.assertNotIn("raw_logs", sanitized)
+        self.assertNotIn("/home/", json.dumps(sanitized))
+        self.assertNotIn("hidden", json.dumps(sanitized))
+        self.assertLessEqual(len(sanitized["message"]), 120)
 
     def test_implicit_approval_rejects_ambiguity(self) -> None:
         self.store.create_approval(
