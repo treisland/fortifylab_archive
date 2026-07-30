@@ -18,6 +18,7 @@ deployment target and ASPM is not a loop or supported subject.
 
 | Kind | Schema | Purpose |
 | --- | --- | --- |
+| `Operation` | `operation.schema.json` | Immutable request metadata for a typed lifecycle or control-loop operation |
 | `OperationProgress` | `progress.schema.json` | Current operation state, bounded execution policy, retry attempt, cancellation, and idempotency |
 | `HealthObservation` | `health.schema.json` | Aggregate condition, individual evidence, and the selected causal check |
 | `LoopEvent` | `event.schema.json` | Immutable, correlated state-change evidence |
@@ -60,8 +61,9 @@ after `createdAt`; decisions and consumption must occur inside that window.
 to `consumed`; approved, rejected, expired, consumed, and superseded records
 cannot authorize another execution.
 
-The schemas define the portable record. A storage implementation must enforce
-the state transition and atomic single-use claim under concurrency.
+The schemas define the portable record. The operation service that consumes an
+approval must enforce the state transition and atomic single-use claim under
+concurrency; durable history does not itself grant authorization.
 
 Communications adapters may render contextual controls for an approval, but
 their callback payloads are transport references rather than approval
@@ -93,3 +95,39 @@ redaction, and provenance without accessing a cluster.
 The [versioned evaluation corpus](evaluation-corpus.md) builds on these
 contracts with deterministic success and failure fixtures, expected
 classifications, safe actions, and redaction assertions.
+
+## Durable history
+
+`manager.record_store.LoopRecordStore` persists every operation, progress
+transition, health observation, event, incident, approval, and sanitized trace
+in a local SQLite database. Each append is committed atomically with full
+synchronous durability. SQLite's write-ahead log recovers committed records
+after restart and discards interrupted transactions. Concurrent processes are
+serialized with a bounded 30-second busy timeout.
+
+The database and its parent directory are restricted to the manager account
+(`0600` and `0700`). Deployments should place it in the manager's protected
+state directory; it must not be placed in the repository, a shared directory,
+or a Kubernetes ConfigMap. The store does not read external paths.
+
+Retention defaults to 10,000 records of each kind and 30 days. Both positive
+limits can be reduced with `RetentionPolicy`; pruning happens in the same
+transaction as an append and is independent for every kind. Operators should
+back up the SQLite database and its WAL consistently before upgrades when
+history must be retained beyond this window. This history is diagnostic
+evidence, not a backup of Fortify application data.
+
+Sanitization runs on a deep copy before contract validation and before a
+transaction begins. Sensitive keys are omitted; recognizable credentials,
+private-key material, and protected absolute paths are replaced with
+`[REDACTED]`. The strict schemas then reject unknown or malformed content.
+Malformed rows encountered after startup are atomically removed from active
+history and recorded in a metadata-only quarantine table; their unsafe payload
+is not copied.
+
+Storage schema changes are ordered in the `schema_migrations` table. Migration
+1 creates append-only history; migration 2 adds metadata-only quarantine.
+Migrations run once under an exclusive writer transaction. A downgrade is not
+supported: restore the pre-upgrade database backup with the older manager
+version. Contract-breaking changes still require a new contracts directory
+and an explicit record adapter.

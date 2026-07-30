@@ -26,6 +26,9 @@ platform profiles.
   and ScanCentral DAST.
 - Versioned, technology-neutral contracts for operation progress, health,
   events, incidents, expiring plan approvals, and sanitized traces.
+- Restart-safe local history for versioned operations, progress transitions,
+  events, incidents, approvals, and traces with transactional migrations,
+  pre-persistence redaction, bounded retention, and malformed-row quarantine.
 - A versioned, deterministic loop evaluation corpus with representative
   success and failure classifications, safe actions, and redaction assertions.
 - The accepted minimum 0.2 manager runtime boundary for its read-only API,
