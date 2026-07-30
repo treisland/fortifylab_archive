@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Fortify Lab Manager</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to lab status</a>
+  <header class="topbar">
+    <div><p class="eyebrow">FORTIFY LAB MANAGER</p><h1>Lab overview</h1></div>
+    <div class="header-actions">
+      <span class="read-only">READ ONLY</span>
+      <button id="refresh" class="secondary" type="button">Refresh</button>
+      <button id="logout" class="ghost" type="button">Sign out</button>
+    </div>
+  </header>
+  <main id="main">
+    <div id="loading" class="notice" role="status">Loading the latest lab evidence…</div>
+    <div id="api-error" class="notice danger" role="alert" hidden>
+      <strong>Manager data is unavailable.</strong>
+      <span>The page could not load one or more read models. Refresh to retry.</span>
+    </div>
+    <section class="summary-grid" aria-label="Environment summary">
+      <article><p>Environment</p><strong id="environment-state" class="status unknown">Unknown</strong><small id="checked-at">Not checked</small></article>
+      <article><p>Components</p><strong id="component-count">—</strong><small id="component-detail">Waiting for inventory</small></article>
+      <article><p>Preflight</p><strong id="preflight-state" class="status unknown">Unknown</strong><small id="preflight-detail">No result</small></article>
+      <article><p>Cluster link</p><strong id="cluster-state" class="status unknown">Unknown</strong><small>Read-only observation</small></article>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">SYSTEM MAP</p><h2>Dependencies and versions</h2></div><p class="muted">Upstream services appear before their consumers.</p></div>
+      <div id="dependency-graph" class="graph" aria-live="polite"></div>
+      <p id="inventory-empty" class="empty" hidden>No managed components are registered.</p>
+    </section>
+    <section class="two-column">
+      <article class="panel">
+        <div class="section-heading"><div><p class="eyebrow">ROOT CAUSE</p><h2>Health evidence</h2></div></div>
+        <div id="health-list"></div>
+        <p id="health-empty" class="empty" hidden>No health evidence is available.</p>
+      </article>
+      <article class="panel">
+        <div class="section-heading"><div><p class="eyebrow">READINESS</p><h2>Deployment preflight</h2></div></div>
+        <div id="preflight-list"></div>
+        <p id="preflight-empty" class="empty" hidden>No preflight checks are available.</p>
+      </article>
+    </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>Recent operations</h2></div><p class="muted">Sanitized manager-owned history only.</p></div>
+      <div class="table-wrap"><table><thead><tr><th scope="col">Time</th><th scope="col">Type</th><th scope="col">Subject</th><th scope="col">Summary</th><th scope="col">State</th></tr></thead><tbody id="history-list"></tbody></table></div>
+      <p id="history-empty" class="empty" hidden>No recent operations have been recorded.</p>
+    </section>
+  </main>
+  <script src="/assets/dashboard.js" defer></script>
+</body>
+</html>

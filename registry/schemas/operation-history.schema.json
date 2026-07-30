@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/registry/schemas/operation-history.schema.json",
+  "title": "Sanitized recent manager history",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "items"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/v1alpha1"},
+    "kind": {"const": "OperationHistory"},
+    "items": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "state", "summary", "subject", "occurredAt"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1, "maxLength": 128},
+          "kind": {"type": "string", "minLength": 1, "maxLength": 64},
+          "state": {"type": "string", "minLength": 1, "maxLength": 64},
+          "summary": {"type": "string", "minLength": 1, "maxLength": 256},
+          "subject": {"type": ["string", "null"], "maxLength": 128},
+          "occurredAt": {"type": ["string", "null"], "format": "date-time"}
+        }
+      }
+    }
+  }
+}

@@ -161,6 +161,10 @@ See the [manager runtime boundary](docs/manager-runtime-boundary.md) for the
 0.2 read-only API, local persistence, authentication, Web UI, and
 least-privilege Kubernetes contract.
 
+See the [read-only Web dashboard](docs/web-dashboard.md) for the one-page lab
+view, authentication and exposure posture, UI states, screenshots, and
+secret-disclosure boundary.
+
 Run and interpret the manager's read-only readiness report using
 [Deployment preflight](docs/deployment-preflight.md) before beginning a lab
 deployment.

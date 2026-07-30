@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in · Fortify Lab Manager</title>
+  <link rel="stylesheet" href="/assets/dashboard.css">
+</head>
+<body class="login-page">
+  <main class="login-card">
+    <p class="eyebrow">FORTIFY LAB MANAGER</p>
+    <h1>See the whole lab.</h1>
+    <p class="muted">Sign in with the local account bootstrapped by your lab operator.</p>
+    <form id="login-form">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="error" role="alert" hidden>Sign-in failed. Check your credentials and try again.</p>
+      <button type="submit">Sign in</button>
+    </form>
+    <p class="fine-print">Read-only · Same-origin session · No cluster credentials in your browser</p>
+  </main>
+  <script src="/assets/login.js" defer></script>
+</body>
+</html>
