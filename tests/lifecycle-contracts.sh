@@ -15,22 +15,26 @@ assert_contains() {
     }
 }
 
-SAST_CONTROLLER="scancentral-sast-controller"
-SAST_SENSOR="scancentral-sast-sensor-linux"
+while IFS=$'\t' read -r adapter workload; do
+    assert_contains "$adapter" "$workload"
+done < <(python3 - <<'PY'
+import json
 
-for file in apps/scsast/start.sh apps/scsast/stop.sh; do
-    assert_contains "$file" "$SAST_CONTROLLER"
-    assert_contains "$file" "$SAST_SENSOR"
-done
-assert_contains apps/scsast/scale_scanners.sh "$SAST_SENSOR"
+with open("registry/components.json", encoding="utf-8") as stream:
+    registry = json.load(stream)
+for component in registry["components"]:
+    workloads = component["workloads"]
+    for operation in component["operations"]:
+        if operation["id"] not in {"start", "stop"}:
+            continue
+        for workload in workloads:
+            print(f"{operation['adapter']}\t{workload['name']}")
+    for operation in component["operations"]:
+        if operation["id"] == "scale":
+            for workload in workloads:
+                if workload["scalable"]:
+                    print(f"{operation['adapter']}\t{workload['name']}")
+PY
+)
 
-for workload in \
-    sdast-core-scancentral-dast-core-api \
-    sdast-core-scancentral-dast-core-globalservice \
-    sdast-core-scancentral-dast-core-utilityservice
-do
-    assert_contains apps/scdast/core/start.sh "$workload"
-    assert_contains apps/scdast/core/stop.sh "$workload"
-done
-
-printf 'Lifecycle contracts match start/stop/scale scripts.\n'
+printf 'Lifecycle scripts match authoritative registry workloads.\n'

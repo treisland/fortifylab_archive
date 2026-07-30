@@ -15,6 +15,9 @@ platform profiles.
 - Foundational Fortify Lab Manager architecture decisions and their index.
 - Private Telegram and GitHub SDLC supervisor with durable approvals,
   merge-state monitoring, and automatic next-issue queueing.
+- An authoritative, schema-validated component registry shared by lifecycle
+  and monitoring contracts for MySQL, PostgreSQL, SSC, LIM, ScanCentral SAST,
+  and ScanCentral DAST.
 
 ### Fixed
 
