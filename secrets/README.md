@@ -16,9 +16,29 @@ secrets/
 2. Configure `.env` (domain, passwords, image versions).
 3. Run `scripts/create-certs.sh` to generate the mkcert root + leaf cert and
    build the JVM keystore + truststore into `generated/`.
-4. Run `scripts/create-secrets.sh` to render templates, generate ephemeral
-   secrets (SSC `secret.key`, scancentral tokens, JWT keys), and create the
+4. Run `scripts/create-secrets.sh` to render templates, preserve or initialize
+   SSC `secret.key`, generate ephemeral service tokens, and create the
    Kubernetes Secret objects.
+
+## SSC `secret.key` lifecycle
+
+SSC encrypts credentials stored in its database with `secret.key`. The
+script preserves `generated/ssc/secret.key` before rebuilding generated
+artifacts and restores it afterward. On a fresh clone only, it initializes
+the file from `templates/secret.key.sample`; that shared sample is suitable
+only for this evaluation lab.
+
+Do not delete or replace the generated key while retaining the SSC database.
+Losing it can make stored credentials unrecoverable. Back up the key together
+with the matching database using access controls appropriate for secret
+material. Restore that matching pair before running secret creation during
+recovery.
+
+Rotation is not implemented by `create-secrets.sh`. Treat replacement as a
+planned migration: inventory encrypted data, follow the SSC-version-specific
+OpenText procedure, retain a recoverable backup, restart affected consumers,
+and verify SSC health and credential-dependent integrations. A Kubernetes
+Secret update by itself does not migrate encrypted database content.
 
 ## Map: file → k8s Secret → consumer
 

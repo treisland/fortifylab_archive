@@ -22,3 +22,9 @@ platform profiles.
   StatefulSet consistently.
 - ScanCentral DAST Core stop now scales down each StatefulSet created by the
   chart.
+- Fresh-clone version pins are documented as an intentional, unverified
+  evaluation bundle rather than a supported platform profile.
+- SSC `secret.key` is preserved when generated secret artifacts are rebuilt,
+  and its recovery and deliberate-rotation boundary is documented.
+- Repository licensing and lab support boundaries are explicit and
+  link-validated.
