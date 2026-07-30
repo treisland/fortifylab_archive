@@ -1,0 +1,256 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+REPOSITORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION="$(<"$REPOSITORY_ROOT/VERSION")"
+CONFIG_ROOT="${FORTIFY_MANAGER_CONFIG_ROOT:-/etc/fortify-lab-manager}"
+STATE_ROOT="${FORTIFY_MANAGER_STATE_ROOT:-/var/lib/fortify-lab-manager}"
+INSTALL_ROOT="${FORTIFY_MANAGER_INSTALL_ROOT:-/opt/fortify-lab-manager}"
+UNIT_PATH="${FORTIFY_MANAGER_UNIT_PATH:-/etc/systemd/system/fortify-manager.service}"
+MANIFEST_PATH="${FORTIFY_MANAGER_MANIFEST_PATH:-/var/lib/fortify-lab-manager/manager-ingress.yaml}"
+SERVICE_NAME="fortify-manager.service"
+
+usage() {
+    cat <<'EOF'
+Usage: sudo ./scripts/fortify-manager COMMAND [arguments]
+
+Commands:
+  install                         Install/upgrade files without changing config or state
+  bootstrap-account [USERNAME]    Prompt for and persist the first/local account verifier
+  configure DOMAIN ADDRESS [PORT] Render and apply the MicroK8s ingress route
+  render-ingress DOMAIN ADDRESS [PORT] [OUTPUT]
+                                  Render only; does not contact MicroK8s
+  start | stop | restart | status Manage the host service
+  upgrade                         Back up manager state, install, and restart
+  diagnose                        Run sanitized service and ingress checks
+  uninstall                       Remove service and ingress; preserve config/state
+  delete-state                    Separately delete manager state after typed confirmation
+EOF
+}
+
+fail() {
+    printf 'ERROR: %s\n' "$*" >&2
+    exit 1
+}
+
+require_root() {
+    [ "$(id -u)" -eq 0 ] || fail "run this command with sudo"
+}
+
+validate_domain() {
+    [[ "$1" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$ ]] ||
+        fail "domain must be a DNS name"
+}
+
+validate_address() {
+    python3 - "$1" <<'PY' || exit 1
+import ipaddress
+import sys
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+    if not address.is_private:
+        raise ValueError
+except ValueError:
+    print("ERROR: backend address must be a private IP address", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+validate_port() {
+    [[ "$1" =~ ^[0-9]+$ ]] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ] ||
+        fail "backend port must be from 1 through 65535"
+}
+
+render_ingress() {
+    local domain="$1" address="$2" port="${3:-8080}" output="${4:-$MANIFEST_PATH}"
+    validate_domain "$domain"
+    validate_address "$address"
+    validate_port "$port"
+    install -d -m 700 "$(dirname "$output")"
+    sed -e "s/@DOMAIN@/$domain/g" \
+        -e "s/@BACKEND_ADDRESS@/$address/g" \
+        -e "s/@BACKEND_PORT@/$port/g" \
+        "$REPOSITORY_ROOT/packaging/microk8s/manager-ingress.yaml.in" >"$output"
+    chmod 600 "$output"
+    printf 'Rendered manager ingress at %s\n' "$output"
+}
+
+configure_route() {
+    require_root
+    local domain="$1" address="$2" port="${3:-8080}" temporary
+    [ -f "$CONFIG_ROOT/manager.toml" ] ||
+        fail "install the manager before configuring ingress"
+    validate_port "$port"
+    temporary="$(mktemp "$CONFIG_ROOT/.manager.toml.XXXXXX")"
+    sed "s/^port = [0-9][0-9]*$/port = $port/" \
+        "$CONFIG_ROOT/manager.toml" >"$temporary"
+    grep -q "^port = $port$" "$temporary" ||
+        { rm -f "$temporary"; fail "manager configuration has no server port"; }
+    chown root:fortify-manager "$temporary"
+    chmod 640 "$temporary"
+    mv -f "$temporary" "$CONFIG_ROOT/manager.toml"
+    render_ingress "$domain" "$address" "$port"
+    microk8s kubectl apply -f "$MANIFEST_PATH"
+}
+
+install_runtime() {
+    require_root
+    local release="$INSTALL_ROOT/releases/$VERSION"
+    getent group fortify-manager >/dev/null ||
+        groupadd --system fortify-manager
+    id fortify-manager >/dev/null 2>&1 ||
+        useradd --system --gid fortify-manager --home-dir "$STATE_ROOT" \
+            --shell /usr/sbin/nologin fortify-manager
+    install -d -m 755 "$INSTALL_ROOT/releases" "$release" "$release/bin"
+    install -d -m 700 -o fortify-manager -g fortify-manager "$STATE_ROOT"
+    install -d -m 750 -o root -g fortify-manager "$CONFIG_ROOT"
+    cp -a "$REPOSITORY_ROOT/manager" "$REPOSITORY_ROOT/contracts" \
+        "$REPOSITORY_ROOT/registry" "$release/"
+    find "$release" -type d -exec chmod 755 {} +
+    find "$release" -type f -exec chmod 644 {} +
+    install -m 755 /dev/stdin "$release/bin/fortify-manager-server" <<EOF
+#!/bin/sh
+cd "$release"
+exec /usr/bin/python3 -m manager.server "\$@"
+EOF
+    ln -sfn "$release" "$INSTALL_ROOT/current"
+    if [ ! -e "$CONFIG_ROOT/manager.toml" ]; then
+        install -m 640 -o root -g fortify-manager \
+            "$REPOSITORY_ROOT/config/manager.example.toml" \
+            "$CONFIG_ROOT/manager.toml"
+    fi
+    install -m 644 "$REPOSITORY_ROOT/packaging/systemd/fortify-manager.service" \
+        "$UNIT_PATH"
+    systemctl daemon-reload
+    printf 'Installed manager %s; protected configuration and state were preserved.\n' \
+        "$VERSION"
+}
+
+bootstrap_account() {
+    require_root
+    local username="${1:-operator}" first second verifier temporary
+    [[ "$username" =~ ^[a-zA-Z0-9_.-]{1,64}$ ]] ||
+        fail "username contains unsupported characters"
+    [ -t 0 ] || fail "account bootstrap requires an interactive terminal"
+    read -r -s -p "Manager password: " first
+    printf '\n'
+    read -r -s -p "Confirm manager password: " second
+    printf '\n'
+    [ "${#first}" -ge 12 ] || fail "password must contain at least 12 characters"
+    [ "$first" = "$second" ] || fail "passwords do not match"
+    verifier="$(PYTHONPATH="$REPOSITORY_ROOT" python3 -c \
+        'import sys; from manager.dashboard import password_verifier; print(password_verifier(sys.stdin.readline().rstrip("\n")))' \
+        <<<"$first")"
+    unset first second
+    temporary="$(mktemp "$STATE_ROOT/.accounts.XXXXXX")"
+    python3 - "$STATE_ROOT/accounts.json" "$temporary" "$username" "$verifier" <<'PY'
+import json
+import os
+import sys
+source, target, username, verifier = sys.argv[1:]
+accounts = {}
+try:
+    with open(source, encoding="utf-8") as stream:
+        accounts = json.load(stream)
+except FileNotFoundError:
+    pass
+accounts[username] = verifier
+with open(target, "w", encoding="utf-8") as stream:
+    json.dump(accounts, stream, sort_keys=True)
+    stream.write("\n")
+os.chmod(target, 0o600)
+PY
+    chown fortify-manager:fortify-manager "$temporary"
+    mv -f "$temporary" "$STATE_ROOT/accounts.json"
+    printf 'Stored verifier for account %s; no plaintext password was persisted.\n' \
+        "$username"
+}
+
+diagnose() {
+    require_root
+    local failed=0
+    "$INSTALL_ROOT/current/bin/fortify-manager-server" check ||
+        failed=1
+    systemctl is-active --quiet "$SERVICE_NAME" ||
+        { printf 'ERROR: manager service is not active\n' >&2; failed=1; }
+    curl --fail --silent --show-error --max-time 5 \
+        "http://127.0.0.1:$(sed -n 's/^port = \\([0-9]*\\)$/\\1/p' "$CONFIG_ROOT/manager.toml")/ready" \
+        >/dev/null ||
+        { printf 'ERROR: backend readiness is unavailable\n' >&2; failed=1; }
+    if [ -f "$MANIFEST_PATH" ]; then
+        microk8s kubectl apply --dry-run=server -f "$MANIFEST_PATH" >/dev/null ||
+            { printf 'ERROR: ingress manifest is rejected by MicroK8s\n' >&2; failed=1; }
+        microk8s kubectl -n fortify get ingress fortify-manager >/dev/null ||
+            { printf 'ERROR: manager ingress is missing\n' >&2; failed=1; }
+    else
+        printf 'ERROR: manager ingress has not been configured\n' >&2
+        failed=1
+    fi
+    [ "$failed" -eq 0 ] || fail "one or more checks failed; no secret values were collected"
+    printf 'Manager service, readiness, and ingress checks passed.\n'
+}
+
+command="${1:-}"
+shift || true
+case "$command" in
+    install) install_runtime ;;
+    bootstrap-account) bootstrap_account "$@" ;;
+    render-ingress) render_ingress "$@" ;;
+    configure) configure_route "$@" ;;
+    start|stop|restart|status)
+        require_root
+        systemctl "$command" "$SERVICE_NAME"
+        ;;
+    upgrade)
+        require_root
+        stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+        backup_root="$STATE_ROOT/backups/$stamp"
+        install -d -m 700 -o fortify-manager -g fortify-manager "$backup_root"
+        if [ -f "$STATE_ROOT/history.sqlite3" ]; then
+            systemctl stop "$SERVICE_NAME"
+            python3 - "$STATE_ROOT/history.sqlite3" \
+                "$backup_root/history.sqlite3" <<'PY'
+import sqlite3
+import sys
+source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+target = sqlite3.connect(sys.argv[2])
+with target:
+    source.backup(target)
+source.close()
+target.close()
+PY
+            chown fortify-manager:fortify-manager "$backup_root/history.sqlite3"
+            chmod 600 "$backup_root/history.sqlite3"
+        fi
+        [ ! -f "$STATE_ROOT/accounts.json" ] ||
+            install -m 600 -o fortify-manager -g fortify-manager \
+                "$STATE_ROOT/accounts.json" "$backup_root/accounts.json"
+        install -m 600 -o fortify-manager -g fortify-manager \
+            "$CONFIG_ROOT/manager.toml" "$backup_root/manager.toml"
+        install_runtime
+        systemctl restart "$SERVICE_NAME"
+        ;;
+    diagnose) diagnose ;;
+    uninstall)
+        require_root
+        systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+        microk8s kubectl -n fortify delete ingress fortify-manager \
+            service fortify-manager-host endpoints fortify-manager-host \
+            --ignore-not-found
+        rm -f "$UNIT_PATH"
+        systemctl daemon-reload
+        printf 'Manager service and ingress removed. Configuration and state preserved.\n'
+        ;;
+    delete-state)
+        require_root
+        read -r -p 'Type DELETE MANAGER STATE to continue: ' confirmation
+        [ "$confirmation" = "DELETE MANAGER STATE" ] ||
+            fail "state deletion cancelled"
+        systemctl is-active --quiet "$SERVICE_NAME" &&
+            fail "stop the manager before deleting state"
+        find "$STATE_ROOT" -mindepth 1 -maxdepth 1 -delete
+        printf 'Manager state deleted; this cannot be recovered without a backup.\n'
+        ;;
+    *) usage; [ -n "$command" ] && exit 1 ;;
+esac

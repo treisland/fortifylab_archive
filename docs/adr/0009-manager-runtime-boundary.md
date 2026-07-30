@@ -11,7 +11,7 @@ Putting every concern in a browser, granting the manager broad cluster
 credentials, or copying SSC-owned state into a new database would make a
 read-only lab interface a privileged second control plane.
 
-The first target is one local, single-node MicroK8s lab. The slice must expose
+The first target is one host-local, single-node MicroK8s lab. The slice must expose
 useful status and history without claiming production, remote, multi-cluster,
 or ASPM support and without enabling browser-initiated lifecycle mutations.
 
@@ -77,10 +77,15 @@ upgrade support is claimed.
 
 ### Authentication and Web UI boundary
 
-The manager serves static UI assets and the API from one origin. The default
-listener is loopback-only. Access from another device requires an explicit
-operator-configured TLS reverse proxy and trusted network boundary; the 0.2
-slice makes no Internet-facing or production-security claim.
+The manager serves static UI assets and the API from one origin. The
+supported remote-lab listener binds all host interfaces on a configurable
+private backend port, default 8080, so the host's MicroK8s nginx ingress can
+reach it. That backend is not a browser route and must not be allowed by the
+AWS Security Group. MicroK8s ingress is the only supported browser entry
+point, terminates TLS on port 443 for `lab.$DOMAIN`, and reuses the existing
+mkcert wildcard certificate Secret. Operators restrict 443 to a controlled
+IP or VPN CIDR. This remains privately trusted lab TLS and makes no public
+Internet or production-security claim.
 
 Every non-readiness API request requires an authenticated, server-side
 session. An operator bootstraps the first local account outside the browser;
@@ -201,15 +206,18 @@ statically.
 
 ## Compatibility and migration
 
-This decision introduces a boundary but no running service or database, so
-existing scripts and Fortify workloads require no migration. The first
-implementation must import no secret material and must treat existing scripts
-as external adapters until typed operations replace them.
+The host installation keeps protected configuration and manager-owned state
+outside the installed release. Reinstallation and program upgrades preserve
+account verifiers and history. Manager schema changes are forward migrations;
+program rollback does not imply database rollback and requires a matching
+pre-upgrade backup after a schema change. Uninstall and state deletion remain
+separate operations. The installation imports no secret material and never
+rotates the existing mkcert trust root.
 
 API and database schema versions start at `v1alpha1`. Alpha compatibility may
 change only through explicit versioning and migration notes. Production,
-multi-cluster, remote-manager, write-capable browser, and ASPM support require
-new decisions and validation rather than configuration switches.
+multi-cluster, public Internet, write-capable browser, and ASPM support
+require new decisions and validation rather than configuration switches.
 
 ## Related decisions
 

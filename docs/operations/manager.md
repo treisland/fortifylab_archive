@@ -1,0 +1,155 @@
+# Install and operate the 0.2 manager
+
+This is the supported remote-lab installation for one EC2 host running
+single-node MicroK8s. It exposes the authenticated, read-only manager at
+`https://lab.$DOMAIN`; the default evaluation URL is
+`https://lab.fortifydemo.com`. ASPM, public production hosting, multi-node
+deployment, and browser-triggered component changes are excluded.
+
+## Network and trust boundary
+
+MicroK8s nginx ingress is the only browser-facing entry point. In the AWS
+Security Group, allow TCP 443 only from an operator-controlled IP address or
+VPN CIDR. Do **not** allow TCP 8080, and do **not** use unrestricted
+`0.0.0.0/0` Internet exposure. Port 8080 is a private host backend reached
+only by ingress.
+
+The route reuses the existing `fortify-tls` Kubernetes Secret containing the
+mkcert wildcard certificate for `*.$DOMAIN`. Installation neither invokes
+`create-certs.sh` nor generates, replaces, or rotates a CA. mkcert provides
+encrypted transport with private lab trust; it is not a publicly trusted
+certificate or an Internet-hardening control.
+
+Add the manager hostname to operator DNS or `/etc/hosts`:
+
+```text
+<ec2-address>  lab.fortifydemo.com
+```
+
+The browser must already trust this lab's existing mkcert root CA.
+
+## Install
+
+Run from a trusted repository checkout on the MicroK8s host:
+
+```bash
+sudo ./scripts/fortify-manager install
+sudo ./scripts/fortify-manager bootstrap-account operator
+sudo ./scripts/fortify-manager configure fortifydemo.com <private-node-ip> 8080
+sudo ./scripts/fortify-manager start
+sudo ./scripts/fortify-manager diagnose
+```
+
+Use the lab domain and an address reachable from ingress pods, normally the
+EC2 instance's private IPv4 address. The renderer rejects public backend
+addresses. `configure` applies only the manager Service, Endpoints, and
+Ingress in namespace `fortify` and atomically aligns `server.port` in the
+external manager configuration; it does not alter the TLS Secret. Restart the
+service after changing an existing route. Render without contacting MicroK8s
+using:
+
+```bash
+./scripts/fortify-manager render-ingress \
+  fortifydemo.com 10.0.0.10 8080 /tmp/manager-ingress.yaml
+```
+
+The manager listens on `0.0.0.0:8080` so ingress can reach it. This does not
+authorize direct browser access to 8080.
+
+## Configuration, state, and authentication
+
+| Path | Purpose | Reinstall behavior |
+| --- | --- | --- |
+| `/etc/fortify-lab-manager/manager.toml` | Protected listener and state references | Created once, then preserved |
+| `/var/lib/fortify-lab-manager/accounts.json` | PBKDF2 password verifiers only | Preserved |
+| `/var/lib/fortify-lab-manager/history.sqlite3` | Schema-versioned manager history | Migrated in place and preserved |
+| `/opt/fortify-lab-manager/releases` | Immutable installed versions | New release added |
+| `/opt/fortify-lab-manager/current` | Active release symlink | Updated atomically |
+
+`bootstrap-account` requires a TTY, never accepts a password on the command
+line, and atomically stores only the verifier with mode `0600`. The service
+runs as unprivileged user `fortify-manager`. Other than coarse `/ready` and
+minimal sign-in assets, content fails closed without a valid server-side
+session. Cookies are always `HttpOnly`, `SameSite=Strict`, and `Secure`.
+
+Accounts and history survive service and host restarts. In-memory sessions
+are deliberately invalidated by a manager restart, so users sign in again.
+Re-running `install` does not overwrite external configuration, accounts, or
+history.
+
+## Health and sanitized diagnostics
+
+`sudo ./scripts/fortify-manager diagnose` checks configuration/account
+permissions, systemd state, bounded backend readiness, server-side manifest
+acceptance, and ingress existence. It reports categories without reading or
+printing passwords, cookies, keys, certificate contents, environment dumps,
+external configuration directories, or response bodies.
+
+For failures, check in this order:
+
+1. `systemctl status fortify-manager` for configuration, permissions, or bind
+   failure.
+2. `curl --max-time 5 http://127.0.0.1:8080/ready` for host readiness.
+3. `microk8s kubectl -n fortify get endpoints fortify-manager-host` for the
+   expected private address and port.
+4. `microk8s kubectl -n fortify describe ingress fortify-manager` for host,
+   backend, ingress class, and `fortify-tls`.
+5. Check operator DNS and Security Group rules.
+6. Check the browser certificate hostname and existing lab CA.
+
+Do not include account files, cookies, private keys, or unredacted journal
+output in support material.
+
+## Upgrade, backup, and rollback
+
+The supported upgrade stops the writer and creates a timestamped, mode-0600
+SQLite online backup plus copies of the verifier/configuration files below
+`/var/lib/fortify-lab-manager/backups`. It then installs the immutable
+release, runs forward migrations at startup, and restarts:
+
+```bash
+sudo ./scripts/fortify-manager upgrade
+sudo ./scripts/fortify-manager diagnose
+```
+
+Copy that backup to separate protected storage before a high-risk upgrade.
+Program rollback means repointing `/opt/fortify-lab-manager/current` to the
+prior release and restarting. Database rollback is **not** implied. If an
+upgrade advanced the schema, stop the service and restore the matching
+pre-upgrade database, verifier/configuration files, and program together.
+Manager history backup does not back up SSC or component data.
+
+## Uninstall and state deletion
+
+`sudo ./scripts/fortify-manager uninstall` disables the service and removes
+only manager ingress objects. It preserves `/etc/fortify-lab-manager` and
+`/var/lib/fortify-lab-manager`.
+
+State deletion is a separate destructive command requiring the service to be
+stopped and the exact typed phrase:
+
+```bash
+sudo ./scripts/fortify-manager delete-state
+```
+
+Back up first. Deleted accounts and history are unrecoverable without it.
+
+## Verification evidence
+
+`./scripts/validate-repository.sh` and
+`tests/test_manager_installation.py` provide rendered/static evidence only:
+listener policy, systemd hardening, private backend addressing, and ingress
+host/TLS/service-port symmetry.
+
+Completion on EC2 additionally requires separately recorded live evidence
+from a browser outside the host:
+
+1. Validate the `lab.$DOMAIN` certificate hostname and existing CA chain.
+2. Confirm unauthenticated `/api/v1alpha1/history` is rejected.
+3. Sign in, load the dashboard, and read the same-origin API.
+4. Restart `fortify-manager`, sign in again, and confirm history persisted.
+5. Confirm remote reachability on 443 and absence of 8080 from the Security
+   Group.
+
+Record date, manager version, domain, and sanitized pass/fail results. Never
+record a password, cookie, private key, or full account file.

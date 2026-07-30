@@ -34,11 +34,17 @@ data to improve a dashboard.
 
 ## Deployment posture
 
-The default listener is loopback-only. Remote access is unsupported by
-default and requires an explicitly configured TLS reverse proxy and trusted
-network boundary. Except for coarse readiness, API requests use an
-authenticated server-side session. This is a lab posture, not a
-production-security claim.
+The supported host listener is `0.0.0.0` on private backend port 8080 by
+default so MicroK8s ingress can reach it. MicroK8s nginx ingress is the only
+browser-facing route and exposes `https://lab.$DOMAIN` on 443 using the
+existing mkcert wildcard TLS Secret. The backend port is not opened in the
+AWS Security Group. Except for coarse readiness and minimal sign-in assets,
+requests use an authenticated server-side session. This is a restricted lab
+posture, not a public Internet or production-security claim.
+
+Installation, lifecycle, diagnostics, backup, rollback, and the separate
+state-deletion boundary are in the
+[manager operator guide](operations/manager.md).
 
 The manager uses a dedicated ServiceAccount and a Role in only the `fortify`
 namespace. Static manifests and tests must match the exact resource and verb

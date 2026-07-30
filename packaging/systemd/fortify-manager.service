@@ -1,0 +1,28 @@
+[Unit]
+Description=Fortify Lab Manager 0.2
+After=network-online.target microk8s.daemon-kubelite.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=fortify-manager
+Group=fortify-manager
+ExecStart=/opt/fortify-lab-manager/current/bin/fortify-manager-server serve
+ExecStartPre=/opt/fortify-lab-manager/current/bin/fortify-manager-server check
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/lib/fortify-lab-manager
+
+[Install]
+WantedBy=multi-user.target
