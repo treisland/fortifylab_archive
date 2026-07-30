@@ -1,0 +1,42 @@
+{
+  "progress": {
+    "apiVersion": "fortifylab.io/v1alpha1", "kind": "OperationProgress", "id": "op-001", "loop": "lifecycle",
+    "subject": {"type": "component", "id": "ssc"}, "operation": "start", "state": "running", "attempt": 1,
+    "policy": {"timeoutSeconds": 1800, "maxAttempts": 3, "backoffSeconds": 30},
+    "idempotency": {"mode": "keyed", "key": "ssc-start-plan-a"}, "cancellation": {"requested": false, "supported": true},
+    "updatedAt": "2026-07-30T12:00:00Z",
+    "provenance": {"source": "manager", "observedAt": "2026-07-30T12:00:00Z", "collector": "lifecycle-adapter", "correlationId": "loop-001"}
+  },
+  "health": {
+    "apiVersion": "fortifylab.io/v1alpha1", "kind": "HealthObservation", "id": "health-001", "loop": "health",
+    "subject": {"type": "component", "id": "ssc"}, "status": "unhealthy",
+    "checks": [{"id": "mysql-ready", "status": "fail", "required": true, "summary": "Database dependency is unavailable"}],
+    "rootCauseCheckId": "mysql-ready", "observedAt": "2026-07-30T12:01:00Z",
+    "provenance": {"source": "health-engine", "observedAt": "2026-07-30T12:01:00Z", "collector": "mysql-check", "correlationId": "loop-001"}
+  },
+  "event": {
+    "apiVersion": "fortifylab.io/v1alpha1", "kind": "LoopEvent", "id": "event-001", "loop": "health", "type": "dependency.unavailable",
+    "subject": {"type": "component", "id": "mysql"}, "severity": "error", "summary": "Required database health check failed",
+    "occurredAt": "2026-07-30T12:01:00Z",
+    "provenance": {"source": "health-engine", "observedAt": "2026-07-30T12:01:00Z", "collector": "mysql-check", "correlationId": "loop-001"}
+  },
+  "incident": {
+    "apiVersion": "fortifylab.io/v1alpha1", "kind": "Incident", "id": "incident-001", "loop": "health",
+    "subject": {"type": "component", "id": "ssc"}, "status": "open", "severity": "error", "summary": "SSC is unavailable because MySQL is unhealthy",
+    "eventIds": ["event-001"], "rootCause": {"eventId": "event-001", "code": "dependency.unavailable", "summary": "MySQL is the earliest failing required dependency"},
+    "openedAt": "2026-07-30T12:01:00Z",
+    "provenance": {"source": "incident-engine", "observedAt": "2026-07-30T12:01:01Z", "collector": "root-cause-selector", "correlationId": "loop-001"}
+  },
+  "approval": {
+    "apiVersion": "fortifylab.io/v1alpha1", "kind": "PlanApproval", "id": "approval-001", "loop": "lifecycle",
+    "planDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "state": "pending", "singleUse": true,
+    "createdAt": "2026-07-30T12:02:00Z", "expiresAt": "2026-07-30T13:02:00Z",
+    "provenance": {"source": "approval-service", "observedAt": "2026-07-30T12:02:00Z", "collector": "local-ui", "correlationId": "loop-001"}
+  },
+  "trace": {
+    "apiVersion": "fortifylab.io/v1alpha1", "kind": "SanitizedTrace", "id": "trace-001", "loop": "lifecycle", "operationId": "op-001",
+    "sanitized": true, "redactions": ["credential", "token", "environment", "path"],
+    "entries": [{"at": "2026-07-30T12:00:00Z", "level": "info", "code": "operation.started", "message": "Component start began", "fields": {"component": "ssc", "attempt": 1}}],
+    "provenance": {"source": "operation-runner", "observedAt": "2026-07-30T12:00:00Z", "collector": "trace-sanitizer", "correlationId": "loop-001"}
+  }
+}

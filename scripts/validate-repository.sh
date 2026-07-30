@@ -34,6 +34,9 @@ printf 'Checking lifecycle contracts...\n'
 python3 scripts/validate-component-registry.py
 bash tests/lifecycle-contracts.sh
 
+printf 'Checking loop contract schemas...\n'
+python3 -m unittest tests.test_loop_contracts
+
 printf 'Checking local Markdown links...\n'
 python3 scripts/check-local-links.py
 

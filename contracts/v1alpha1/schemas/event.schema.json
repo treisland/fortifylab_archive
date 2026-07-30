@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/contracts/v1alpha1/event.schema.json",
+  "title": "Loop event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "id", "loop", "type", "subject", "severity", "summary", "occurredAt", "provenance"],
+  "properties": {
+    "apiVersion": {"$ref": "common.schema.json#/$defs/apiVersion"},
+    "kind": {"const": "LoopEvent"},
+    "id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "loop": {"$ref": "common.schema.json#/$defs/loop"},
+    "type": {"$ref": "common.schema.json#/$defs/identifier"},
+    "subject": {"$ref": "common.schema.json#/$defs/subject"},
+    "severity": {"enum": ["info", "warning", "error", "critical"]},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 512},
+    "causeEventId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "occurredAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+    "provenance": {"$ref": "common.schema.json#/$defs/provenance"}
+  }
+}

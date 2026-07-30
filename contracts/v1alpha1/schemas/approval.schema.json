@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/contracts/v1alpha1/approval.schema.json",
+  "title": "Plan approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "id", "loop", "planDigest", "state", "singleUse", "createdAt", "expiresAt", "provenance"],
+  "properties": {
+    "apiVersion": {"$ref": "common.schema.json#/$defs/apiVersion"},
+    "kind": {"const": "PlanApproval"},
+    "id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "loop": {"$ref": "common.schema.json#/$defs/loop"},
+    "planDigest": {"$ref": "common.schema.json#/$defs/digest"},
+    "state": {"enum": ["pending", "approved", "rejected", "expired", "consumed", "superseded"]},
+    "singleUse": {"const": true},
+    "createdAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+    "expiresAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+    "decidedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+    "consumedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+    "actor": {"type": "string", "minLength": 1, "maxLength": 128},
+    "provenance": {"$ref": "common.schema.json#/$defs/provenance"}
+  }
+}
