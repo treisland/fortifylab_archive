@@ -162,6 +162,17 @@ class SupervisorTest(unittest.TestCase):
         with self.assertRaisesRegex(SupervisorError, "already approved"):
             self.supervisor.approve(approval["id"], "101")
 
+    def test_approve_command_resolves_current_approval(self) -> None:
+        payload = {
+            "repository": self.config.repository,
+            "pull_request": 12,
+            "head_sha": "abc123",
+        }
+        self.store.create_approval("merge_pr", payload, 60)
+        response = self.supervisor.handle_command("/approve", "101")
+        self.assertIn("merge approved", response)
+        self.assertEqual(self.github.merges, [(12, "abc123")])
+
     def test_changed_head_rejects_approval(self) -> None:
         payload = {
             "repository": self.config.repository,
@@ -194,7 +205,7 @@ class SupervisorTest(unittest.TestCase):
         ).fetchone()["count"]
         self.assertEqual(approvals, 1)
         self.assertEqual(len(self.telegram.messages), 1)
-        self.assertIn("/approve apr-", self.telegram.messages[0])
+        self.assertIn("Approve: /approve", self.telegram.messages[0])
 
     def test_merged_pr_queues_next_issue_once(self) -> None:
         self.store.set("current_pr", "12")
@@ -223,6 +234,41 @@ class SupervisorTest(unittest.TestCase):
         row = self.store.approval(approval["id"])
         self.assertEqual(row["state"], "rejected")
         self.assertEqual(row["reason"], "needs changes")
+
+    def test_reject_command_resolves_current_approval(self) -> None:
+        payload = {
+            "repository": self.config.repository,
+            "pull_request": 12,
+            "head_sha": "abc123",
+        }
+        approval = self.store.create_approval("merge_pr", payload, 60)
+        response = self.supervisor.handle_command("/reject needs changes", "101")
+        self.assertIn("rejected", response)
+        row = self.store.approval(approval["id"])
+        self.assertEqual(row["state"], "rejected")
+        self.assertEqual(row["reason"], "needs changes")
+
+    def test_implicit_approval_rejects_ambiguity(self) -> None:
+        self.store.create_approval(
+            "merge_pr",
+            {
+                "repository": self.config.repository,
+                "pull_request": 12,
+                "head_sha": "abc123",
+            },
+            60,
+        )
+        self.store.create_approval(
+            "merge_pr",
+            {
+                "repository": self.config.repository,
+                "pull_request": 13,
+                "head_sha": "def456",
+            },
+            60,
+        )
+        with self.assertRaisesRegex(SupervisorError, "Multiple approvals"):
+            self.supervisor.handle_command("/approve", "101")
 
 
 if __name__ == "__main__":

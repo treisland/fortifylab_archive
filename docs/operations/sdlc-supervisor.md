@@ -56,8 +56,8 @@ journalctl --user -u fortify-supervisor-telegram.service
 ```text
 /status
 /pr
-/approve <approval-id>
-/reject <approval-id> [reason]
+/approve
+/reject [reason]
 /pause
 /continue
 /help
@@ -70,8 +70,11 @@ ignored or rejected.
 ## Merge approval
 
 When a tracked pull request is unchanged, mergeable, and passing, the
-supervisor sends an expiring approval ID. `/approve` re-fetches the PR and
-fails closed if the head SHA, checks, state, or mergeability changed.
+supervisor creates one expiring approval. `/approve` targets that current
+approval automatically, re-fetches the PR, and fails closed if the head SHA,
+checks, state, or mergeability changed. `/reject [reason]` rejects it.
+Explicit IDs remain available only as a safe fallback if multiple approvals
+somehow coexist.
 
 After GitHub reports the PR merged, the supervisor queues the lowest-numbered
 eligible open issue in the configured milestone. Issues marked

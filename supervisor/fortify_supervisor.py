@@ -216,6 +216,18 @@ class Store:
             (action, digest, int(self.now())),
         ).fetchone()
 
+    def pending_approvals(self, action: str) -> list[sqlite3.Row]:
+        return list(
+            self.connection.execute(
+                """
+                SELECT * FROM approvals
+                WHERE action = ? AND state = 'pending' AND expires_at > ?
+                ORDER BY created_at DESC
+                """,
+                (action, int(self.now())),
+            ).fetchall()
+        )
+
     def decide(
         self, approval_id: str, state: str, actor: str, reason: str = ""
     ) -> sqlite3.Row:
@@ -403,6 +415,26 @@ class Telegram:
     def send(self, message: str) -> None:
         self._api("sendMessage", {"chat_id": self.chat_id, "text": message})
 
+    def register_commands(self) -> None:
+        commands = [
+            {"command": "status", "description": "Show supervisor status"},
+            {"command": "pr", "description": "Show the tracked pull request"},
+            {"command": "approve", "description": "Approve the pending PR merge"},
+            {"command": "reject", "description": "Reject the pending PR merge"},
+            {"command": "pause", "description": "Pause new automated work"},
+            {"command": "continue", "description": "Resume automated work"},
+            {"command": "help", "description": "Show available commands"},
+        ]
+        self._api(
+            "setMyCommands",
+            {
+                "commands": json.dumps(commands, separators=(",", ":")),
+                "scope": json.dumps(
+                    {"type": "all_private_chats"}, separators=(",", ":")
+                ),
+            },
+        )
+
 
 def checks_state(pr: dict[str, Any]) -> str:
     checks = pr.get("statusCheckRollup") or []
@@ -512,21 +544,39 @@ class Supervisor:
             )
             return "▶️ Supervisor resumed."
         if command == "/approve":
-            if len(parts) != 2:
-                raise SupervisorError("Usage: /approve <approval-id>")
-            return self.approve(parts[1], actor)
+            if len(parts) > 2:
+                raise SupervisorError("Usage: /approve [approval-id]")
+            approval_id = (
+                parts[1]
+                if len(parts) == 2
+                else self.current_approval_id("merge_pr")
+            )
+            return self.approve(approval_id, actor)
         if command == "/reject":
-            if len(parts) < 2:
-                raise SupervisorError("Usage: /reject <approval-id> [reason]")
-            reason = " ".join(parts[2:])
-            self.store.decide(parts[1], "rejected", actor, reason)
-            return f"Approval {parts[1]} rejected."
+            explicit_id = len(parts) > 1 and parts[1].startswith("apr-")
+            approval_id = (
+                parts[1] if explicit_id else self.current_approval_id("merge_pr")
+            )
+            reason = " ".join(parts[2:] if explicit_id else parts[1:])
+            self.store.decide(approval_id, "rejected", actor, reason)
+            return "Pending PR merge rejected."
         if command == "/help":
             return (
-                "/status\n/pr\n/approve <id>\n/reject <id> [reason]\n"
+                "/status\n/pr\n/approve\n/reject [reason]\n"
                 "/pause\n/continue\n/help"
             )
         raise SupervisorError("Unknown command. Use /help.")
+
+    def current_approval_id(self, action: str) -> str:
+        approvals = self.store.pending_approvals(action)
+        if not approvals:
+            raise SupervisorError("No pending PR approval")
+        if len(approvals) > 1:
+            raise SupervisorError(
+                "Multiple approvals are pending; use /approve <approval-id> "
+                "or /reject <approval-id> [reason]"
+            )
+        return str(approvals[0]["id"])
 
     def approve(self, approval_id: str, actor: str) -> str:
         row = self.store.approval(approval_id)
@@ -653,8 +703,8 @@ class Supervisor:
             )
             self.telegram.send(
                 f"✅ PR #{number} is passing and mergeable.\n"
-                f"Approve: /approve {approval['id']}\n"
-                f"Reject: /reject {approval['id']} <reason>\n"
+                "Approve: /approve\n"
+                "Reject: /reject <reason>\n"
                 f"Expires: {approval['expires_at']}"
             )
 
@@ -721,6 +771,7 @@ def command_line() -> argparse.ArgumentParser:
     commands.add_parser("monitor-once")
     commands.add_parser("telegram-once")
     commands.add_parser("telegram-loop")
+    commands.add_parser("register-commands")
     track = commands.add_parser("track-pr")
     track.add_argument("number", type=int)
     return parser
@@ -746,6 +797,7 @@ def main() -> int:
                 supervisor.handle_update(update)
                 store.set("telegram_offset", str(offset))
         elif arguments.command == "telegram-loop":
+            supervisor.telegram.register_commands()
             while True:
                 try:
                     offset = int(store.get("telegram_offset", "0"))
@@ -757,6 +809,9 @@ def main() -> int:
                 except SupervisorError as error:
                     print(f"Supervisor warning: {error}", file=sys.stderr)
                     time.sleep(5)
+        elif arguments.command == "register-commands":
+            supervisor.telegram.register_commands()
+            print("Registered private Telegram command menu.")
         return 0
     except (SupervisorError, OSError, sqlite3.Error) as error:
         print(f"Error: {error}", file=sys.stderr)
