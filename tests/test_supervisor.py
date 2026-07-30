@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -13,11 +14,30 @@ sys.path.insert(0, str(ROOT / "supervisor"))
 
 from fortify_supervisor import (  # noqa: E402
     Config,
+    GitHub,
     Store,
     Supervisor,
     SupervisorError,
     checks_state,
 )
+
+
+class GitHubTest(unittest.TestCase):
+    def test_close_issue_accepts_native_closure_race(self) -> None:
+        responses = iter(
+            [
+                subprocess.CompletedProcess([], 0, '{"state":"open"}', ""),
+                subprocess.CompletedProcess(
+                    [], 1, "", "gh: Validation Failed (HTTP 422)"
+                ),
+                subprocess.CompletedProcess([], 0, '{"state":"closed"}', ""),
+            ]
+        )
+
+        def run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            return next(responses)
+
+        GitHub("treisland/fortifylab", run=run).close_issue(5)
 
 
 def passing_pr(number: int = 12, sha: str = "abc123") -> dict[str, Any]:
@@ -45,6 +65,7 @@ class FakeGitHub:
         self.discovered: list[dict[str, Any]] = [self.pr]
         self.merges: list[tuple[int, str]] = []
         self.readied: list[int] = []
+        self.closed_issues: list[int] = []
         self.issue: dict[str, Any] | None = {
             "number": 2,
             "title": "Architecture decisions",
@@ -66,8 +87,15 @@ class FakeGitHub:
         self.pr["isDraft"] = False
         self.pr["mergeStateStatus"] = "CLEAN"
 
-    def next_issue(self, milestone: str) -> dict[str, Any] | None:
+    def close_issue(self, number: int) -> None:
+        self.closed_issues.append(number)
+
+    def next_issue(
+        self, milestone: str, excluded: set[int] | None = None
+    ) -> dict[str, Any] | None:
         assert milestone == "0.1 — Evaluation Foundation"
+        if self.issue and int(self.issue["number"]) in (excluded or set()):
+            return None
         return self.issue
 
 
@@ -159,6 +187,8 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("merge approved", response)
         self.assertEqual(self.github.readied, [12])
         self.assertEqual(self.github.merges, [(12, "abc123")])
+        self.assertEqual(self.github.closed_issues, [12])
+        self.assertEqual(self.store.get("current_issue"), "2")
         with self.assertRaisesRegex(SupervisorError, "already approved"):
             self.supervisor.approve(approval["id"], "101")
 
@@ -172,6 +202,18 @@ class SupervisorTest(unittest.TestCase):
         response = self.supervisor.handle_command("/approve", "101")
         self.assertIn("merge approved", response)
         self.assertEqual(self.github.merges, [(12, "abc123")])
+
+    def test_final_approval_reports_completed_queue(self) -> None:
+        self.github.issue = None
+        payload = {
+            "repository": self.config.repository,
+            "pull_request": 12,
+            "head_sha": "abc123",
+        }
+        self.store.create_approval("merge_pr", payload, 60)
+        response = self.supervisor.handle_command("/approve", "101")
+        self.assertIn("milestone queue is complete", response)
+        self.assertNotIn("next issue was selected", response)
 
     def test_changed_head_rejects_approval(self) -> None:
         payload = {
@@ -225,6 +267,7 @@ class SupervisorTest(unittest.TestCase):
         self.github.discovered = []
         self.supervisor.monitor_once()
         self.assertEqual(self.store.get("current_issue"), "2")
+        self.assertEqual(self.github.closed_issues, [12])
         self.assertEqual(
             len([message for message in self.telegram.messages if "Queued issue" in message]),
             1,

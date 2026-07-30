@@ -5,6 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+Environment=FORTIFY_CODEX_BIN=%h/.local/bin/codex
 ExecStart=%h/.local/bin/fortify-issue-runner %i
 NoNewPrivileges=true
 PrivateTmp=true

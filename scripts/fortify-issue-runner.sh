@@ -15,6 +15,8 @@ ISSUE_NUMBER="${1:-}"
 REPOSITORY="${FORTIFY_GITHUB_REPOSITORY:-treisland/fortifylab}"
 SOURCE_ROOT="${FORTIFY_REPOSITORY_ROOT:-/home/ubuntu/lab}"
 STATE_ROOT="${FORTIFY_MANAGER_STATE_DIR:-$HOME/.local/share/fortify-lab-manager}"
+CODEX_BIN="${FORTIFY_CODEX_BIN:-$HOME/.local/bin/codex}"
+export GIT_SSH_COMMAND="${FORTIFY_GIT_SSH_COMMAND:-ssh -F /dev/null}"
 WORKSPACE_ROOT="$STATE_ROOT/workspaces"
 WORKTREE="$WORKSPACE_ROOT/issue-$ISSUE_NUMBER"
 LOG_FILE="$STATE_ROOT/runner-$ISSUE_NUMBER.log"
@@ -42,9 +44,10 @@ fail() {
   exit 1
 }
 
-for command in git gh codex python3; do
+for command in git gh python3; do
   command -v "$command" >/dev/null 2>&1 || fail "missing command: $command"
 done
+[ -x "$CODEX_BIN" ] || fail "Codex CLI is not executable: $CODEX_BIN"
 
 ISSUE_JSON="$(gh issue view "$ISSUE_NUMBER" --repo "$REPOSITORY" \
   --json number,title,body,state,milestone,url)"
@@ -77,8 +80,8 @@ notify "▶️ Starting automated work on issue #$ISSUE_NUMBER: $ISSUE_TITLE"
     "" \
     "Issue JSON:"
   printf '%s\n' "$ISSUE_JSON"
-} | codex -a never exec \
-      --sandbox workspace-write \
+} | "$CODEX_BIN" -a never exec \
+      --sandbox danger-full-access \
       --ephemeral \
       --cd "$WORKTREE" \
       --output-last-message "$RESULT_FILE" \
@@ -101,6 +104,9 @@ PR_URL="$(gh pr create \
   --head "$BRANCH" \
   --draft \
   --title "$ISSUE_TITLE" \
-  --body $'Implements #'"$ISSUE_NUMBER"$'.\n\nCreated by the bounded Fortify SDLC issue runner. The pull request remains draft until verification and human approval complete.')"
+  --body $'Closes #'"$ISSUE_NUMBER"$'.\n\nCreated by the bounded Fortify SDLC issue runner. The pull request remains draft until verification and human approval complete.')"
+
+git -C "$SOURCE_ROOT" worktree remove "$WORKTREE"
+git -C "$SOURCE_ROOT" branch -D "$BRANCH"
 
 notify "✅ Automated issue #$ISSUE_NUMBER opened draft PR: $PR_URL"
