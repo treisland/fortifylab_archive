@@ -61,6 +61,10 @@ platform profiles.
 
 ### Fixed
 
+- Manager route configuration now preserves the prior external configuration
+  when MicroK8s rejects an update, diagnostics detect live route drift and a
+  missing wildcard TLS Secret, and failed upgrades attempt to restore the
+  previously active service.
 - ScanCentral SAST lifecycle operations now use the chart's actual sensor
   StatefulSet consistently.
 - ScanCentral DAST Core stop now scales down each StatefulSet created by the

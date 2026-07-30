@@ -78,20 +78,30 @@ render_ingress() {
 
 configure_route() {
     require_root
-    local domain="$1" address="$2" port="${3:-8080}" temporary
+    local domain="$1" address="$2" port="${3:-8080}" config_candidate manifest_candidate
     [ -f "$CONFIG_ROOT/manager.toml" ] ||
         fail "install the manager before configuring ingress"
+    validate_domain "$domain"
+    validate_address "$address"
     validate_port "$port"
-    temporary="$(mktemp "$CONFIG_ROOT/.manager.toml.XXXXXX")"
+    config_candidate="$(mktemp "$CONFIG_ROOT/.manager.toml.XXXXXX")"
+    manifest_candidate="$(mktemp "$(dirname "$MANIFEST_PATH")/.manager-ingress.XXXXXX")"
+    trap 'rm -f "$config_candidate" "$manifest_candidate"' RETURN
     sed "s/^port = [0-9][0-9]*$/port = $port/" \
-        "$CONFIG_ROOT/manager.toml" >"$temporary"
-    grep -q "^port = $port$" "$temporary" ||
-        { rm -f "$temporary"; fail "manager configuration has no server port"; }
-    chown root:fortify-manager "$temporary"
-    chmod 640 "$temporary"
-    mv -f "$temporary" "$CONFIG_ROOT/manager.toml"
-    render_ingress "$domain" "$address" "$port"
-    microk8s kubectl apply -f "$MANIFEST_PATH"
+        "$CONFIG_ROOT/manager.toml" >"$config_candidate"
+    grep -q "^port = $port$" "$config_candidate" ||
+        fail "manager configuration has no server port"
+    render_ingress "$domain" "$address" "$port" "$manifest_candidate"
+    microk8s kubectl apply --dry-run=server -f "$manifest_candidate" >/dev/null ||
+        fail "manager ingress configuration was rejected; existing configuration was preserved"
+    microk8s kubectl apply -f "$manifest_candidate" ||
+        fail "manager ingress could not be applied; existing configuration was preserved"
+    chown root:fortify-manager "$config_candidate"
+    chmod 640 "$config_candidate"
+    mv -f "$config_candidate" "$CONFIG_ROOT/manager.toml"
+    mv -f "$manifest_candidate" "$MANIFEST_PATH"
+    trap - RETURN
+    printf 'Configured manager route; restart the service to activate port %s.\n' "$port"
 }
 
 install_runtime() {
@@ -181,8 +191,17 @@ diagnose() {
     if [ -f "$MANIFEST_PATH" ]; then
         microk8s kubectl apply --dry-run=server -f "$MANIFEST_PATH" >/dev/null ||
             { printf 'ERROR: ingress manifest is rejected by MicroK8s\n' >&2; failed=1; }
-        microk8s kubectl -n fortify get ingress fortify-manager >/dev/null ||
-            { printf 'ERROR: manager ingress is missing\n' >&2; failed=1; }
+        if microk8s kubectl diff -f "$MANIFEST_PATH" >/dev/null 2>&1; then
+            :
+        else
+            case "$?" in
+                1) printf 'ERROR: live manager route differs from the protected manifest; re-run configure\n' >&2 ;;
+                *) printf 'ERROR: live manager route could not be compared; check MicroK8s access\n' >&2 ;;
+            esac
+            failed=1
+        fi
+        microk8s kubectl -n fortify get secret fortify-tls >/dev/null ||
+            { printf 'ERROR: existing wildcard TLS Secret fortify-tls is missing\n' >&2; failed=1; }
     else
         printf 'ERROR: manager ingress has not been configured\n' >&2
         failed=1
@@ -206,9 +225,12 @@ case "$command" in
         require_root
         stamp="$(date -u +%Y%m%dT%H%M%SZ)"
         backup_root="$STATE_ROOT/backups/$stamp"
-        install -d -m 700 -o fortify-manager -g fortify-manager "$backup_root"
-        if [ -f "$STATE_ROOT/history.sqlite3" ]; then
-            systemctl stop "$SERVICE_NAME"
+        was_active=0
+        systemctl is-active --quiet "$SERVICE_NAME" && was_active=1
+        systemctl stop "$SERVICE_NAME"
+        if ! (
+            install -d -m 700 -o fortify-manager -g fortify-manager "$backup_root"
+            if [ -f "$STATE_ROOT/history.sqlite3" ]; then
             python3 - "$STATE_ROOT/history.sqlite3" \
                 "$backup_root/history.sqlite3" <<'PY'
 import sqlite3
@@ -220,15 +242,20 @@ with target:
 source.close()
 target.close()
 PY
-            chown fortify-manager:fortify-manager "$backup_root/history.sqlite3"
-            chmod 600 "$backup_root/history.sqlite3"
-        fi
-        [ ! -f "$STATE_ROOT/accounts.json" ] ||
+                chown fortify-manager:fortify-manager "$backup_root/history.sqlite3"
+                chmod 600 "$backup_root/history.sqlite3"
+            fi
+            [ ! -f "$STATE_ROOT/accounts.json" ] ||
+                install -m 600 -o fortify-manager -g fortify-manager \
+                    "$STATE_ROOT/accounts.json" "$backup_root/accounts.json"
             install -m 600 -o fortify-manager -g fortify-manager \
-                "$STATE_ROOT/accounts.json" "$backup_root/accounts.json"
-        install -m 600 -o fortify-manager -g fortify-manager \
-            "$CONFIG_ROOT/manager.toml" "$backup_root/manager.toml"
-        install_runtime
+                "$CONFIG_ROOT/manager.toml" "$backup_root/manager.toml"
+            install_runtime
+        ); then
+            [ "$was_active" -eq 0 ] || systemctl start "$SERVICE_NAME" ||
+                printf 'ERROR: prior manager release could not be restarted\n' >&2
+            fail "upgrade failed; protected backup was retained and the active release was not changed unless installation completed"
+        fi
         systemctl restart "$SERVICE_NAME"
         ;;
     diagnose) diagnose ;;
