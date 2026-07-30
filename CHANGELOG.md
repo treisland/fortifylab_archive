@@ -12,6 +12,7 @@ platform profiles.
 
 - Repository governance and contribution guidance.
 - Baseline repository validation and lifecycle regression checks.
+- Foundational Fortify Lab Manager architecture decisions and their index.
 - Private Telegram and GitHub SDLC supervisor with durable approvals,
   merge-state monitoring, and automatic next-issue queueing.
 

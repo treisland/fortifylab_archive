@@ -1,5 +1,8 @@
 # Fortify Lab on Kubernetes
 
+See [Architecture decisions](docs/architecture.md) for the accepted Fortify
+Lab Manager boundaries and design contracts.
+
 A scripted Fortify deployment for evaluation, training, and demos:
 **SSC**, **ScanCentral SAST**, **ScanCentral DAST**, **LIM**, plus the
 Kubernetes Dashboard, all running on [microk8s](https://microk8s.io/) with
