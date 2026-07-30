@@ -32,6 +32,9 @@ platform profiles.
 - Protected Telegram notification preferences with quiet hours, failure-only
   delivery, durable digests, deduplication, sanitized failure recovery, and
   allowlisted idempotent retry requests.
+- Provider-neutral, bounded manager observability commands with private
+  Telegram buttons for lab summary, dependency-aware health, preflight,
+  incidents, history, recovery notifications, and Web UI deep links.
 
 ### Fixed
 

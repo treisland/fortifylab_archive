@@ -76,3 +76,17 @@ The manager runtime and authentication boundary is documented in the
 [manager runtime boundary](manager-runtime-boundary.md). This module defines
 the inventory WSGI contract; listener setup and authenticated session serving
 remain separate manager integration work.
+
+## Communications consumer
+
+The private mobile adapter consumes manager read models through
+`GET /api/v1alpha1/summary`, `/health`, `/preflight`, `/incidents`, and
+`/history`. It uses bounded `page` and `pageSize` query values and never falls
+back to direct Kubernetes access. The provider-neutral response mapping,
+expected fields, failure behavior, and Telegram command surface are documented
+in [Private Telegram manager observability](operations/telegram-observability.md).
+
+These read models retain the manager API's authorization and disclosure
+boundary. In particular, health supplies authoritative dependency/root-cause
+relationships, freshness, sanitized evidence, and safe remediation; adapters
+must not infer those values by querying workloads themselves.

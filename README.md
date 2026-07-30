@@ -161,6 +161,10 @@ See the [manager runtime boundary](docs/manager-runtime-boundary.md) for the
 0.2 read-only API, local persistence, authentication, Web UI, and
 least-privilege Kubernetes contract.
 
+See [Private Telegram manager observability](docs/operations/telegram-observability.md)
+for the typed, read-only mobile commands that consume manager inventory,
+health, preflight, incidents, and history without direct Kubernetes access.
+
 Representative deterministic regression scenarios are documented in the
 [loop evaluation corpus](docs/evaluation-corpus.md).
 
