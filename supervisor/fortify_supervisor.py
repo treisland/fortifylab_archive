@@ -990,7 +990,10 @@ class Supervisor:
         reference = MessageReference(str(message.get("message_id") or ""))
         try:
             outcome = self.execute_callback(token, actor)
-            if not outcome.startswith("PR #"):
+            if outcome.startswith("PR #"):
+                self.telegram.send(outcome)
+                self.telegram.answer_callback(callback_id, "Details sent")
+            else:
                 try:
                     self.telegram.edit(reference, self.status_text())
                 except SupervisorError:
@@ -999,7 +1002,7 @@ class Supervisor:
                         "communications.message_edit_failed",
                         {"provider": "telegram", "outcome": "failed"},
                     )
-            self.telegram.answer_callback(callback_id, outcome)
+                self.telegram.answer_callback(callback_id, outcome)
         except SupervisorError as error:
             self.telegram.answer_callback(callback_id, f"❌ {error}")
 
@@ -1041,8 +1044,12 @@ class Supervisor:
             return "Supervisor paused"
         if action == "details":
             return (
-                f"PR #{payload['pull_request']}: checks passed; "
-                f"merge state {pr.get('mergeStateStatus', 'unknown')}"
+                f"PR #{payload['pull_request']}\n"
+                f"Checks: {checks_state(pr)}\n"
+                f"Merge: {pr.get('mergeStateStatus', 'unknown')}\n"
+                f"Draft: {'yes' if pr.get('isDraft') else 'no'}\n"
+                f"Head: {str(pr.get('headRefOid') or '')[:12]}\n"
+                f"{pr.get('url', '')}"
             )
         raise SupervisorError("Unsupported callback action")
 

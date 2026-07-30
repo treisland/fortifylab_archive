@@ -582,6 +582,15 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("rejected", self.telegram.callback_answers[0][1])
         self.assertIn("already used", self.telegram.callback_answers[1][1])
 
+    def test_details_callback_sends_visible_message(self) -> None:
+        token = self.action_token("Details")
+        self.supervisor.handle_update(self.callback_update(token))
+        self.assertIn("PR #12", self.telegram.messages[-1])
+        self.assertIn("Checks: passed", self.telegram.messages[-1])
+        self.assertIn("https://github.test/pull/12", self.telegram.messages[-1])
+        self.assertEqual(self.telegram.callback_answers[-1][1], "Details sent")
+        self.assertEqual(self.telegram.edits, [])
+
     def test_expired_callback_fails_closed(self) -> None:
         token = self.action_token("Approve")
         self.clock[0] += 61
