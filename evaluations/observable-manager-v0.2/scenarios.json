@@ -1,0 +1,177 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "ObservableManagerEvaluationSuite",
+  "suiteVersion": "0.2.0",
+  "scope": {
+    "platform": "single-node MicroK8s lab",
+    "included": ["read-only manager", "dependency-aware health", "bounded runner", "private Telegram observer"],
+    "excluded": ["ASPM", "production hardening", "multi-node Kubernetes", "component mutation"]
+  },
+  "timing": {"clock": "injected", "wallClockSleeps": false},
+  "artifactPolicy": {
+    "syntheticOnly": true,
+    "forbidden": ["secret-value", "protected-path", "raw-prompt", "source-excerpt", "environment-dump", "raw-log", "provider-credential"]
+  },
+  "scenarios": [
+    {
+      "id": "clean-install-remote-login",
+      "area": "manager",
+      "description": "A rendered clean install exposes only the authenticated lab host and accepts a synthetic login.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 0, "signals": {"host": "lab.example.invalid", "route": "ready", "login": "accepted"}},
+      "expected": {"health": "manager ready", "heartbeat": "not applicable", "event": "authenticated session created", "api": "same-origin reads allowed after login", "ui": "dashboard visible at lab host", "telegram": "not applicable", "diagnostics": "sanitized install checks pass", "remediation": "manager operator guide", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "healthy-complete-lab",
+      "area": "health",
+      "description": "Infrastructure and all managed components report fresh successful evidence.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 60, "signals": {"infrastructure": "healthy", "components": "healthy", "fresh": true}},
+      "expected": {"health": "aggregate healthy", "heartbeat": "not applicable", "event": "healthy observation recorded", "api": "health response lists every subject healthy", "ui": "whole-lab badge healthy", "telegram": "summary reports healthy", "diagnostics": "no sensitive evidence", "remediation": "health guide remains linked", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "mysql-blocks-consumers",
+      "area": "health",
+      "description": "A MySQL failure is the root cause and blocks SSC and ScanCentral SAST.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 120, "signals": {"mysql": "unhealthy", "ssc": "ready", "scancentral-sast": "ready"}},
+      "expected": {"health": "mysql unhealthy; ssc and scancentral-sast blocked by mysql", "heartbeat": "not applicable", "event": "one root-cause incident", "api": "blockedBy and rootCause identify mysql", "ui": "downstream symptoms suppressed", "telegram": "health detail identifies mysql blocker", "diagnostics": "bounded database category only", "remediation": "mysql health anchor", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "postgresql-lim-block-dast",
+      "area": "health",
+      "description": "PostgreSQL blocks LIM and either failed dependency blocks ScanCentral DAST.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 180, "signals": {"postgresql": "unhealthy", "lim": "blocked", "scancentral-dast": "ready"}},
+      "expected": {"health": "postgresql unhealthy; lim and scancentral-dast blocked", "heartbeat": "not applicable", "event": "one dependency incident", "api": "rootCause remains postgresql", "ui": "DAST displays dependency blocker", "telegram": "DAST detail names safe root cause", "diagnostics": "no connection material", "remediation": "postgresql health anchor", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "infrastructure-degradation",
+      "area": "health",
+      "description": "DNS, TLS, storage, and ingress failures remain separate infrastructure roots with dependent blocking.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 240, "signals": {"dns": "unhealthy", "tls": "unknown", "storage": "degraded", "ingress": "blocked"}},
+      "expected": {"health": "aggregate unhealthy with dependency blocking", "heartbeat": "not applicable", "event": "infrastructure degradation recorded", "api": "states and freshness are explicit", "ui": "four infrastructure rows show distinct states", "telegram": "summary links to details", "diagnostics": "categories omit addresses and certificate content", "remediation": "safe infrastructure anchors", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "missing-external-license",
+      "area": "manager",
+      "description": "Preflight fails closed when the required external Fortify license reference is unavailable.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 300, "signals": {"licenseReference": "missing", "preflight": "run"}},
+      "expected": {"health": "not applicable", "heartbeat": "not applicable", "event": "preflight blocker recorded", "api": "ready false with license blocker", "ui": "preflight blocker visible", "telegram": "preflight summary reports blocker", "diagnostics": "license content and location omitted", "remediation": "deployment preflight license anchor", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "restart-history-continuity",
+      "area": "manager",
+      "description": "A manager restart preserves sanitized history while invalidating the in-memory session.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 360, "signals": {"restart": true, "historyRows": 2, "oldSession": "present"}},
+      "expected": {"health": "manager recovers ready", "heartbeat": "not applicable", "event": "restart recovery observable", "api": "old session rejected and history returned after login", "ui": "sign-in required then prior history visible", "telegram": "manager recovery notification", "diagnostics": "account verifier omitted", "remediation": "manager recovery guide", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "disconnected-cluster",
+      "area": "manager",
+      "description": "The manager remains available when its bounded cluster adapter is disconnected.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 420, "signals": {"manager": "ready", "cluster": "unavailable"}},
+      "expected": {"health": "aggregate unknown", "heartbeat": "not applicable", "event": "cluster unavailable observation", "api": "read model uses unavailable evidence", "ui": "disconnected-cluster view", "telegram": "manager unavailable detail is safe", "diagnostics": "no raw client error", "remediation": "cluster connectivity guide", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "runner-phase-transitions",
+      "area": "workflow",
+      "description": "Every allowed structured runner phase advances monotonically through completion.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 480, "signals": {"phaseSequence": "preparing-inspecting-planning-implementing-testing-validating-scanning-committing-pushing-creating-pr-waiting-for-ci-waiting-for-approval", "terminalOutcomes": "completed-failed"}},
+      "expected": {"health": "not applicable", "heartbeat": "each phase has increasing revision and phase timestamp", "event": "phase transitions deduplicated", "api": "not applicable", "ui": "not applicable", "telegram": "card shows current phase and next transition", "diagnostics": "no command output", "remediation": "runner heartbeat contract", "workflowAuthorization": "advanced-by-authoritative-state"}
+    },
+    {
+      "id": "long-quiet-command-classification",
+      "area": "workflow",
+      "description": "A legitimate bounded no-output command progresses from active to quiet without false failure.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 899, "signals": {"processAlive": true, "output": "none", "deadlineExceeded": false}},
+      "expected": {"health": "not applicable", "heartbeat": "quiet with current elapsed time", "event": "no stall event", "api": "not applicable", "ui": "not applicable", "telegram": "routine status may report quiet", "diagnostics": "no output excerpt", "remediation": "bounded wait guidance", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "stall-and-recovery-classifications",
+      "area": "workflow",
+      "description": "Injected activity ages cover active, quiet, possibly-stalled, stalled, recovered, completed, and failed states.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 1800, "signals": {"classifications": "active-quiet-possibly-stalled-stalled-recovered-completed-failed"}},
+      "expected": {"health": "not applicable", "heartbeat": "all seven classifications explicit", "event": "stall and recovery emitted once", "api": "not applicable", "ui": "not applicable", "telegram": "stall and recovery notify immediately", "diagnostics": "last safe step only", "remediation": "status details refresh and pause controls", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "adaptive-heartbeat-cadence",
+      "area": "workflow",
+      "description": "An injected clock verifies the 10, 15, and 30 minute heartbeat schedule.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 7200, "signals": {"beforeTenMinutes": 600, "throughOneHour": 900, "afterOneHour": 1800}},
+      "expected": {"health": "not applicable", "heartbeat": "intervals are 600 then 900 then 1800 seconds", "event": "one event per schedule checkpoint", "api": "not applicable", "ui": "not applicable", "telegram": "routine deliveries follow injected checkpoints", "diagnostics": "no wall-clock sleep", "remediation": "heartbeat cadence documentation", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "approval-required-actions",
+      "area": "telegram",
+      "description": "Approval readiness sends an immediate notification with bounded action buttons.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 7300, "signals": {"approvalReady": true, "identityAllowed": true, "callbackFresh": true}},
+      "expected": {"health": "not applicable", "heartbeat": "approval ready shown", "event": "approval notification recorded", "api": "not applicable", "ui": "not applicable", "telegram": "immediate message has approve reject and details actions", "diagnostics": "opaque callback only", "remediation": "approval operator guide", "workflowAuthorization": "explicit-single-use-approval"}
+    },
+    {
+      "id": "quiet-hours-watch-policy",
+      "area": "telegram",
+      "description": "Quiet hours and unwatch suppress routine delivery but never urgent delivery.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 7400, "signals": {"quietHours": true, "watched": false, "urgent": true}},
+      "expected": {"health": "not applicable", "heartbeat": "routine checkpoint retained", "event": "urgent event retained", "api": "not applicable", "ui": "not applicable", "telegram": "routine suppressed and urgent delivered", "diagnostics": "preference state only", "remediation": "watch and quiet-hours guide", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "monitor-overlap-restart",
+      "area": "telegram",
+      "description": "Duplicate monitor execution and supervisor restart reuse durable delivery fingerprints.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 7500, "signals": {"monitorRuns": 2, "restart": true, "fingerprintMatches": true}},
+      "expected": {"health": "not applicable", "heartbeat": "checkpoint persisted", "event": "single logical event", "api": "not applicable", "ui": "not applicable", "telegram": "exactly one delivery", "diagnostics": "provider message body omitted", "remediation": "supervisor recovery guide", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "telegram-outage-recovery",
+      "area": "telegram",
+      "description": "A provider outage leaves delivery pending and later recovery sends it once.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 7600, "signals": {"firstDelivery": "failed", "retryDelivery": "succeeded", "authoritativeState": "waiting"}},
+      "expected": {"health": "not applicable", "heartbeat": "unchanged", "event": "delivery failure and recovery recorded", "api": "not applicable", "ui": "not applicable", "telegram": "pending message delivered once after recovery", "diagnostics": "sanitized provider unavailable category", "remediation": "provider recovery guide", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "details-message-visibility",
+      "area": "telegram",
+      "description": "Details creates a durable sanitized message instead of a callback toast.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 7700, "signals": {"action": "details", "message": "durable", "visibility": "private-chat"}},
+      "expected": {"health": "not applicable", "heartbeat": "bounded fields visible", "event": "details request audited", "api": "not applicable", "ui": "not applicable", "telegram": "new durable private details message", "diagnostics": "no raw trace or output", "remediation": "details controls remain visible", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "stop-callback-security",
+      "area": "security",
+      "description": "Stop requires confirmation and rejects unauthorized, expired, or replayed callbacks.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 7800, "signals": {"confirmation": "required", "unauthorized": "rejected", "replayed": "rejected"}},
+      "expected": {"health": "not applicable", "heartbeat": "unchanged until fixed stop command acts", "event": "only valid stop request audited", "api": "not applicable", "ui": "not applicable", "telegram": "separate confirmation then single-use callback", "diagnostics": "callback payload opaque", "remediation": "operator can refresh status", "workflowAuthorization": "explicit-single-use-approval"}
+    },
+    {
+      "id": "cross-surface-redaction",
+      "area": "security",
+      "description": "Synthetic sensitive markers are removed before heartbeat, cards, messages, diagnostics, and audit persistence.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 7900, "signals": {"syntheticMarker": "sensitive-marker", "surfacesChecked": 5}},
+      "expected": {"health": "safe summary substituted", "heartbeat": "marker absent", "event": "marker absent from audit event", "api": "marker absent from response", "ui": "marker absent from rendered card", "telegram": "marker absent from messages", "diagnostics": "marker absent", "remediation": "safe documentation link only", "workflowAuthorization": "unchanged"}
+    },
+    {
+      "id": "api-ui-read-only-redaction",
+      "area": "security",
+      "description": "Read-only API and UI expose bounded summaries and reject mutation or sensitive fields.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 8000, "signals": {"method": "post", "sensitiveField": "synthetic", "session": "valid"}},
+      "expected": {"health": "safe evidence remains available", "heartbeat": "not applicable", "event": "no mutation event", "api": "method rejected and sensitive field omitted", "ui": "sanitized read model only", "telegram": "not applicable", "diagnostics": "no response body captured", "remediation": "API and security documentation", "workflowAuthorization": "unchanged"}
+    }
+  ]
+}
