@@ -11,6 +11,13 @@ secret values or names, credentials, licenses, registry adapter paths,
 configuration paths, persistent-volume paths, logs, or Kubernetes client
 details.
 
+Dependency-aware runtime health is exposed at `GET /api/v1alpha1/health`
+using the same read-only method policy. Its six states, layered dependency
+order, freshness semantics, safe evidence, and remediation catalog are
+documented in [Dependency-aware health checks](health-checks.md). The response
+schema is
+[`registry/schemas/health-report.schema.json`](../registry/schemas/health-report.schema.json).
+
 The machine-readable response contract is
 [`registry/schemas/component-inventory.schema.json`](../registry/schemas/component-inventory.schema.json).
 

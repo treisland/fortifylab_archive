@@ -67,6 +67,7 @@
         "checks": [
           {"id": "webapp-ready", "type": "workload-ready", "target": "webapp", "required": true, "timeoutSeconds": 600},
           {"id": "https-ready", "type": "https", "target": "ssc", "required": true, "timeoutSeconds": 60},
+          {"id": "application-initialized", "type": "application-ready", "target": "ssc-initialization", "required": true, "timeoutSeconds": 60},
           {"id": "webapp-stopped", "type": "workload-ready", "target": "webapp", "required": false, "timeoutSeconds": 300},
           {"id": "webapp-removed", "type": "workload-ready", "target": "webapp", "required": false, "timeoutSeconds": 300}
         ]
@@ -108,6 +109,8 @@
           {"id": "controller-ready", "type": "workload-ready", "target": "controller", "required": true, "timeoutSeconds": 600},
           {"id": "sensor-ready", "type": "workload-ready", "target": "sensor", "required": true, "timeoutSeconds": 600},
           {"id": "controller-https", "type": "https", "target": "scancentral-sast", "required": true, "timeoutSeconds": 60},
+          {"id": "ssc-connectivity", "type": "dependency-connectivity", "target": "ssc", "required": true, "timeoutSeconds": 30},
+          {"id": "worker-registration", "type": "registration", "target": "expected-sast-workers", "required": true, "timeoutSeconds": 30},
           {"id": "controller-stopped", "type": "workload-ready", "target": "controller", "required": false, "timeoutSeconds": 300},
           {"id": "sensor-stopped", "type": "workload-ready", "target": "sensor", "required": false, "timeoutSeconds": 300},
           {"id": "controller-removed", "type": "workload-ready", "target": "controller", "required": false, "timeoutSeconds": 300},
@@ -187,6 +190,7 @@
         "checks": [
           {"id": "server-ready", "type": "workload-ready", "target": "server", "required": true, "timeoutSeconds": 300},
           {"id": "https-ready", "type": "https", "target": "lim", "required": true, "timeoutSeconds": 60},
+          {"id": "license-pool-configured", "type": "configuration", "target": "default-dast-pool", "required": true, "timeoutSeconds": 30},
           {"id": "server-stopped", "type": "workload-ready", "target": "server", "required": false, "timeoutSeconds": 300},
           {"id": "server-removed", "type": "workload-ready", "target": "server", "required": false, "timeoutSeconds": 300}
         ]
@@ -232,6 +236,9 @@
           {"id": "global-service-ready", "type": "workload-ready", "target": "global-service", "required": true, "timeoutSeconds": 600},
           {"id": "utility-service-ready", "type": "workload-ready", "target": "utility-service", "required": true, "timeoutSeconds": 600},
           {"id": "api-https", "type": "https", "target": "scancentral-dast-core", "required": true, "timeoutSeconds": 60},
+          {"id": "database-schema", "type": "database-query", "target": "dast-schema", "required": true, "timeoutSeconds": 30},
+          {"id": "ssc-connectivity", "type": "dependency-connectivity", "target": "ssc", "required": true, "timeoutSeconds": 30},
+          {"id": "lim-connectivity", "type": "dependency-connectivity", "target": "lim", "required": true, "timeoutSeconds": 30},
           {"id": "api-stopped", "type": "workload-ready", "target": "api", "required": false, "timeoutSeconds": 300},
           {"id": "global-service-stopped", "type": "workload-ready", "target": "global-service", "required": false, "timeoutSeconds": 300},
           {"id": "utility-service-stopped", "type": "workload-ready", "target": "utility-service", "required": false, "timeoutSeconds": 300},
@@ -273,6 +280,7 @@
         "checks": [
           {"id": "scanner-ready", "type": "workload-ready", "target": "scanner", "required": true, "timeoutSeconds": 600},
           {"id": "scanner-health", "type": "tcp", "target": "scanner:8080", "required": true, "timeoutSeconds": 60},
+          {"id": "scanner-registration", "type": "registration", "target": "expected-dast-scanners", "required": true, "timeoutSeconds": 30},
           {"id": "scanner-stopped", "type": "workload-ready", "target": "scanner", "required": false, "timeoutSeconds": 300},
           {"id": "scanner-removed", "type": "workload-ready", "target": "scanner", "required": false, "timeoutSeconds": 300}
         ]

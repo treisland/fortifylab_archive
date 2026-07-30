@@ -8,9 +8,11 @@ from typing import Callable, Iterable
 
 from manager.component_inventory import ClusterObserver, ComponentInventory
 from manager.component_registry import ComponentRegistry, RegistryError
+from manager.health import HealthEngine, HealthProbe
 
 
 COMPONENTS_PATH = "/api/v1alpha1/components"
+HEALTH_PATH = "/api/v1alpha1/health"
 
 
 class ManagerAPI:
@@ -20,14 +22,16 @@ class ManagerAPI:
         self,
         registry_loader: Callable[[], ComponentRegistry] = ComponentRegistry.load,
         observer: ClusterObserver | None = None,
+        health_probe: HealthProbe | None = None,
     ) -> None:
         self._registry_loader = registry_loader
         self._observer = observer
+        self._health_probe = health_probe
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "")
-        if path != COMPONENTS_PATH:
+        if path not in {COMPONENTS_PATH, HEALTH_PATH}:
             return self._response(
                 start_response,
                 HTTPStatus.NOT_FOUND,
@@ -43,16 +47,23 @@ class ManagerAPI:
                 (("Allow", "GET, HEAD"),),
             )
         try:
-            document = ComponentInventory(
-                self._registry_loader(), self._observer
-            ).document()
+            registry = self._registry_loader()
+            document = (
+                HealthEngine(registry, self._health_probe).document()
+                if path == HEALTH_PATH
+                else ComponentInventory(registry, self._observer).document()
+            )
         except RegistryError:
             return self._response(
                 start_response,
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 {
                     "code": "REGISTRY_UNAVAILABLE",
-                    "message": "component inventory is unavailable",
+                    "message": (
+                        "health read model is unavailable"
+                        if path == HEALTH_PATH
+                        else "component inventory is unavailable"
+                    ),
                 },
                 method,
             )
