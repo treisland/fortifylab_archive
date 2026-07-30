@@ -13,3 +13,23 @@ telegram_chat_file = "/home/ubuntu/.config/fortify-lab-manager/telegram/private-
 # Optional bounded Codex runner. The selected issue number is appended as the
 # final argument. Keep commented until the supervisor-only loop is verified.
 # runner_command = ["/home/ubuntu/.local/bin/fortify-issue-dispatch"]
+
+[notifications]
+# "all" delivers actionable events immediately outside quiet hours.
+# "failures" rolls non-failure events into the daily digest.
+mode = "all"
+timezone = "UTC"
+quiet_start = "22:00"
+quiet_end = "07:00"
+digest_hour = 8
+digest_minute = 0
+
+# Retry is offered only for stages whose implementation is independently
+# verified as idempotent. An empty list is the fail-closed default.
+retry_stages = []
+rejection_reasons = [
+  "changes-required",
+  "security-concern",
+  "tests-incomplete",
+  "out-of-scope",
+]

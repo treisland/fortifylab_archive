@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import datetime
 import hashlib
 import json
 import os
@@ -22,6 +23,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Protocol
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 class SupervisorError(RuntimeError):
@@ -44,6 +46,76 @@ class MessageReference:
 
 
 @dataclasses.dataclass(frozen=True)
+class NotificationPreferences:
+    """Externally configured delivery policy; never authoritative workflow state."""
+
+    mode: str = "all"
+    quiet_start: str = ""
+    quiet_end: str = ""
+    timezone: str = "UTC"
+    digest_hour: int = 8
+    digest_minute: int = 0
+    retry_stages: tuple[str, ...] = ()
+    rejection_reasons: tuple[str, ...] = (
+        "changes-required",
+        "security-concern",
+        "tests-incomplete",
+        "out-of-scope",
+    )
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"all", "failures"}:
+            raise SupervisorError("notification_mode must be 'all' or 'failures'")
+        if bool(self.quiet_start) != bool(self.quiet_end):
+            raise SupervisorError("quiet_start and quiet_end must be configured together")
+        for label, value in (
+            ("quiet_start", self.quiet_start),
+            ("quiet_end", self.quiet_end),
+        ):
+            if value and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+                raise SupervisorError(f"{label} must use HH:MM")
+        try:
+            ZoneInfo(self.timezone)
+        except ZoneInfoNotFoundError as error:
+            raise SupervisorError(f"Unknown notification timezone: {self.timezone}") from error
+        if not 0 <= self.digest_hour <= 23 or not 0 <= self.digest_minute <= 59:
+            raise SupervisorError("digest time is invalid")
+        if len(set(self.retry_stages)) != len(self.retry_stages):
+            raise SupervisorError("retry_stages contains duplicates")
+        if not self.rejection_reasons:
+            raise SupervisorError("at least one rejection reason is required")
+        for reason in self.rejection_reasons:
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", reason):
+                raise SupervisorError("rejection reasons must be predefined slugs")
+
+    def quiet(self, timestamp: float) -> bool:
+        if not self.quiet_start:
+            return False
+        current = datetime.datetime.fromtimestamp(
+            timestamp, datetime.timezone.utc
+        ).astimezone(ZoneInfo(self.timezone))
+        minute = current.hour * 60 + current.minute
+        start_hour, start_minute = (int(value) for value in self.quiet_start.split(":"))
+        end_hour, end_minute = (int(value) for value in self.quiet_end.split(":"))
+        start = start_hour * 60 + start_minute
+        end = end_hour * 60 + end_minute
+        if start == end:
+            return True
+        return start <= minute < end if start < end else minute >= start or minute < end
+
+    def digest_bucket(self, timestamp: float) -> str:
+        local = datetime.datetime.fromtimestamp(
+            timestamp, datetime.timezone.utc
+        ).astimezone(ZoneInfo(self.timezone))
+        boundary = local.replace(
+            hour=self.digest_hour, minute=self.digest_minute, second=0, microsecond=0
+        )
+        if local < boundary:
+            boundary -= datetime.timedelta(days=1)
+        return boundary.date().isoformat()
+
+
+@dataclasses.dataclass(frozen=True)
 class Config:
     repository: str
     milestone: str
@@ -54,11 +126,14 @@ class Config:
     poll_seconds: int = 120
     approval_ttl_seconds: int = 3600
     runner_command: tuple[str, ...] = ()
+    notifications: NotificationPreferences = NotificationPreferences()
 
     @classmethod
     def load(cls, path: Path) -> "Config":
+        validate_protected_file(path, "Supervisor configuration")
         data = tomllib.loads(path.read_text(encoding="utf-8"))
         values = data.get("supervisor", {})
+        notification_values = data.get("notifications", {})
         required = (
             "repository",
             "milestone",
@@ -84,6 +159,29 @@ class Config:
                 60, int(values.get("approval_ttl_seconds", 3600))
             ),
             runner_command=tuple(str(item) for item in values.get("runner_command", [])),
+            notifications=NotificationPreferences(
+                mode=str(notification_values.get("mode", "all")),
+                quiet_start=str(notification_values.get("quiet_start", "")),
+                quiet_end=str(notification_values.get("quiet_end", "")),
+                timezone=str(notification_values.get("timezone", "UTC")),
+                digest_hour=int(notification_values.get("digest_hour", 8)),
+                digest_minute=int(notification_values.get("digest_minute", 0)),
+                retry_stages=tuple(
+                    str(item) for item in notification_values.get("retry_stages", [])
+                ),
+                rejection_reasons=tuple(
+                    str(item)
+                    for item in notification_values.get(
+                        "rejection_reasons",
+                        [
+                            "changes-required",
+                            "security-concern",
+                            "tests-incomplete",
+                            "out-of-scope",
+                        ],
+                    )
+                ),
+            ),
         )
         if config.runner_command:
             validate_runner(config.runner_command[0])
@@ -165,6 +263,18 @@ class Store:
                 consumed_by TEXT,
                 FOREIGN KEY(approval_id) REFERENCES approvals(id)
             );
+            CREATE TABLE IF NOT EXISTS notifications (
+                fingerprint TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                message TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                digest_bucket TEXT,
+                state TEXT NOT NULL,
+                message_id TEXT,
+                occurrences INTEGER NOT NULL DEFAULT 1,
+                updated_at INTEGER NOT NULL
+            );
             """
         )
         self.connection.commit()
@@ -206,6 +316,77 @@ class Store:
             "SELECT 1 FROM events WHERE fingerprint = ?", (fingerprint,)
         ).fetchone()
         return row is not None
+
+    def upsert_notification(
+        self,
+        fingerprint: str,
+        kind: str,
+        severity: str,
+        message: str,
+        payload: dict[str, Any],
+        state: str,
+        digest_bucket: str | None,
+    ) -> tuple[sqlite3.Row, bool]:
+        existing = self.connection.execute(
+            "SELECT * FROM notifications WHERE fingerprint = ?", (fingerprint,)
+        ).fetchone()
+        now = int(self.now())
+        if existing:
+            self.connection.execute(
+                """
+                UPDATE notifications
+                SET message = ?, payload = ?, occurrences = occurrences + 1,
+                    updated_at = ?
+                WHERE fingerprint = ?
+                """,
+                (message, json.dumps(payload, sort_keys=True), now, fingerprint),
+            )
+            self.connection.commit()
+            return (
+                self.connection.execute(
+                    "SELECT * FROM notifications WHERE fingerprint = ?",
+                    (fingerprint,),
+                ).fetchone(),
+                False,
+            )
+        self.connection.execute(
+            """
+            INSERT INTO notifications(
+                fingerprint, kind, severity, message, payload, digest_bucket,
+                state, updated_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fingerprint,
+                kind,
+                severity,
+                message,
+                json.dumps(payload, sort_keys=True),
+                digest_bucket,
+                state,
+                now,
+            ),
+        )
+        self.connection.commit()
+        return (
+            self.connection.execute(
+                "SELECT * FROM notifications WHERE fingerprint = ?",
+                (fingerprint,),
+            ).fetchone(),
+            True,
+        )
+
+    def mark_notification(
+        self, fingerprint: str, state: str, message_id: str | None = None
+    ) -> None:
+        self.connection.execute(
+            """
+            UPDATE notifications SET state = ?, message_id = COALESCE(?, message_id),
+                updated_at = ? WHERE fingerprint = ?
+            """,
+            (state, message_id, int(self.now()), fingerprint),
+        )
+        self.connection.commit()
 
     def create_approval(
         self, action: str, payload: dict[str, Any], ttl: int
@@ -359,6 +540,7 @@ class GitHubPort(Protocol):
     def ready(self, number: int) -> None: ...
     def merge(self, number: int, head_sha: str) -> None: ...
     def close_issue(self, number: int) -> None: ...
+    def create_failure_issue(self, title: str, body: str) -> str: ...
     def next_issue(
         self, milestone: str, excluded: set[int] | None = None
     ) -> dict[str, Any] | None: ...
@@ -482,6 +664,29 @@ class GitHub:
             raise SupervisorError(
                 result.stderr.strip() or f"Could not close issue #{number}"
             )
+
+    def create_failure_issue(self, title: str, body: str) -> str:
+        result = self.run(
+            [
+                "gh",
+                "issue",
+                "create",
+                "--repo",
+                self.repository,
+                "--title",
+                title[:120],
+                "--body",
+                body[:2000],
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode:
+            raise SupervisorError(
+                result.stderr.strip() or "Could not create sanitized failure issue"
+            )
+        return result.stdout.strip()
 
     def next_issue(
         self, milestone: str, excluded: set[int] | None = None
@@ -609,6 +814,8 @@ class Telegram:
             {"command": "pr", "description": "Show the tracked pull request"},
             {"command": "approve", "description": "Approve the pending PR merge"},
             {"command": "reject", "description": "Reject the pending PR merge"},
+            {"command": "retry", "description": "Retry an allowlisted failed stage"},
+            {"command": "issue", "description": "Request an issue for a failure"},
             {"command": "pause", "description": "Pause new automated work"},
             {"command": "continue", "description": "Resume automated work"},
             {"command": "help", "description": "Show available commands"},
@@ -637,6 +844,37 @@ def checks_state(pr: dict[str, Any]) -> str:
         elif conclusion not in {"SUCCESS", "NEUTRAL", "SKIPPED"}:
             return "failed"
     return "pending" if pending else "passed"
+
+
+def sanitize_diagnostics(value: Any, limit: int = 120) -> Any:
+    """Return bounded scalar diagnostics without logs, paths, or secret-like data."""
+
+    forbidden_keys = {
+        "log",
+        "logs",
+        "raw",
+        "path",
+        "token",
+        "secret",
+        "credential",
+        "authorization",
+    }
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in list(value.items())[:12]:
+            normalized = str(key).lower().replace("_", "-")
+            if any(forbidden in normalized for forbidden in forbidden_keys):
+                continue
+            result[str(key)[:40]] = sanitize_diagnostics(item, limit)
+        return result
+    if isinstance(value, (list, tuple)):
+        return [sanitize_diagnostics(item, limit) for item in list(value)[:8]]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    text = str(value).replace("\r", " ").replace("\n", " ")
+    text = re.sub(r"(?i)(bearer|token|password|secret)\s*[:= ]\s*\S+", r"\1=[redacted]", text)
+    text = re.sub(r"(?:/home|/etc|/var|/run|~)/\S+", "[protected-path]", text)
+    return text[:limit]
 
 
 class Supervisor:
@@ -749,7 +987,12 @@ class Supervisor:
         if action == "approve":
             return self.approve(approval_id, actor)
         if action == "reject":
-            self.store.decide(approval_id, "rejected", actor, "inline rejection")
+            self.store.decide(
+                approval_id,
+                "rejected",
+                actor,
+                self.config.notifications.rejection_reasons[0],
+            )
             self.store.event(
                 f"approval:{approval_id}:rejected",
                 "pull_request.merge_rejected",
@@ -818,11 +1061,71 @@ class Supervisor:
                 parts[1] if explicit_id else self.current_approval_id("merge_pr")
             )
             reason = " ".join(parts[2:] if explicit_id else parts[1:])
+            if reason not in self.config.notifications.rejection_reasons:
+                allowed = ", ".join(self.config.notifications.rejection_reasons)
+                raise SupervisorError(f"Choose a rejection reason: {allowed}")
             self.store.decide(approval_id, "rejected", actor, reason)
             return "Pending PR merge rejected."
+        if command == "/retry":
+            if len(parts) != 2:
+                raise SupervisorError("Usage: /retry <stage>")
+            stage = parts[1]
+            if stage not in self.config.notifications.retry_stages:
+                raise SupervisorError("Retry is not allowed for this stage")
+            row = self.store.connection.execute(
+                """
+                SELECT fingerprint FROM notifications
+                WHERE severity = 'failure' AND json_extract(payload, '$.stage') = ?
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (stage,),
+            ).fetchone()
+            if not row:
+                raise SupervisorError("No failed notification exists for this stage")
+            self.store.event(
+                f"retry:{row['fingerprint']}:{int(self.store.now())}",
+                "recovery.retry_requested",
+                {"actor": actor, "fingerprint": row["fingerprint"], "stage": stage},
+            )
+            return f"Retry requested for idempotent stage {stage}."
+        if command == "/issue":
+            if len(parts) != 2:
+                raise SupervisorError("Usage: /issue <failure-fingerprint>")
+            fingerprint = parts[1]
+            row = self.store.connection.execute(
+                "SELECT * FROM notifications WHERE fingerprint = ?",
+                (fingerprint,),
+            ).fetchone()
+            if not row or row["severity"] != "failure":
+                raise SupervisorError("Unknown failure notification")
+            event_fingerprint = f"issue-request:{fingerprint}"
+            if self.store.has_event(event_fingerprint):
+                return "A GitHub issue was already created for this failure."
+            payload = json.loads(row["payload"])
+            stage = str(payload.get("stage", "unknown"))[:40]
+            code = str(payload.get("code", row["kind"]))[:80]
+            title = f"Automated SDLC failure: {stage} / {code}"
+            body = (
+                "A sanitized Fortify Lab Manager supervisor failure needs "
+                "operator investigation.\n\n"
+                f"- Fingerprint: `{fingerprint[:160]}`\n"
+                f"- Stage: `{stage}`\n"
+                f"- Code: `{code}`\n"
+                f"- Occurrences: {int(row['occurrences'])}\n\n"
+                "Raw logs, protected paths, credentials, and configuration "
+                "values are intentionally excluded."
+            )
+            url = self.github.create_failure_issue(title, body)
+            self.store.event(
+                event_fingerprint,
+                "recovery.github_issue_created",
+                {"actor": actor, "fingerprint": fingerprint, "url": url},
+            )
+            return f"Sanitized GitHub issue created: {url}"
         if command == "/help":
             return (
-                "/status\n/pr\n/approve\n/reject [reason]\n"
+                "/status\n/pr\n/approve\n/reject <predefined-reason>\n"
+                "/retry <idempotent-stage>\n/issue <failure-fingerprint>\n"
                 "/pause\n/continue\n/help"
             )
         raise SupervisorError("Unknown command. Use /help.")
@@ -887,7 +1190,12 @@ class Supervisor:
         if issue_number is not None:
             self.github.close_issue(issue_number)
 
-        self.telegram.send(f"✅ PR #{number} merged. Selecting next issue.")
+        self.notify_once(
+            f"pr:{number}:merged-notice:{sha}",
+            "pull_request.merged_notice",
+            f"✅ PR #{number} merged. Selecting next issue.",
+            {"pull_request": number, "head_sha": sha},
+        )
         if issue_number is not None and self.store.get("current_issue") == str(
             issue_number
         ):
@@ -928,6 +1236,7 @@ class Supervisor:
             )
 
     def monitor_once(self) -> None:
+        self.deliver_digest()
         if self.store.get("paused", "false") == "true":
             return
         number = self.store.get("current_pr")
@@ -946,6 +1255,7 @@ class Supervisor:
                     "supervisor.attention",
                     "⚠ Multiple agent PRs are open; track one explicitly.",
                     {"count": len(candidates)},
+                    severity="failure",
                 )
                 return
             else:
@@ -962,8 +1272,22 @@ class Supervisor:
                 "pull_request.closed",
                 {"pull_request": int(number), "head_sha": sha},
             ):
-                self.telegram.send(
-                    f"🛑 PR #{number} closed without merge. Work is paused."
+                self.notify_once(
+                    f"pr:{number}:closed-notice:{sha}",
+                    "pull_request.closed_notice",
+                    (
+                        f"🛑 PR #{number} closed without merge. Work is paused.\n"
+                        f"Stage: review\nFailure: closed-without-merge\n"
+                        f"Issue: /issue pr:{number}:closed-notice:{sha}"
+                    ),
+                    {
+                        "pull_request": int(number),
+                        "head_sha": sha,
+                        "stage": "review",
+                        "code": "closed-without-merge",
+                        "retryable": False,
+                    },
+                    severity="failure",
                 )
                 self.store.set("paused", "true")
             return
@@ -972,8 +1296,19 @@ class Supervisor:
             self.notify_once(
                 f"pr:{number}:changes:{sha}",
                 "pull_request.changes_requested",
-                f"📝 Changes requested on PR #{number}.",
-                {"pull_request": int(number), "head_sha": sha},
+                (
+                    f"📝 Changes requested on PR #{number}.\n"
+                    f"Stage: review\nFailure: changes-requested\n"
+                    f"Pause: /pause\nIssue: /issue pr:{number}:changes:{sha}"
+                ),
+                {
+                    "pull_request": int(number),
+                    "head_sha": sha,
+                    "stage": "review",
+                    "code": "changes-requested",
+                    "retryable": "review" in self.config.notifications.retry_stages,
+                },
+                severity="failure",
             )
             return
         check_state = checks_state(pr)
@@ -981,8 +1316,24 @@ class Supervisor:
             self.notify_once(
                 f"pr:{number}:checks-failed:{sha}",
                 "pull_request.checks_failed",
-                f"❌ Checks failed on PR #{number}.",
-                {"pull_request": int(number), "head_sha": sha},
+                (
+                    f"❌ Checks failed on PR #{number}.\n"
+                    f"Stage: checks\nFailure: checks-failed\n"
+                    + (
+                        "Retry: /retry checks\n"
+                        if "checks" in self.config.notifications.retry_stages
+                        else ""
+                    )
+                    + f"Pause: /pause\nIssue: /issue pr:{number}:checks-failed:{sha}"
+                ),
+                {
+                    "pull_request": int(number),
+                    "head_sha": sha,
+                    "stage": "checks",
+                    "code": "checks-failed",
+                    "retryable": "checks" in self.config.notifications.retry_stages,
+                },
+                severity="failure",
             )
             return
         if check_state != "passed" or pr.get("mergeable") != "MERGEABLE":
@@ -1040,9 +1391,80 @@ class Supervisor:
         kind: str,
         message: str,
         payload: dict[str, Any],
+        severity: str = "info",
     ) -> None:
-        if self.store.event(fingerprint, kind, payload):
-            self.telegram.send(message)
+        sanitized = sanitize_diagnostics(payload)
+        if not isinstance(sanitized, dict):
+            sanitized = {}
+        preferences = self.config.notifications
+        deferred = preferences.quiet(self.store.now()) or (
+            preferences.mode == "failures" and severity != "failure"
+        )
+        bucket = preferences.digest_bucket(self.store.now()) if deferred else None
+        row, created = self.store.upsert_notification(
+            fingerprint,
+            kind,
+            severity,
+            str(sanitize_diagnostics(message, 500)),
+            sanitized,
+            "digest" if deferred else "pending",
+            bucket,
+        )
+        self.store.event(fingerprint, kind, sanitized)
+        if deferred:
+            return
+        rendered = str(row["message"])
+        if int(row["occurrences"]) > 1:
+            rendered += f"\nOccurrences: {row['occurrences']}"
+        try:
+            if row["message_id"]:
+                self.telegram.edit(MessageReference(str(row["message_id"])), rendered)
+            elif created or row["state"] == "pending":
+                reference = self.telegram.send(rendered)
+                self.store.mark_notification(
+                    fingerprint, "delivered", reference.message_id
+                )
+        except SupervisorError:
+            self.store.mark_notification(fingerprint, "pending")
+            self.store.event(
+                f"delivery:{fingerprint}:{int(self.store.now())}",
+                "communications.delivery_failed",
+                {"fingerprint": fingerprint, "provider": "telegram"},
+            )
+
+    def deliver_digest(self) -> None:
+        """Deliver completed digest buckets; a failed send remains pending."""
+
+        current = self.config.notifications.digest_bucket(self.store.now())
+        rows = self.store.connection.execute(
+            """
+            SELECT * FROM notifications
+            WHERE state = 'digest' AND digest_bucket < ?
+            ORDER BY updated_at, fingerprint LIMIT 25
+            """,
+            (current,),
+        ).fetchall()
+        if not rows:
+            return
+        lines = [f"Fortify SDLC digest ({rows[0]['digest_bucket']})"]
+        for row in rows:
+            lines.append(
+                f"- [{row['severity']}] {row['message']} "
+                f"(x{row['occurrences']}, ref {row['fingerprint']})"
+            )
+        try:
+            reference = self.telegram.send("\n".join(lines)[:3500])
+        except SupervisorError:
+            self.store.event(
+                f"digest-delivery:{rows[0]['digest_bucket']}:{int(self.store.now())}",
+                "communications.delivery_failed",
+                {"provider": "telegram", "type": "digest"},
+            )
+            return
+        for row in rows:
+            self.store.mark_notification(
+                str(row["fingerprint"]), "delivered", reference.message_id
+            )
 
     def queue_next_issue(
         self, completed_issue: int | None = None
@@ -1050,14 +1472,20 @@ class Supervisor:
         excluded = {completed_issue} if completed_issue is not None else None
         issue = self.github.next_issue(self.config.milestone, excluded)
         if not issue:
-            self.telegram.send(
-                f"🎉 No eligible issues remain in {self.config.milestone}."
+            self.notify_once(
+                f"milestone:{self.config.milestone}:complete",
+                "milestone.complete",
+                f"🎉 No eligible issues remain in {self.config.milestone}.",
+                {"milestone": self.config.milestone},
             )
             return None
         number = str(issue["number"])
         self.store.set("current_issue", number)
-        self.telegram.send(
-            f"▶️ Queued issue #{number}: {issue['title']}\n{issue.get('url', '')}"
+        self.notify_once(
+            f"issue:{number}:queued",
+            "issue.queued",
+            f"▶️ Queued issue #{number}: {issue['title']}\n{issue.get('url', '')}",
+            {"issue": int(number), "title": issue["title"]},
         )
         if self.config.runner_command:
             command = [*self.config.runner_command, number]

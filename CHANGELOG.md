@@ -29,6 +29,9 @@ platform profiles.
   resources, sanitized cluster observations, and explicit unavailable state.
 - Telegram inline PR approval controls backed by opaque expiring single-use
   callbacks and one editable milestone, issue, runner, and PR workflow card.
+- Protected Telegram notification preferences with quiet hours, failure-only
+  delivery, durable digests, deduplication, sanitized failure recovery, and
+  allowlisted idempotent retry requests.
 
 ### Fixed
 
