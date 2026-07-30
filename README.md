@@ -126,6 +126,11 @@ scripts/
   create-certs.sh         mkcert root + leaf, JKS keystore, JVM truststore.
   create-secrets.sh       k8s Secrets: explicit per-key, no folder dump.
   install_microk8s.sh     microk8s + addons.
+registry/
+  components.json         Authoritative component and dependency definitions.
+  schemas/                Versioned structural contracts for the registry.
+manager/
+  component_registry.py   Shared lifecycle and monitoring registry API.
 secrets/
   input/                  User-provided files (license). Gitignored.
   templates/              Committed templates rendered at deploy time.
@@ -139,6 +144,10 @@ apps/
   kubernetes-dashboard    Optional.
   sonatype                Optional Nexus IQ.
 ```
+
+See the [component registry reference](docs/component-registry.md) for the
+dependency graph, lifecycle safety metadata, health evidence, diagnostics,
+and schema evolution rules.
 
 ## Conventions and gotchas
 

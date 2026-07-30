@@ -6,6 +6,10 @@ supersedes them. Product behavior and implementation status remain defined by
 the code, tests, and GitHub issues; an ADR is not evidence that planned
 behavior has been implemented.
 
+The accepted component-registry decision is implemented by the
+[component registry reference](component-registry.md), its machine-readable
+definitions, and validation contracts.
+
 ## Accepted decisions
 
 | ADR | Decision |

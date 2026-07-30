@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/schemas/component-registry.schema.json",
+  "title": "Fortify Lab Manager component registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "apiVersion", "kind", "scope", "components"],
+  "properties": {
+    "$schema": {"const": "schemas/component-registry.schema.json"},
+    "apiVersion": {"const": "fortifylab.io/v1alpha1"},
+    "kind": {"const": "ComponentRegistry"},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "aspm"],
+      "properties": {
+        "platform": {"const": "microk8s"},
+        "aspm": {"const": false}
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "component.schema.json"
+      }
+    }
+  }
+}

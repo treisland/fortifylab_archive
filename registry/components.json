@@ -1,0 +1,280 @@
+{
+  "$schema": "schemas/component-registry.schema.json",
+  "apiVersion": "fortifylab.io/v1alpha1",
+  "kind": "ComponentRegistry",
+  "scope": {"platform": "microk8s", "aspm": false},
+  "components": [
+    {
+      "id": "mysql",
+      "displayName": "MySQL",
+      "dependencies": [],
+      "workloads": [
+        {"id": "database", "kind": "StatefulSet", "name": "mysql", "role": "database", "scalable": false}
+      ],
+      "operations": [
+        {"id": "install", "adapter": "apps/mysql/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 900, "verify": ["database-ready", "database-query"]},
+        {"id": "start", "adapter": "apps/mysql/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["database-ready", "database-query"]},
+        {"id": "stop", "adapter": "apps/mysql/stop.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["database-stopped"]},
+        {"id": "delete-data", "adapter": "apps/mysql/destroy.sh", "disruptive": true, "destructive": true, "idempotent": true, "timeoutSeconds": 600, "verify": ["database-removed"]}
+      ],
+      "secrets": [
+        {"id": "root-password", "kubernetesSecret": "mysql", "classification": "credential", "required": true},
+        {"id": "registry-credentials", "kubernetesSecret": "regcred", "classification": "image-pull", "required": true}
+      ],
+      "persistence": [
+        {"id": "database-data", "claim": "data-mysql-0", "purpose": "database", "retainedOnUninstall": true}
+      ],
+      "health": {
+        "aggregate": "all-required",
+        "checks": [
+          {"id": "database-ready", "type": "workload-ready", "target": "database", "required": true, "timeoutSeconds": 300},
+          {"id": "database-query", "type": "database-query", "target": "mysql", "required": true, "timeoutSeconds": 30},
+          {"id": "database-stopped", "type": "workload-ready", "target": "database", "required": false, "timeoutSeconds": 300},
+          {"id": "database-removed", "type": "workload-ready", "target": "database", "required": false, "timeoutSeconds": 300}
+        ]
+      },
+      "diagnostics": [
+        {"id": "workload-status", "source": "workload-status", "target": "database", "sensitive": false},
+        {"id": "database-logs", "source": "logs", "target": "database", "sensitive": true},
+        {"id": "volume-status", "source": "persistent-volume", "target": "database-data", "sensitive": false}
+      ]
+    },
+    {
+      "id": "ssc",
+      "displayName": "Software Security Center",
+      "dependencies": ["mysql"],
+      "workloads": [
+        {"id": "webapp", "kind": "StatefulSet", "name": "ssc-webapp", "role": "application", "scalable": false}
+      ],
+      "operations": [
+        {"id": "install", "adapter": "apps/ssc/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 1800, "verify": ["webapp-ready", "https-ready"]},
+        {"id": "start", "adapter": "apps/ssc/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 900, "verify": ["webapp-ready", "https-ready"]},
+        {"id": "stop", "adapter": "apps/ssc/stop.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["webapp-stopped"]},
+        {"id": "uninstall", "adapter": "apps/ssc/destroy.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 600, "verify": ["webapp-removed"]}
+      ],
+      "secrets": [
+        {"id": "ssc-material", "kubernetesSecret": "fortify-secrets", "classification": "key", "required": true},
+        {"id": "registry-credentials", "kubernetesSecret": "regcred", "classification": "image-pull", "required": true},
+        {"id": "ingress-tls", "kubernetesSecret": "tls", "classification": "certificate", "required": true}
+      ],
+      "persistence": [
+        {"id": "application-data", "claim": "ssc-webapp", "purpose": "application-data", "retainedOnUninstall": true}
+      ],
+      "health": {
+        "aggregate": "all-required",
+        "checks": [
+          {"id": "webapp-ready", "type": "workload-ready", "target": "webapp", "required": true, "timeoutSeconds": 600},
+          {"id": "https-ready", "type": "https", "target": "ssc", "required": true, "timeoutSeconds": 60},
+          {"id": "webapp-stopped", "type": "workload-ready", "target": "webapp", "required": false, "timeoutSeconds": 300},
+          {"id": "webapp-removed", "type": "workload-ready", "target": "webapp", "required": false, "timeoutSeconds": 300}
+        ]
+      },
+      "diagnostics": [
+        {"id": "workload-status", "source": "workload-status", "target": "webapp", "sensitive": false},
+        {"id": "webapp-logs", "source": "logs", "target": "webapp", "sensitive": true},
+        {"id": "endpoint-status", "source": "endpoint", "target": "https-ready", "sensitive": false}
+      ]
+    },
+    {
+      "id": "scancentral-sast",
+      "displayName": "ScanCentral SAST",
+      "dependencies": ["ssc"],
+      "workloads": [
+        {"id": "controller", "kind": "StatefulSet", "name": "scancentral-sast-controller", "role": "controller", "scalable": false},
+        {"id": "sensor", "kind": "StatefulSet", "name": "scancentral-sast-sensor-linux", "role": "worker", "scalable": true}
+      ],
+      "operations": [
+        {"id": "install", "adapter": "apps/scsast/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 1800, "verify": ["controller-ready", "sensor-ready", "controller-https"]},
+        {"id": "start", "adapter": "apps/scsast/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 900, "verify": ["controller-ready", "sensor-ready", "controller-https"]},
+        {"id": "stop", "adapter": "apps/scsast/stop.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["controller-stopped", "sensor-stopped"]},
+        {"id": "scale", "adapter": "apps/scsast/scale_scanners.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 600, "verify": ["sensor-ready"]},
+        {"id": "uninstall", "adapter": "apps/scsast/destroy.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 600, "verify": ["controller-removed", "sensor-removed"]}
+      ],
+      "secrets": [
+        {"id": "fortify-license", "kubernetesSecret": "fortify-secrets", "classification": "license", "required": true},
+        {"id": "controller-token", "kubernetesSecret": "fortify-secrets", "classification": "token", "required": true},
+        {"id": "registry-credentials", "kubernetesSecret": "regcred", "classification": "image-pull", "required": true},
+        {"id": "ingress-tls", "kubernetesSecret": "tls", "classification": "certificate", "required": true}
+      ],
+      "persistence": [
+        {"id": "controller-data", "claim": "scancentral-sast-controller", "purpose": "controller-data", "retainedOnUninstall": true}
+      ],
+      "health": {
+        "aggregate": "all-required",
+        "checks": [
+          {"id": "controller-ready", "type": "workload-ready", "target": "controller", "required": true, "timeoutSeconds": 600},
+          {"id": "sensor-ready", "type": "workload-ready", "target": "sensor", "required": true, "timeoutSeconds": 600},
+          {"id": "controller-https", "type": "https", "target": "scancentral-sast", "required": true, "timeoutSeconds": 60},
+          {"id": "controller-stopped", "type": "workload-ready", "target": "controller", "required": false, "timeoutSeconds": 300},
+          {"id": "sensor-stopped", "type": "workload-ready", "target": "sensor", "required": false, "timeoutSeconds": 300},
+          {"id": "controller-removed", "type": "workload-ready", "target": "controller", "required": false, "timeoutSeconds": 300},
+          {"id": "sensor-removed", "type": "workload-ready", "target": "sensor", "required": false, "timeoutSeconds": 300}
+        ]
+      },
+      "diagnostics": [
+        {"id": "controller-status", "source": "workload-status", "target": "controller", "sensitive": false},
+        {"id": "sensor-status", "source": "workload-status", "target": "sensor", "sensitive": false},
+        {"id": "controller-logs", "source": "logs", "target": "controller", "sensitive": true},
+        {"id": "sensor-logs", "source": "logs", "target": "sensor", "sensitive": true}
+      ]
+    },
+    {
+      "id": "postgresql",
+      "displayName": "PostgreSQL",
+      "dependencies": [],
+      "workloads": [
+        {"id": "database", "kind": "StatefulSet", "name": "postgresql", "role": "database", "scalable": false}
+      ],
+      "operations": [
+        {"id": "install", "adapter": "apps/postgresql/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 900, "verify": ["database-ready", "database-query"]},
+        {"id": "start", "adapter": "apps/postgresql/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["database-ready", "database-query"]},
+        {"id": "stop", "adapter": "apps/postgresql/stop.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["database-stopped"]},
+        {"id": "delete-data", "adapter": "apps/postgresql/destroy.sh", "disruptive": true, "destructive": true, "idempotent": true, "timeoutSeconds": 600, "verify": ["database-removed"]}
+      ],
+      "secrets": [
+        {"id": "database-owner", "kubernetesSecret": "scdast-db-owner", "classification": "credential", "required": true},
+        {"id": "database-standard", "kubernetesSecret": "scdast-db-standard", "classification": "credential", "required": true},
+        {"id": "registry-credentials", "kubernetesSecret": "regcred", "classification": "image-pull", "required": true}
+      ],
+      "persistence": [
+        {"id": "database-data", "claim": "data-postgresql-0", "purpose": "database", "retainedOnUninstall": true}
+      ],
+      "health": {
+        "aggregate": "all-required",
+        "checks": [
+          {"id": "database-ready", "type": "workload-ready", "target": "database", "required": true, "timeoutSeconds": 300},
+          {"id": "database-query", "type": "database-query", "target": "postgresql", "required": true, "timeoutSeconds": 30},
+          {"id": "database-stopped", "type": "workload-ready", "target": "database", "required": false, "timeoutSeconds": 300},
+          {"id": "database-removed", "type": "workload-ready", "target": "database", "required": false, "timeoutSeconds": 300}
+        ]
+      },
+      "diagnostics": [
+        {"id": "workload-status", "source": "workload-status", "target": "database", "sensitive": false},
+        {"id": "database-logs", "source": "logs", "target": "database", "sensitive": true},
+        {"id": "volume-status", "source": "persistent-volume", "target": "database-data", "sensitive": false}
+      ]
+    },
+    {
+      "id": "lim",
+      "displayName": "License and Infrastructure Manager",
+      "dependencies": [],
+      "workloads": [
+        {"id": "server", "kind": "StatefulSet", "name": "lim", "role": "license-server", "scalable": false}
+      ],
+      "operations": [
+        {"id": "install", "adapter": "apps/lim/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 900, "verify": ["server-ready", "https-ready"]},
+        {"id": "start", "adapter": "apps/lim/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["server-ready", "https-ready"]},
+        {"id": "stop", "adapter": "apps/lim/stop.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["server-stopped"]},
+        {"id": "delete-data", "adapter": "apps/lim/destroy.sh", "disruptive": true, "destructive": true, "idempotent": true, "timeoutSeconds": 600, "verify": ["server-removed"]}
+      ],
+      "secrets": [
+        {"id": "administrator", "kubernetesSecret": "lim-admin-credentials", "classification": "credential", "required": true},
+        {"id": "jwt-key", "kubernetesSecret": "lim-jwt-security-key", "classification": "key", "required": true},
+        {"id": "server-certificate", "kubernetesSecret": "lim-server-certificate", "classification": "certificate", "required": true},
+        {"id": "signing-certificate", "kubernetesSecret": "lim-signing-certificate", "classification": "certificate", "required": true},
+        {"id": "registry-credentials", "kubernetesSecret": "regcred", "classification": "image-pull", "required": true}
+      ],
+      "persistence": [
+        {"id": "application-data", "claim": "lim-pvc", "purpose": "application-data", "retainedOnUninstall": true}
+      ],
+      "health": {
+        "aggregate": "all-required",
+        "checks": [
+          {"id": "server-ready", "type": "workload-ready", "target": "server", "required": true, "timeoutSeconds": 300},
+          {"id": "https-ready", "type": "https", "target": "lim", "required": true, "timeoutSeconds": 60},
+          {"id": "server-stopped", "type": "workload-ready", "target": "server", "required": false, "timeoutSeconds": 300},
+          {"id": "server-removed", "type": "workload-ready", "target": "server", "required": false, "timeoutSeconds": 300}
+        ]
+      },
+      "diagnostics": [
+        {"id": "workload-status", "source": "workload-status", "target": "server", "sensitive": false},
+        {"id": "server-logs", "source": "logs", "target": "server", "sensitive": true},
+        {"id": "endpoint-status", "source": "endpoint", "target": "https-ready", "sensitive": false}
+      ]
+    },
+    {
+      "id": "scancentral-dast-core",
+      "displayName": "ScanCentral DAST Core",
+      "dependencies": ["postgresql", "lim", "ssc"],
+      "workloads": [
+        {"id": "api", "kind": "StatefulSet", "name": "sdast-core-scancentral-dast-core-api", "role": "application", "scalable": false},
+        {"id": "global-service", "kind": "StatefulSet", "name": "sdast-core-scancentral-dast-core-globalservice", "role": "application", "scalable": false},
+        {"id": "utility-service", "kind": "StatefulSet", "name": "sdast-core-scancentral-dast-core-utilityservice", "role": "application", "scalable": false}
+      ],
+      "operations": [
+        {"id": "install", "adapter": "apps/scdast/core/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 1800, "verify": ["api-ready", "global-service-ready", "utility-service-ready", "api-https"]},
+        {"id": "start", "adapter": "apps/scdast/core/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 900, "verify": ["api-ready", "global-service-ready", "utility-service-ready", "api-https"]},
+        {"id": "stop", "adapter": "apps/scdast/core/stop.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["api-stopped", "global-service-stopped", "utility-service-stopped"]},
+        {"id": "uninstall", "adapter": "apps/scdast/core/destroy.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 600, "verify": ["api-removed", "global-service-removed", "utility-service-removed"]}
+      ],
+      "secrets": [
+        {"id": "database-owner", "kubernetesSecret": "scdast-db-owner", "classification": "credential", "required": true},
+        {"id": "database-standard", "kubernetesSecret": "scdast-db-standard", "classification": "credential", "required": true},
+        {"id": "ssc-service-account", "kubernetesSecret": "scdast-ssc-serviceaccount", "classification": "credential", "required": true},
+        {"id": "service-token", "kubernetesSecret": "scdast-service-token", "classification": "token", "required": true},
+        {"id": "lim-service-account", "kubernetesSecret": "lim-admin-credentials", "classification": "credential", "required": true},
+        {"id": "lim-pool", "kubernetesSecret": "lim-pool", "classification": "credential", "required": true},
+        {"id": "api-certificate", "kubernetesSecret": "tls-pfx", "classification": "certificate", "required": true},
+        {"id": "ingress-tls", "kubernetesSecret": "tls", "classification": "certificate", "required": true},
+        {"id": "registry-credentials", "kubernetesSecret": "regcred", "classification": "image-pull", "required": true}
+      ],
+      "persistence": [],
+      "health": {
+        "aggregate": "all-required",
+        "checks": [
+          {"id": "api-ready", "type": "workload-ready", "target": "api", "required": true, "timeoutSeconds": 600},
+          {"id": "global-service-ready", "type": "workload-ready", "target": "global-service", "required": true, "timeoutSeconds": 600},
+          {"id": "utility-service-ready", "type": "workload-ready", "target": "utility-service", "required": true, "timeoutSeconds": 600},
+          {"id": "api-https", "type": "https", "target": "scancentral-dast-core", "required": true, "timeoutSeconds": 60},
+          {"id": "api-stopped", "type": "workload-ready", "target": "api", "required": false, "timeoutSeconds": 300},
+          {"id": "global-service-stopped", "type": "workload-ready", "target": "global-service", "required": false, "timeoutSeconds": 300},
+          {"id": "utility-service-stopped", "type": "workload-ready", "target": "utility-service", "required": false, "timeoutSeconds": 300},
+          {"id": "api-removed", "type": "workload-ready", "target": "api", "required": false, "timeoutSeconds": 300},
+          {"id": "global-service-removed", "type": "workload-ready", "target": "global-service", "required": false, "timeoutSeconds": 300},
+          {"id": "utility-service-removed", "type": "workload-ready", "target": "utility-service", "required": false, "timeoutSeconds": 300}
+        ]
+      },
+      "diagnostics": [
+        {"id": "api-status", "source": "workload-status", "target": "api", "sensitive": false},
+        {"id": "global-service-status", "source": "workload-status", "target": "global-service", "sensitive": false},
+        {"id": "utility-service-status", "source": "workload-status", "target": "utility-service", "sensitive": false},
+        {"id": "api-logs", "source": "logs", "target": "api", "sensitive": true},
+        {"id": "events", "source": "events", "target": "api", "sensitive": false}
+      ]
+    },
+    {
+      "id": "scancentral-dast-scanner",
+      "displayName": "ScanCentral DAST Scanner",
+      "dependencies": ["scancentral-dast-core"],
+      "workloads": [
+        {"id": "scanner", "kind": "StatefulSet", "name": "sdast-scanner-scancentral-dast-scanner", "role": "worker", "scalable": true}
+      ],
+      "operations": [
+        {"id": "install", "adapter": "apps/scdast/scanner/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 3600, "verify": ["scanner-ready", "scanner-health"]},
+        {"id": "start", "adapter": "apps/scdast/scanner/start.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 1800, "verify": ["scanner-ready", "scanner-health"]},
+        {"id": "stop", "adapter": "apps/scdast/scanner/stop.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 300, "verify": ["scanner-stopped"]},
+        {"id": "scale", "adapter": "apps/scdast/scanner/scale_scanners.sh", "disruptive": false, "destructive": false, "idempotent": true, "timeoutSeconds": 600, "verify": ["scanner-ready"]},
+        {"id": "uninstall", "adapter": "apps/scdast/scanner/destroy.sh", "disruptive": true, "destructive": false, "idempotent": true, "timeoutSeconds": 600, "verify": ["scanner-removed"]}
+      ],
+      "secrets": [
+        {"id": "service-token", "kubernetesSecret": "scdast-service-token", "classification": "token", "required": true},
+        {"id": "registry-credentials", "kubernetesSecret": "regcred", "classification": "image-pull", "required": true}
+      ],
+      "persistence": [],
+      "health": {
+        "aggregate": "all-required",
+        "checks": [
+          {"id": "scanner-ready", "type": "workload-ready", "target": "scanner", "required": true, "timeoutSeconds": 600},
+          {"id": "scanner-health", "type": "tcp", "target": "scanner:8080", "required": true, "timeoutSeconds": 60},
+          {"id": "scanner-stopped", "type": "workload-ready", "target": "scanner", "required": false, "timeoutSeconds": 300},
+          {"id": "scanner-removed", "type": "workload-ready", "target": "scanner", "required": false, "timeoutSeconds": 300}
+        ]
+      },
+      "diagnostics": [
+        {"id": "workload-status", "source": "workload-status", "target": "scanner", "sensitive": false},
+        {"id": "scanner-logs", "source": "logs", "target": "scanner", "sensitive": true},
+        {"id": "events", "source": "events", "target": "scanner", "sensitive": false}
+      ]
+    }
+  ]
+}
