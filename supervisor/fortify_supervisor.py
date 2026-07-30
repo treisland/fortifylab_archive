@@ -420,6 +420,11 @@ class Store:
         )
         self.connection.commit()
 
+    def notification(self, fingerprint: str) -> sqlite3.Row | None:
+        return self.connection.execute(
+            "SELECT * FROM notifications WHERE fingerprint = ?", (fingerprint,)
+        ).fetchone()
+
     def create_approval(
         self, action: str, payload: dict[str, Any], ttl: int
     ) -> sqlite3.Row:
@@ -1581,13 +1586,9 @@ class Supervisor:
             approval = self.store.create_approval(
                 "merge_pr", payload, self.config.approval_ttl_seconds
             )
-            self.notify_once(
-                f"pr:{number}:approval-ready:{sha}",
-                "pull_request.approval_ready",
-                f"✅ PR #{number} is ready for operator approval.",
-                {"pull_request": int(number), "head_sha": sha},
-                meaningful=True,
-            )
+        fingerprint = f"pr:{number}:approval-ready:{sha}"
+        notification = self.store.notification(fingerprint)
+        if notification is None or notification["state"] == "pending":
             actions = tuple(
                 InlineAction(
                     label,
@@ -1603,6 +1604,14 @@ class Supervisor:
                     ("Reject", "reject"),
                 )
             ) + self.workflow_actions()
+            self.notify_once(
+                fingerprint,
+                "pull_request.approval_ready",
+                f"✅ PR #{number} is ready for operator approval.",
+                {"pull_request": int(number), "head_sha": sha},
+                meaningful=True,
+                actions=actions,
+            )
             self.update_status_card(actions)
 
     def monitor_runner(self) -> None:
@@ -1692,7 +1701,8 @@ class Supervisor:
 
         self.store.set(f"{prefix}:phase", phase)
         self.store.set(f"{prefix}:health", health)
-        self.update_status_card()
+        if not self.store.pending_approvals("merge_pr"):
+            self.update_status_card()
 
     def update_status_card(
         self, actions: tuple[InlineAction, ...] = ()
@@ -1722,6 +1732,7 @@ class Supervisor:
         payload: dict[str, Any],
         severity: str = "info",
         meaningful: bool = False,
+        actions: tuple[InlineAction, ...] = (),
     ) -> None:
         sanitized = sanitize_diagnostics(payload)
         if not isinstance(sanitized, dict):
@@ -1752,9 +1763,11 @@ class Supervisor:
             rendered += f"\nOccurrences: {row['occurrences']}"
         try:
             if row["message_id"]:
-                self.telegram.edit(MessageReference(str(row["message_id"])), rendered)
+                self.telegram.edit(
+                    MessageReference(str(row["message_id"])), rendered, actions
+                )
             elif created or row["state"] == "pending":
-                reference = self.telegram.send(rendered)
+                reference = self.telegram.send(rendered, actions)
                 self.store.mark_notification(
                     fingerprint, "delivered", reference.message_id
                 )
