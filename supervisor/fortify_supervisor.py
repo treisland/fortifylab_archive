@@ -228,6 +228,28 @@ class Store:
             ).fetchall()
         )
 
+    def supersede_merge_approvals(self, pull_request: int, head_sha: str) -> int:
+        superseded = 0
+        for row in self.pending_approvals("merge_pr"):
+            payload = json.loads(row["payload"])
+            if (
+                int(payload.get("pull_request", -1)) == pull_request
+                and str(payload.get("head_sha")) != head_sha
+            ):
+                self.connection.execute(
+                    """
+                    UPDATE approvals
+                    SET state = 'superseded', decided_at = ?,
+                        reason = 'pull request head changed'
+                    WHERE id = ?
+                    """,
+                    (int(self.now()), row["id"]),
+                )
+                superseded += 1
+        if superseded:
+            self.connection.commit()
+        return superseded
+
     def decide(
         self, approval_id: str, state: str, actor: str, reason: str = ""
     ) -> sqlite3.Row:
@@ -696,6 +718,7 @@ class Supervisor:
             "pull_request": int(number),
             "head_sha": sha,
         }
+        self.store.supersede_merge_approvals(int(number), sha)
         approval = self.store.pending_approval("merge_pr", payload)
         if approval is None:
             approval = self.store.create_approval(

@@ -207,6 +207,16 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(len(self.telegram.messages), 1)
         self.assertIn("Approve: /approve", self.telegram.messages[0])
 
+    def test_monitor_supersedes_approval_after_head_change(self) -> None:
+        self.supervisor.monitor_once()
+        first = self.store.pending_approvals("merge_pr")[0]
+        self.github.pr["headRefOid"] = "new-sha"
+        self.supervisor.monitor_once()
+        self.assertEqual(self.store.approval(first["id"])["state"], "superseded")
+        pending = self.store.pending_approvals("merge_pr")
+        self.assertEqual(len(pending), 1)
+        self.assertEqual(json.loads(pending[0]["payload"])["head_sha"], "new-sha")
+
     def test_merged_pr_queues_next_issue_once(self) -> None:
         self.store.set("current_pr", "12")
         self.github.pr["state"] = "MERGED"
