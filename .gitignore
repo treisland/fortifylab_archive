@@ -22,6 +22,8 @@ secrets/generated/
 *.swo
 *~
 *.backup
+__pycache__/
+*.py[cod]
 
 # Local Claude Code settings
 .claude/
