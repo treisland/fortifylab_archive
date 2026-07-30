@@ -25,6 +25,8 @@ platform profiles.
 - The accepted minimum 0.2 manager runtime boundary for its read-only API,
   local persistence, authentication, Web UI, and namespace-scoped Kubernetes
   access.
+- A schema-versioned, read-only manager component inventory API with desired
+  resources, sanitized cluster observations, and explicit unavailable state.
 
 ### Fixed
 

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/schemas/component-inventory.schema.json",
+  "title": "Fortify Lab Manager component inventory response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "observation", "items"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/v1alpha1"},
+    "kind": {"const": "ComponentInventory"},
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state"],
+      "properties": {"state": {"enum": ["available", "unavailable"]}}
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "identity",
+          "version",
+          "dependencies",
+          "desiredState",
+          "observedResources"
+        ],
+        "properties": {
+          "identity": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "displayName"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+              "displayName": {"type": "string", "minLength": 1}
+            }
+          },
+          "version": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["chart", "images"],
+            "properties": {
+              "chart": {"type": "string", "minLength": 1},
+              "images": {
+                "type": "object",
+                "additionalProperties": {"type": "string", "minLength": 1}
+              }
+            }
+          },
+          "dependencies": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}
+          },
+          "desiredState": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["state", "resources"],
+            "properties": {
+              "state": {"const": "present"},
+              "resources": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"$ref": "#/$defs/resourceIdentity"}
+              }
+            }
+          },
+          "observedResources": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "kind", "name", "namespace", "state"],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"
+                },
+                "kind": {"enum": ["StatefulSet", "Deployment"]},
+                "name": {"type": "string", "minLength": 1},
+                "namespace": {"const": "fortify"},
+                "state": {"enum": ["present", "absent", "unknown"]}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "resourceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "name", "namespace"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$"},
+        "kind": {"enum": ["StatefulSet", "Deployment"]},
+        "name": {"type": "string", "minLength": 1},
+        "namespace": {"const": "fortify"}
+      }
+    }
+  }
+}

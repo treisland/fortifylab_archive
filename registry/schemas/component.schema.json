@@ -7,6 +7,7 @@
   "required": [
     "id",
     "displayName",
+    "version",
     "dependencies",
     "workloads",
     "operations",
@@ -23,6 +24,18 @@
     "displayName": {
       "type": "string",
       "minLength": 1
+    },
+    "version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["chart", "images"],
+      "properties": {
+        "chart": {"type": "string", "minLength": 1},
+        "images": {
+          "type": "object",
+          "additionalProperties": {"type": "string", "minLength": 1}
+        }
+      }
     },
     "dependencies": {
       "type": "array",

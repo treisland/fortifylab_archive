@@ -1,0 +1,78 @@
+# Manager API reference
+
+The local Fortify Lab Manager exposes a versioned, read-only component
+inventory at `GET /api/v1alpha1/components`. `HEAD` is also supported.
+Mutation methods are rejected with `405 Method Not Allowed`. This contract is
+MicroK8s-first, limited to the managed `fortify` namespace, and excludes ASPM.
+
+The endpoint is a safe projection of the authoritative
+[`registry/components.json`](../registry/components.json). It never returns
+secret values or names, credentials, licenses, registry adapter paths,
+configuration paths, persistent-volume paths, logs, or Kubernetes client
+details.
+
+The machine-readable response contract is
+[`registry/schemas/component-inventory.schema.json`](../registry/schemas/component-inventory.schema.json).
+
+## Response
+
+```json
+{
+  "apiVersion": "fortifylab.io/v1alpha1",
+  "kind": "ComponentInventory",
+  "observation": {"state": "available"},
+  "items": [
+    {
+      "identity": {"id": "mysql", "displayName": "MySQL"},
+      "version": {
+        "chart": "9.19.0",
+        "images": {"database": "8.0.36-debian-11-r2"}
+      },
+      "dependencies": [],
+      "desiredState": {
+        "state": "present",
+        "resources": [
+          {
+            "id": "mysql/database",
+            "kind": "StatefulSet",
+            "name": "mysql",
+            "namespace": "fortify"
+          }
+        ]
+      },
+      "observedResources": [
+        {
+          "id": "mysql/database",
+          "kind": "StatefulSet",
+          "name": "mysql",
+          "namespace": "fortify",
+          "state": "present"
+        }
+      ]
+    }
+  ]
+}
+```
+
+`version` contains the desired evaluation-bundle chart and image pins, not a
+claim that a running resource has that version. `dependencies` contains stable
+component IDs and represents the complete MySQL → SSC → ScanCentral SAST and
+PostgreSQL/LIM (plus SSC) → ScanCentral DAST paths.
+
+Each observed resource state is one of:
+
+- `present`: the allow-listed resource was observed;
+- `absent`: the cluster was queried successfully and the resource was not
+  found; or
+- `unknown`: current presence could not be determined.
+
+When the cluster adapter is unavailable or times out, the request still
+returns the desired inventory with `observation.state` set to `unavailable`
+and every observed resource set to `unknown`. It does not report those
+resources as absent. A malformed or unavailable registry returns `503` with
+the sanitized code `REGISTRY_UNAVAILABLE`.
+
+The manager runtime and authentication boundary is documented in the
+[manager runtime boundary](manager-runtime-boundary.md). This module defines
+the inventory WSGI contract; listener setup and authenticated session serving
+remain separate manager integration work.

@@ -12,6 +12,7 @@ TOP_LEVEL_KEYS = {"$schema", "apiVersion", "kind", "scope", "components"}
 COMPONENT_KEYS = {
     "id",
     "displayName",
+    "version",
     "dependencies",
     "workloads",
     "operations",
@@ -60,6 +61,22 @@ def validate_registry(document: dict[str, Any], root: Path) -> list[str]:
         if set(component) != COMPONENT_KEYS:
             errors.append(f"{prefix} fields do not match component schema")
             continue
+        version = component["version"]
+        if (
+            not isinstance(version, dict)
+            or set(version) != {"chart", "images"}
+            or not isinstance(version.get("chart"), str)
+            or not version["chart"]
+            or not isinstance(version.get("images"), dict)
+            or any(
+                not isinstance(name, str)
+                or not name
+                or not isinstance(value, str)
+                or not value
+                for name, value in version.get("images", {}).items()
+            )
+        ):
+            errors.append(f"{prefix} version must contain chart and image pins")
         for field in ("dependencies", "workloads", "operations", "secrets", "persistence", "diagnostics"):
             if not isinstance(component[field], list):
                 errors.append(f"{prefix} {field} must be an array")

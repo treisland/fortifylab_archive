@@ -26,8 +26,23 @@ class ComponentRegistry:
 
     @classmethod
     def load(cls, path: Path = DEFAULT_REGISTRY) -> "ComponentRegistry":
-        with path.open(encoding="utf-8") as stream:
-            return cls(json.load(stream))
+        """Load and validate the registry through its sole runtime entry point."""
+        try:
+            with path.open(encoding="utf-8") as stream:
+                document = json.load(stream)
+        except (OSError, json.JSONDecodeError) as error:
+            raise RegistryError("component registry is unavailable or malformed") from error
+        if not isinstance(document, dict):
+            raise RegistryError("component registry is malformed")
+
+        # Imported lazily because semantic validation uses ComponentRegistry for
+        # dependency-cycle checks.
+        from manager.registry_validation import validate_registry
+
+        errors = validate_registry(document, ROOT)
+        if errors:
+            raise RegistryError(f"component registry is invalid: {errors[0]}")
+        return cls(document)
 
     @property
     def component_ids(self) -> tuple[str, ...]:
