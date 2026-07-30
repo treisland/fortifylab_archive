@@ -5,6 +5,13 @@ inventory at `GET /api/v1alpha1/components`. `HEAD` is also supported.
 Mutation methods are rejected with `405 Method Not Allowed`. This contract is
 MicroK8s-first, limited to the managed `fortify` namespace, and excludes ASPM.
 
+The typed lifecycle service contract that future authenticated mutation
+transports must use is documented in
+[Typed lifecycle operation engine](operations/lifecycle-engine.md). No
+browser-facing mutation route is enabled yet. The service accepts component
+and operation identifiers only; arbitrary commands and caller-supplied paths
+are outside the contract.
+
 The endpoint is a safe projection of the authoritative
 [`registry/components.json`](../registry/components.json). It never returns
 secret values or names, credentials, licenses, registry adapter paths,

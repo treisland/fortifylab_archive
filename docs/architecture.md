@@ -22,6 +22,12 @@ contract is the [component inventory API](api.md); listener, authentication,
 and concrete Kubernetes adapter integration remain ordered implementation
 work.
 
+The dependency-aware execution foundation is implemented by the
+[typed lifecycle operation engine](operations/lifecycle-engine.md). It keeps
+transport authorization and live MicroK8s adapters separate while defining
+typed planning, conflicts, progress, cancellation, retry, health verification,
+and restart recovery.
+
 ## Accepted decisions
 
 | ADR | Decision |

@@ -10,6 +10,9 @@ platform profiles.
 
 ### Added
 
+- A typed, dependency-aware lifecycle operation engine with durable progress,
+  bounded retry and timeout, cancellation, conflict rejection, post-operation
+  health verification, and restart recovery.
 - Controlled Telegram-approved milestone rollover using an ordered external
   allowlist, closed-milestone revalidation, durable audit state, and immediate
   dispatch of the next eligible issue, with compact contextual action rows.
