@@ -8,6 +8,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
 import secrets
 import shlex
 import sqlite3
@@ -175,6 +176,12 @@ class Store:
         except sqlite3.IntegrityError:
             return False
 
+    def has_event(self, fingerprint: str) -> bool:
+        row = self.connection.execute(
+            "SELECT 1 FROM events WHERE fingerprint = ?", (fingerprint,)
+        ).fetchone()
+        return row is not None
+
     def create_approval(
         self, action: str, payload: dict[str, Any], ttl: int
     ) -> sqlite3.Row:
@@ -282,7 +289,10 @@ class GitHubPort(Protocol):
     def discover_pull_requests(self) -> list[dict[str, Any]]: ...
     def ready(self, number: int) -> None: ...
     def merge(self, number: int, head_sha: str) -> None: ...
-    def next_issue(self, milestone: str) -> dict[str, Any] | None: ...
+    def close_issue(self, number: int) -> None: ...
+    def next_issue(
+        self, milestone: str, excluded: set[int] | None = None
+    ) -> dict[str, Any] | None: ...
 
 
 class GitHub:
@@ -376,7 +386,37 @@ class GitHub:
                 result.stderr.strip() or "Could not mark pull request ready"
             )
 
-    def next_issue(self, milestone: str) -> dict[str, Any] | None:
+    def close_issue(self, number: int) -> None:
+        owner, repository = self.repository.split("/", 1)
+        endpoint = f"repos/{owner}/{repository}/issues/{number}"
+        if self._json(["api", endpoint]).get("state") == "closed":
+            return
+        result = self.run(
+            [
+                "gh",
+                "api",
+                "--method",
+                "PATCH",
+                endpoint,
+                "-f",
+                "state=closed",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode:
+            # A PR with `Closes #N` can close the issue between the GET and
+            # PATCH. Treat that concurrent native closure as success.
+            if self._json(["api", endpoint]).get("state") == "closed":
+                return
+            raise SupervisorError(
+                result.stderr.strip() or f"Could not close issue #{number}"
+            )
+
+    def next_issue(
+        self, milestone: str, excluded: set[int] | None = None
+    ) -> dict[str, Any] | None:
         issues = self._json(
             [
                 "issue",
@@ -394,9 +434,14 @@ class GitHub:
             ]
         )
         eligible = []
+        excluded = excluded or set()
         for issue in issues:
             labels = {item["name"] for item in issue.get("labels", [])}
-            if "automated-observation" not in labels and "needs-triage" not in labels:
+            if (
+                int(issue["number"]) not in excluded
+                and "automated-observation" not in labels
+                and "needs-triage" not in labels
+            ):
                 eligible.append(issue)
         return min(eligible, key=lambda item: int(item["number"])) if eligible else None
 
@@ -622,7 +667,50 @@ class Supervisor:
             "pull_request.merge_approved",
             {"approval_id": approval_id, "pull_request": payload["pull_request"]},
         )
-        return f"✅ PR #{payload['pull_request']} merge approved and submitted."
+        next_issue = self.complete_merged_pull_request(pr)
+        if next_issue is None:
+            return (
+                f"✅ PR #{payload['pull_request']} merge approved and completed. "
+                "No eligible issues remain; the milestone queue is complete."
+            )
+        return (
+            f"✅ PR #{payload['pull_request']} merge approved and completed; "
+            f"issue #{next_issue['number']} was started."
+        )
+
+    def complete_merged_pull_request(
+        self, pr: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        number = int(pr["number"])
+        sha = str(pr.get("headRefOid") or "")
+        branch = str(pr.get("headRefName") or "")
+        match = re.fullmatch(r"agent/issue-(\d+)", branch)
+        issue_number = int(match.group(1)) if match else None
+        fingerprint = f"pr:{number}:completed:{sha}"
+
+        if self.store.has_event(fingerprint):
+            return None
+
+        if issue_number is not None:
+            self.github.close_issue(issue_number)
+
+        self.telegram.send(f"✅ PR #{number} merged. Selecting next issue.")
+        if issue_number is not None and self.store.get("current_issue") == str(
+            issue_number
+        ):
+            self.store.set("current_issue", "")
+        next_issue = self.queue_next_issue(issue_number)
+        self.store.set("current_pr", "")
+        self.store.event(
+            fingerprint,
+            "pull_request.merged",
+            {
+                "pull_request": number,
+                "head_sha": sha,
+                "issue": issue_number,
+            },
+        )
+        return next_issue
 
     @staticmethod
     def verify_merge_plan(
@@ -673,14 +761,7 @@ class Supervisor:
         state = str(pr.get("state"))
         sha = str(pr.get("headRefOid") or "")
         if state == "MERGED" or pr.get("mergedAt"):
-            if self.store.event(
-                f"pr:{number}:merged:{sha}",
-                "pull_request.merged",
-                {"pull_request": int(number), "head_sha": sha},
-            ):
-                self.telegram.send(f"✅ PR #{number} merged. Selecting next issue.")
-                self.store.set("current_pr", "")
-                self.queue_next_issue()
+            self.complete_merged_pull_request(pr)
             return
         if state == "CLOSED":
             if self.store.event(
@@ -741,13 +822,16 @@ class Supervisor:
         if self.store.event(fingerprint, kind, payload):
             self.telegram.send(message)
 
-    def queue_next_issue(self) -> None:
-        issue = self.github.next_issue(self.config.milestone)
+    def queue_next_issue(
+        self, completed_issue: int | None = None
+    ) -> dict[str, Any] | None:
+        excluded = {completed_issue} if completed_issue is not None else None
+        issue = self.github.next_issue(self.config.milestone, excluded)
         if not issue:
             self.telegram.send(
                 f"🎉 No eligible issues remain in {self.config.milestone}."
             )
-            return
+            return None
         number = str(issue["number"])
         self.store.set("current_issue", number)
         self.telegram.send(
@@ -767,6 +851,7 @@ class Supervisor:
                 "runner.started",
                 {"issue": int(number)},
             )
+        return issue
 
 
 def build(config_path: Path) -> tuple[Config, Store, Supervisor]:
