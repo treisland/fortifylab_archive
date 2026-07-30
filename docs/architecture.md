@@ -26,7 +26,10 @@ The dependency-aware execution foundation is implemented by the
 [typed lifecycle operation engine](operations/lifecycle-engine.md). It keeps
 transport authorization and live MicroK8s adapters separate while defining
 typed planning, conflicts, progress, cancellation, retry, health verification,
-and restart recovery.
+and restart recovery. Its
+[local authorization service](operations/authorization.md) provides the
+shared actor, risk, immutable approval, replay, revocation, and audit boundary
+for every mutation adapter.
 
 ## Accepted decisions
 

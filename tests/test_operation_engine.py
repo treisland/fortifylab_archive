@@ -6,11 +6,16 @@ import json
 import tempfile
 import threading
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
 
 from manager.component_registry import ComponentRegistry
+from manager.authorization import (
+    ActorIdentity, ApprovalStore, AuthorizationError, AuthorizationService,
+    OperationPlan,
+)
 from manager.operation_engine import (
     DependencyBlocked,
     InvalidOperation,
@@ -226,6 +231,46 @@ class OperationEngineTests(unittest.TestCase):
             self.engine.submit("start", ["../../tmp/adapter"], actor="local:test")
         registry_text = json.dumps(self.registry.document)
         self.assertNotIn("/home/", registry_text)
+
+    def test_shared_authorization_is_enforced_before_adapter_execution(self) -> None:
+        approval_store = ApprovalStore(Path(self.temp.name) / "approvals.db")
+        now = datetime(2026, 7, 30, 12, 0, tzinfo=timezone.utc)
+        identity = ActorIdentity("local:test", "web", "session-1", now)
+        states = {
+            "mysql": "running", "ssc": "running", "scancentral-sast": "running"
+        }
+        authorization = AuthorizationService(approval_store, clock=lambda: now)
+        authorized = OperationEngine(
+            self.registry,
+            self.store,
+            self.adapter,
+            self.verifier,
+            authorization=authorization,
+            state_provider=lambda targets: {target: states[target] for target in targets},
+        )
+        with self.assertRaises(AuthorizationError):
+            authorized.submit(
+                "restart", ["scancentral-sast"], actor=identity.actor,
+                identity=identity,
+            )
+        self.assertEqual(self.adapter.calls, [])
+
+        # Engine affected-target ordering follows stop then dependency closure.
+        plan = OperationPlan(
+            "restart", ("scancentral-sast", "mysql", "ssc"),
+            {
+                "mysql": "running", "scancentral-sast": "running",
+                "ssc": "running",
+            },
+        )
+        approval = authorization.request(plan, identity)
+        authorization.approve(approval["id"], identity)
+        result = authorized.submit(
+            "restart", ["scancentral-sast"], actor=identity.actor,
+            identity=identity, approval_id=approval["id"],
+        )
+        self.assertEqual(result["state"], "succeeded")
+        approval_store.close()
 
 
 if __name__ == "__main__":

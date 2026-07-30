@@ -1,11 +1,12 @@
 # Typed lifecycle operation engine
 
-The manager lifecycle engine is the shared execution foundation for future
+The manager lifecycle engine is the shared execution foundation for
 authenticated Web UI, CLI, and private Telegram controls. It is MicroK8s-first,
 operates only on components in
 [`registry/components.json`](../../registry/components.json), and excludes
-ASPM. This issue adds the engine contract, not an unauthenticated HTTP route or
-a live-cluster adapter.
+ASPM. The shared [local authorization service](authorization.md) is enforced
+before a configured engine calls its adapter. The repository does not expose
+an unauthenticated mutation route or include a live-cluster adapter.
 
 ## Request contract
 
@@ -73,9 +74,10 @@ evaluate only the supplied component/check IDs without returning secret-bearing
 evidence.
 
 The repository does not yet wire this engine to a live adapter or expose
-mutation routes. Before doing so, add authenticated authorization and
-destructive-operation approval at the service boundary, narrowly scoped
-MicroK8s permissions, and integration evidence against a disposable lab.
+mutation routes. Before doing so, add narrowly scoped MicroK8s permissions and
+integration evidence against a disposable lab. Production composition must
+supply the authorization service and an authoritative current-state provider;
+omission is reserved for isolated engine unit tests without a mutation adapter.
 
 ## Failure codes
 

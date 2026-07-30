@@ -10,6 +10,10 @@ platform profiles.
 
 ### Added
 
+- Shared local authorization and risk-based, state-bound, expiring,
+  revocable, single-use lifecycle approvals across Web, CLI, and
+  communications identities, with stronger high-risk confirmation and
+  fail-closed audit behavior.
 - A typed, dependency-aware lifecycle operation engine with durable progress,
   bounded retry and timeout, cancellation, conflict rejection, post-operation
   health verification, and restart recovery.

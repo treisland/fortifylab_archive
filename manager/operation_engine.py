@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Protocol
 
+from manager.authorization import ActorIdentity, AuthorizationService, OperationPlan
 from manager.component_registry import ComponentRegistry, RegistryError
 from manager.record_store import sanitize_record
 
@@ -178,6 +179,8 @@ class OperationEngine:
         monotonic: Callable[[], float] = time.monotonic,
         max_attempts: int = 2,
         max_step_timeout: float = 3600,
+        authorization: AuthorizationService | None = None,
+        state_provider: Callable[[tuple[str, ...]], dict[str, str]] | None = None,
     ) -> None:
         if max_attempts < 1 or max_step_timeout <= 0:
             raise ValueError("operation bounds must be positive")
@@ -189,6 +192,8 @@ class OperationEngine:
         self._monotonic = monotonic
         self._max_attempts = max_attempts
         self._max_step_timeout = max_step_timeout
+        self._authorization = authorization
+        self._state_provider = state_provider
         self._cancelled: set[str] = set()
         self._lock = threading.RLock()
 
@@ -199,6 +204,8 @@ class OperationEngine:
         *,
         actor: str,
         retry_of: str | None = None,
+        identity: ActorIdentity | None = None,
+        approval_id: str | None = None,
     ) -> dict[str, Any]:
         if operation not in REQUEST_OPERATIONS:
             raise InvalidOperation("operation is not an allowed lifecycle action")
@@ -217,6 +224,22 @@ class OperationEngine:
             if conflict:
                 raise OperationConflict(
                     "another operation is active for an affected component"
+                )
+            if self._authorization is not None:
+                if identity is None or identity.actor != actor or self._state_provider is None:
+                    raise InvalidOperation(
+                        "authenticated identity and current-state provider are required"
+                    )
+                try:
+                    current_state = self._state_provider(affected)
+                except Exception as error:
+                    raise OperationError("current target state is unavailable") from error
+                plan = OperationPlan(operation, affected, current_state)
+                self._authorization.authorize(
+                    plan,
+                    identity,
+                    approval_id=approval_id,
+                    state_provider=lambda: self._state_provider(affected),
                 )
             now = _timestamp(self._clock())
             document: dict[str, Any] = {
@@ -240,7 +263,14 @@ class OperationEngine:
         self._run(document, steps)
         return self._store.get(document["id"])
 
-    def retry(self, operation_id: str, *, actor: str) -> dict[str, Any]:
+    def retry(
+        self,
+        operation_id: str,
+        *,
+        actor: str,
+        identity: ActorIdentity | None = None,
+        approval_id: str | None = None,
+    ) -> dict[str, Any]:
         previous = self._store.get(operation_id)
         if previous["state"] not in TERMINAL_STATES - {"succeeded", "cancelled"}:
             raise InvalidOperation("only a failed, timed-out, or interrupted operation can retry")
@@ -249,11 +279,23 @@ class OperationEngine:
             previous["requestedTargets"],
             actor=actor,
             retry_of=operation_id,
+            identity=identity,
+            approval_id=approval_id,
         )
 
-    def cancel(self, operation_id: str, *, actor: str) -> dict[str, Any]:
+    def cancel(
+        self,
+        operation_id: str,
+        *,
+        actor: str,
+        identity: ActorIdentity | None = None,
+    ) -> dict[str, Any]:
         if not actor:
             raise InvalidOperation("actor is required")
+        if self._authorization is not None and (
+            identity is None or identity.actor != actor
+        ):
+            raise InvalidOperation("authenticated identity is required")
         with self._lock:
             document = self._store.get(operation_id)
             if document["state"] in TERMINAL_STATES:
