@@ -44,6 +44,30 @@ class GitHubTest(unittest.TestCase):
 
         GitHub("treisland/fortifylab", run=run).close_issue(5)
 
+    def test_next_issue_prioritizes_queue_next_then_number(self) -> None:
+        issues = [
+            {"number": 22, "title": "Health", "url": "", "labels": []},
+            {
+                "number": 31,
+                "title": "Telegram recovery",
+                "url": "",
+                "labels": [{"name": "queue:next"}],
+            },
+            {
+                "number": 30,
+                "title": "Telegram approvals",
+                "url": "",
+                "labels": [{"name": "queue:next"}],
+            },
+        ]
+
+        def run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+            return subprocess.CompletedProcess([], 0, json.dumps(issues), "")
+
+        issue = GitHub("treisland/fortifylab", run=run).next_issue("0.2")
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue["number"], 30)
+
 
 class ConfigTest(unittest.TestCase):
     def test_notification_preferences_require_protected_external_config(self) -> None:

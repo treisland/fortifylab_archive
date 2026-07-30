@@ -717,7 +717,18 @@ class GitHub:
                 and "needs-triage" not in labels
             ):
                 eligible.append(issue)
-        return min(eligible, key=lambda item: int(item["number"])) if eligible else None
+        return (
+            min(
+                eligible,
+                key=lambda item: (
+                    "queue:next"
+                    not in {label["name"] for label in item.get("labels", [])},
+                    int(item["number"]),
+                ),
+            )
+            if eligible
+            else None
+        )
 
 
 class TelegramPort(Protocol):

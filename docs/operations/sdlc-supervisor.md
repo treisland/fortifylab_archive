@@ -138,6 +138,9 @@ reconciled on the next monitor run. Issues marked
 `automated-observation` or `needs-triage` are not started automatically.
 Issue closure is idempotent: GitHub's native `Closes #N` processing and the
 supervisor may race without turning a successful merge into an operator error.
+Eligible issues labeled `queue:next` are selected before the normal
+lowest-issue-number order. This is an explicit operator-controlled queue
+override; ordering remains deterministic within the prioritized group.
 
 ## Optional runner
 
