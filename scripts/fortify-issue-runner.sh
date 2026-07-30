@@ -63,9 +63,23 @@ done
 [ -r "$HEARTBEAT_TOOL" ] || fail "runner heartbeat helper is not readable"
 [ -r "$SUPERVISOR_CONFIG" ] || fail "supervisor configuration is not readable"
 APPROVED_MILESTONE="$(
-  python3 -c \
-    'import sys,tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["supervisor"]["milestone"])' \
-    "$SUPERVISOR_CONFIG"
+  python3 - "$SUPERVISOR_CONFIG" <<'PY'
+import sqlite3
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as stream:
+    supervisor = tomllib.load(stream)["supervisor"]
+authorized = tuple(supervisor.get("milestones") or (supervisor["milestone"],))
+with sqlite3.connect(supervisor["state_file"]) as connection:
+    row = connection.execute(
+        "SELECT value FROM settings WHERE key = 'active_milestone'"
+    ).fetchone()
+active = str(row[0]) if row else str(supervisor["milestone"])
+if active not in authorized:
+    raise SystemExit("active milestone is outside the authorized sequence")
+print(active)
+PY
 )"
 [ -n "$APPROVED_MILESTONE" ] || fail "approved milestone is empty"
 

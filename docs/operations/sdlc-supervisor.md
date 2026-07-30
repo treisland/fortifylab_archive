@@ -62,6 +62,9 @@ journalctl --user -u fortify-supervisor-telegram.service
 /issue <failure-fingerprint>
 /pause
 /continue
+/watch
+/unwatch
+/advance
 /help
 ```
 
@@ -162,11 +165,18 @@ Approval ready: no
 Next: scanning
 ```
 
-The card offers **Status**, **Details**, **Refresh**, **Watch/Unwatch**, and
-**Pause**. Details is a new durable sanitized message, not a callback toast.
-Watch controls routine heartbeat delivery only; urgent notifications continue.
-If protected local configuration supplies `runner_stop_command`, **Stop** is
-also shown. It creates a separate confirmation message, and only the second
+The card shows only controls relevant to its current state so Telegram labels
+remain readable. Normal status offers **Details** and **Refresh**; an active
+runner with a configured stop command offers **Details** and **Stop**; paused
+state offers **Continue** and **Details**. PR approval uses **Approve** and
+**Reject** on the first row with **Details** on a second row. Milestone
+rollover similarly uses **Advance** and **Stay**, then **Details**. Status,
+pause, and routine delivery preferences remain available through `/status`,
+`/pause`, `/watch`, and `/unwatch`.
+
+Details is a new durable sanitized message, not a callback toast. Watch
+controls routine heartbeat delivery only; urgent notifications continue. Stop
+creates a separate confirmation message, and only the second
 identity-bound, expiring, single-use callback launches that fixed command with
 the numeric issue as its sole appended argument. Confirmation records a
 `runner.stop_requested` audit event. Stop is hidden by default and never
@@ -197,6 +207,36 @@ supervisor may race without turning a successful merge into an operator error.
 Eligible issues labeled `queue:next` are selected before the normal
 lowest-issue-number order. This is an explicit operator-controlled queue
 override; ordering remains deterministic within the prioritized group.
+
+## Milestone rollover
+
+The required `milestone` value is the initial active milestone and preserves
+compatibility with existing installations. To authorize controlled rollover,
+add an ordered sequence to the protected external configuration:
+
+```toml
+[supervisor]
+milestone = "0.2 — Observable Manager MVP"
+milestones = [
+  "0.2 — Observable Manager MVP",
+  "0.3 — Controlled Operations",
+]
+```
+
+The sequence is an allowlist, not a request to start every milestone silently.
+When the active milestone has no eligible issues, the supervisor verifies that
+its GitHub milestone is closed with zero open issues. It then sends the linked
+private chat an **Advance** or **Stay** decision. **Advance** (or `/advance`)
+revalidates the exact repository, current milestone, next configured
+milestone, closed state, and issue count before persisting the transition and
+immediately queuing the next issue. **Stay** rejects that approval and pauses
+new work; `/continue` permits a fresh rollover proposal.
+
+An open milestone produces guidance to close it but no approval. An unlisted,
+reordered, removed, ambiguous, or externally changed milestone fails closed.
+The supervisor never edits `supervisor.toml`; expanding the authorized
+sequence remains a local operator action. The bounded issue runner reads the
+persisted active milestone and rejects issues outside it.
 
 ## Optional runner
 

@@ -23,6 +23,7 @@ from fortify_supervisor import (  # noqa: E402
     Store,
     Supervisor,
     SupervisorError,
+    Telegram,
     checks_state,
     sanitize_diagnostics,
 )
@@ -30,6 +31,24 @@ from workflow_status import heartbeat_interval, render_stall  # noqa: E402
 
 
 class GitHubTest(unittest.TestCase):
+    def test_telegram_keyboard_preserves_compact_rows(self) -> None:
+        markup = json.loads(
+            Telegram._markup(
+                (
+                    InlineAction("Approve", "one"),
+                    InlineAction("Reject", "two"),
+                    InlineAction("Details", "three", row=1),
+                )
+            )
+        )
+        self.assertEqual(
+            [
+                [button["text"] for button in row]
+                for row in markup["inline_keyboard"]
+            ],
+            [["Approve", "Reject"], ["Details"]],
+        )
+
     def test_close_issue_accepts_native_closure_race(self) -> None:
         responses = iter(
             [
@@ -107,6 +126,31 @@ rejection_reasons = ["changes-required"]
             config = Config.load(config_file)
             self.assertEqual(config.notifications.mode, "failures")
 
+    def test_authorized_milestone_sequence_must_include_starting_milestone(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_file = root / "supervisor.toml"
+            for name in ("token", "user", "chat"):
+                path = root / name
+                path.write_text(name, encoding="utf-8")
+                path.chmod(0o600)
+            config_file.write_text(
+                f"""
+[supervisor]
+repository = "owner/repository"
+milestone = "0.2"
+milestones = ["0.3"]
+state_file = "{root / 'state.db'}"
+telegram_token_file = "{root / 'token'}"
+telegram_user_file = "{root / 'user'}"
+telegram_chat_file = "{root / 'chat'}"
+""",
+                encoding="utf-8",
+            )
+            config_file.chmod(0o600)
+            with self.assertRaisesRegex(SupervisorError, "include milestone"):
+                Config.load(config_file)
+
 
 def passing_pr(number: int = 12, sha: str = "abc123") -> dict[str, Any]:
     return {
@@ -140,6 +184,8 @@ class FakeGitHub:
             "title": "Architecture decisions",
             "url": "https://github.test/issues/2",
         }
+        self.issues: dict[str, dict[str, Any] | None] = {}
+        self.milestones: dict[str, dict[str, Any]] = {}
 
     def pull_request(self, number: int) -> dict[str, Any]:
         assert number == int(self.pr["number"])
@@ -166,10 +212,15 @@ class FakeGitHub:
     def next_issue(
         self, milestone: str, excluded: set[int] | None = None
     ) -> dict[str, Any] | None:
-        assert milestone == "0.1 — Evaluation Foundation"
-        if self.issue and int(self.issue["number"]) in (excluded or set()):
+        issue = self.issues.get(milestone, self.issue)
+        if issue and int(issue["number"]) in (excluded or set()):
             return None
-        return self.issue
+        return issue
+
+    def milestone(self, title: str) -> dict[str, Any]:
+        return self.milestones.get(
+            title, {"title": title, "state": "open", "open_issues": 0}
+        )
 
 
 class FakeTelegram:
@@ -269,6 +320,27 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("Workflow: waiting", status)
         self.assertIn("Next: runner startup or operator action", status)
 
+    def test_workflow_actions_are_compact_and_contextual(self) -> None:
+        self.assertEqual(
+            [action.label for action in self.supervisor.workflow_actions()],
+            ["Details", "Refresh"],
+        )
+        self.store.set("paused", "true")
+        self.assertEqual(
+            [action.label for action in self.supervisor.workflow_actions()],
+            ["Continue", "Details"],
+        )
+
+    def test_watch_preferences_use_slash_commands(self) -> None:
+        self.assertIn(
+            "muted", self.supervisor.handle_command("/unwatch", "101")
+        )
+        self.assertEqual(self.store.get("watched"), "false")
+        self.assertIn(
+            "enabled", self.supervisor.handle_command("/watch", "101")
+        )
+        self.assertEqual(self.store.get("watched"), "true")
+
     def test_unauthorized_and_group_commands_are_ignored(self) -> None:
         self.supervisor.handle_update(
             {
@@ -330,6 +402,104 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("Milestone 0.1 — Evaluation Foundation is complete", response)
         self.assertNotIn("next issue was selected", response)
 
+    def test_closed_milestone_offers_approved_rollover_and_starts_next_issue(
+        self,
+    ) -> None:
+        following = "0.2 — Observable Manager MVP"
+        self.config = dataclasses.replace(
+            self.config,
+            milestones=(self.config.milestone, following),
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.github.issue = None
+        self.github.issues[following] = {
+            "number": 33,
+            "title": "Lifecycle engine",
+            "url": "https://github.test/issues/33",
+        }
+        self.github.milestones[self.config.milestone] = {
+            "title": self.config.milestone,
+            "state": "closed",
+            "open_issues": 0,
+        }
+
+        self.assertIsNone(self.supervisor.queue_next_issue())
+        approval = self.store.pending_approvals("milestone_rollover")
+        self.assertEqual(len(approval), 1)
+        self.assertTrue(
+            any(
+                {"Advance", "Stay"}.issubset(
+                    {action.label for action in actions}
+                )
+                for actions in self.telegram.actions
+            )
+        )
+
+        advance_token = next(
+            action.token
+            for actions in self.telegram.actions
+            for action in actions
+            if action.label == "Advance"
+        )
+        response = self.supervisor.execute_callback(advance_token, "101")
+
+        self.assertIn("issue #33 was started", response)
+        self.assertEqual(self.store.get("active_milestone"), following)
+        self.assertEqual(self.store.get("current_issue"), "33")
+        self.assertTrue(
+            self.store.has_event(
+                f"approval:{approval[0]['id']}:rollover"
+            )
+        )
+
+    def test_open_milestone_cannot_offer_or_approve_rollover(self) -> None:
+        following = "0.2 — Observable Manager MVP"
+        self.config = dataclasses.replace(
+            self.config,
+            milestones=(self.config.milestone, following),
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.github.issue = None
+        self.github.milestones[self.config.milestone] = {
+            "title": self.config.milestone,
+            "state": "open",
+            "open_issues": 0,
+        }
+
+        self.assertIsNone(self.supervisor.queue_next_issue())
+
+        self.assertEqual(
+            self.store.pending_approvals("milestone_rollover"), []
+        )
+        self.assertTrue(
+            any("Close it" in message for message in self.telegram.messages)
+        )
+
+    def test_rollover_revalidates_active_milestone_before_approval(self) -> None:
+        following = "0.2 — Observable Manager MVP"
+        self.config = dataclasses.replace(
+            self.config,
+            milestones=(self.config.milestone, following),
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.github.issue = None
+        self.github.milestones[self.config.milestone] = {
+            "title": self.config.milestone,
+            "state": "closed",
+            "open_issues": 0,
+        }
+        self.supervisor.queue_next_issue()
+        self.store.set("active_milestone", following)
+
+        with self.assertRaisesRegex(SupervisorError, "Active milestone changed"):
+            self.supervisor.handle_command("/advance", "101")
+
     def test_maintenance_merge_does_not_advance_issue_queue(self) -> None:
         self.github.pr["headRefName"] = "maintenance/supervisor-installer"
         payload = {
@@ -390,15 +560,11 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(len(self.telegram.messages), 3)
         self.assertEqual(
             [action.label for action in self.telegram.actions[-1]],
-            [
-                "Approve",
-                "Reject",
-                "Status",
-                "Details",
-                "Refresh",
-                "Unwatch",
-                "Pause",
-            ],
+            ["Approve", "Reject", "Details"],
+        )
+        self.assertEqual(
+            [action.row for action in self.telegram.actions[-1]],
+            [0, 0, 1],
         )
         for action in self.telegram.actions[-1]:
             self.assertNotIn("apr-", action.token)
@@ -786,7 +952,7 @@ class SupervisorTest(unittest.TestCase):
     def test_details_callback_sends_visible_message(self) -> None:
         token = self.action_token("Details")
         self.supervisor.handle_update(self.callback_update(token))
-        self.assertIn("PR / CI: #12", self.telegram.messages[-1])
+        self.assertIn("PR #12", self.telegram.messages[-1])
         self.assertIn("Checks: passed", self.telegram.messages[-1])
         self.assertIn("https://github.test/pull/12", self.telegram.messages[-1])
         self.assertEqual(self.telegram.callback_answers[-1][1], "Details sent")
@@ -825,7 +991,7 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("already used", self.telegram.callback_answers[-1][1])
 
     def test_unauthorized_callback_is_ignored(self) -> None:
-        token = self.action_token("Pause")
+        token = self.action_token("Details")
         update = self.callback_update(token)
         update["callback_query"]["from"]["id"] = 999
         self.supervisor.handle_update(update)
@@ -860,7 +1026,7 @@ class SupervisorTest(unittest.TestCase):
         )
         self.assertEqual(
             [action.label for action in self.telegram.actions[approval_message]],
-            ["Approve", "Reject", "Status", "Details", "Refresh", "Unwatch", "Pause"],
+            ["Approve", "Reject", "Details"],
         )
         self.assertEqual(self.telegram.edits[0][0].message_id, "77")
         self.assertIn(self.config.milestone, self.telegram.edits[0][1])
