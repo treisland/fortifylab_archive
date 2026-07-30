@@ -44,3 +44,41 @@ python3 -m unittest tests.test_evaluation_corpus
 The corpus describes expected behavior; it does not execute lifecycle
 operations. In particular, the persistent-data case expects a blocked,
 approval-gated action. Uninstall and persistent-data deletion remain separate.
+
+## 0.2 observable-manager release gate
+
+The general corpus is supplemented by the versioned
+`evaluations/observable-manager-v0.2` suite. It proves the deterministic
+portion of the complete 0.2 vertical slice: clean manager access, healthy and
+dependency-blocked labs, infrastructure degradation, license preflight,
+restart recovery, cluster disconnection, runner phases and long quiet work,
+stall recovery, adaptive heartbeat cadence, Telegram delivery policy and
+recovery, approval/stop security, and cross-surface redaction.
+
+Every scenario explicitly states its expected health, heartbeat, event, API,
+UI, Telegram, diagnostic, remediation, and workflow-authorization outcome.
+The fixture clock is injected; the suite never sleeps to reach a cadence
+boundary. `observations.json` contains only digests of normalized synthetic
+outcomes, and `recorded-result.json` pins both input digests. Repository
+validation recomputes that result and fails if a scenario is missing, changed,
+failed, or accompanied by an unexpected observation.
+
+Evaluation artifacts are intentionally unable to carry multiline or unbounded
+text and reject fields for secrets, protected paths, raw prompts, source
+excerpts, environment dumps, raw logs, and provider credentials. Diagnostics
+are bounded categories with safe documentation links. In particular, a
+Telegram delivery failure leaves workflow authorization unchanged.
+
+Run this gate directly with:
+
+```bash
+python3 -m unittest tests.test_observable_manager_evaluation
+```
+
+This recorded result is deterministic fixture evidence, not live evidence. It
+does **not** prove the EC2 Security Group, public DNS, browser trust, a live
+MicroK8s installation, real Fortify licenses or images, component performance,
+or Telegram provider delivery. The live browser/MicroK8s checklist remains in
+the [manager operator guide](operations/manager.md#verification-evidence) and
+must be recorded separately by an authorized operator. ASPM, production
+hardening, multi-node Kubernetes, and component mutation remain outside 0.2.

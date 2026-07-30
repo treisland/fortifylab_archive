@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/evaluations/observable-manager-v0.2/schema.json",
+  "title": "Fortify Lab Manager 0.2 observable-manager evaluation suite",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "suiteVersion", "scope", "timing", "artifactPolicy", "scenarios"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/evaluations/v1alpha1"},
+    "kind": {"const": "ObservableManagerEvaluationSuite"},
+    "suiteVersion": {"type": "string", "pattern": "^0\\.2\\.[0-9]+$"},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "included", "excluded"],
+      "properties": {
+        "platform": {"const": "single-node MicroK8s lab"},
+        "included": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "excluded": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}}
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clock", "wallClockSleeps"],
+      "properties": {
+        "clock": {"const": "injected"},
+        "wallClockSleeps": {"const": false}
+      }
+    },
+    "artifactPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["syntheticOnly", "forbidden"],
+      "properties": {
+        "syntheticOnly": {"const": true},
+        "forbidden": {
+          "type": "array",
+          "uniqueItems": true,
+          "minItems": 7,
+          "items": {"enum": ["secret-value", "protected-path", "raw-prompt", "source-excerpt", "environment-dump", "raw-log", "provider-credential"]}
+        }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 20,
+      "items": {"$ref": "#/$defs/scenario"}
+    }
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 96},
+    "text": {"type": "string", "minLength": 1, "maxLength": 300},
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["health", "heartbeat", "event", "api", "ui", "telegram", "diagnostics", "remediation", "workflowAuthorization"],
+      "properties": {
+        "health": {"$ref": "#/$defs/text"},
+        "heartbeat": {"$ref": "#/$defs/text"},
+        "event": {"$ref": "#/$defs/text"},
+        "api": {"$ref": "#/$defs/text"},
+        "ui": {"$ref": "#/$defs/text"},
+        "telegram": {"$ref": "#/$defs/text"},
+        "diagnostics": {"$ref": "#/$defs/text"},
+        "remediation": {"$ref": "#/$defs/text"},
+        "workflowAuthorization": {"enum": ["unchanged", "advanced-by-authoritative-state", "explicit-single-use-approval"]}
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "area", "description", "evidence", "fixture", "expected"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "area": {"enum": ["manager", "health", "workflow", "telegram", "security"]},
+        "description": {"$ref": "#/$defs/text"},
+        "evidence": {"const": "deterministic-fixture"},
+        "fixture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clockSeconds", "signals"],
+          "properties": {
+            "clockSeconds": {"type": "integer", "minimum": 0},
+            "signals": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": {"type": ["string", "integer", "boolean", "null"]}
+            }
+          }
+        },
+        "expected": {"$ref": "#/$defs/outcome"}
+      }
+    }
+  }
+}

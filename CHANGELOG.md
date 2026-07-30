@@ -10,6 +10,10 @@ platform profiles.
 
 ### Added
 
+- A versioned, machine-checked 0.2 observable-manager evaluation gate covering
+  manager, health, workflow, Telegram, recovery, cadence, authorization, and
+  cross-surface redaction scenarios with deterministic and live evidence kept
+  explicitly separate.
 - Detailed private Telegram workflow cards, adaptive real heartbeat
   notifications, restart-safe deduplication, stall/recovery alerts, durable
   details, watch controls, and policy-gated two-step audited runner Stop.

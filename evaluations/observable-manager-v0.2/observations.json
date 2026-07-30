@@ -1,0 +1,27 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "SanitizedFixtureObservations",
+  "suiteVersion": "0.2.0",
+  "observedOutcomeDigests": {
+    "clean-install-remote-login": "3216d3c20d259754bbc781ea7b0139f3f558fa88655198c56d117d9d75209be8",
+    "healthy-complete-lab": "ac6c115becfb50631c62783b00a3afc3e59cde1e2ec64c87d4aa882fb4773ed2",
+    "mysql-blocks-consumers": "6501cf9df3be0612bd392fd164f58fe1534a567f9d3fa0582e5a431df0bea279",
+    "postgresql-lim-block-dast": "84c98b86e2aca63fcc8dbeefb44cb43af809f6feb4df9c3934ae41441f8e8e53",
+    "infrastructure-degradation": "262648964076a3f02fffcec5f96b1f75f45106c4b3b841ae0367c0cca085b6cc",
+    "missing-external-license": "3b92b174c041141d374cc67bb380db610ede58e2ed8076e86be563cbb43283cc",
+    "restart-history-continuity": "901612a58149ca17094e5495ec7e670c9a4fbc2d16bef5931f48cd86384ee19d",
+    "disconnected-cluster": "95661f786fed942c74c8b4a3aa6a4c3fdc6dfef5aae49a796076d73a99492324",
+    "runner-phase-transitions": "83c6d91615cf5aa0587cdca43810e1d7f35f9c6ac1b245eb85834d08accbed2f",
+    "long-quiet-command-classification": "4c8b2c2de6f57830656995126f22fef83f59ba476a0e40ffbf3dec14aeac3c44",
+    "stall-and-recovery-classifications": "611d1c6dbdf18423f29c33d74fb60448d1eefacda9a3f33b01a6233c9763e3ed",
+    "adaptive-heartbeat-cadence": "25b837683755b323987caf3d70efee0961745888dc9e60f6b4c93a7674b3a37f",
+    "approval-required-actions": "4a8bb41606cc78195fc1c9690f416032f328849c993903c54bef43cd0d208a3d",
+    "quiet-hours-watch-policy": "82f8ade437178269eec05c6173d08efbb8a5f0ae2d384debbd31bd23c78c4de4",
+    "monitor-overlap-restart": "9ed2392dd5a1448fc7f868df2c93a37f501750c6f2a5c9cfea736bbbf482689e",
+    "telegram-outage-recovery": "9260d28fab3b5a3bc3aa4ef90dff451e04f77ad716ca101564ce79988a27f649",
+    "details-message-visibility": "4e8577e13369700d125428aa340dc5ab2a32dfad50042dd38dabe737ec50e17a",
+    "stop-callback-security": "2780af26490938588166a12b27643936ac693ebc44204cb580c0c8f850746285",
+    "cross-surface-redaction": "b0c63848bdba9282d7e4ce6ac365f5dc1cf87fea3bdd45becfc905916a91816d",
+    "api-ui-read-only-redaction": "6db514baac8ccb9a133b93910459a5e650b8686f7d746e376eafa5e71fa7ef85"
+  }
+}

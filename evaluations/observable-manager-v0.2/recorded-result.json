@@ -1,0 +1,15 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "ObservableManagerEvaluationGate",
+  "suiteVersion": "0.2.0",
+  "suiteDigest": "6b2e20678a58b6ea7d3eaad2fda1eeb16e110c45b3beaece00a41c2a18c22bc5",
+  "observationDigest": "7ed420d665b9e2f9cef22e09d2f13ed44f312817dbe5b2d1e9f055b1d724a681",
+  "status": "passed",
+  "passedScenarioCount": 20,
+  "failedScenarioCount": 0,
+  "evidence": "deterministic-fixture",
+  "liveEvidence": {
+    "status": "not-run",
+    "reason": "Local evaluation does not contact MicroK8s, browsers, or providers"
+  }
+}
