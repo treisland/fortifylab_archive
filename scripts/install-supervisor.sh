@@ -13,6 +13,8 @@ install -d -m 700 "$CONFIG_ROOT" "$STATE_ROOT" "$LIB_ROOT"
 install -d -m 755 "$BIN_ROOT" "$UNIT_ROOT"
 install -m 700 "$REPOSITORY_ROOT/supervisor/fortify_supervisor.py" \
   "$LIB_ROOT/fortify_supervisor.py"
+install -m 600 "$REPOSITORY_ROOT/supervisor/workflow_status.py" \
+  "$LIB_ROOT/workflow_status.py"
 install -m 700 "$REPOSITORY_ROOT/scripts/fortify-issue-runner.sh" \
   "$BIN_ROOT/fortify-issue-runner"
 install -m 700 "$REPOSITORY_ROOT/scripts/fortify-issue-dispatch.sh" \

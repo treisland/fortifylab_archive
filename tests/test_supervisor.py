@@ -314,6 +314,32 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("Milestone 0.1 — Evaluation Foundation is complete", response)
         self.assertNotIn("next issue was selected", response)
 
+    def test_maintenance_merge_does_not_advance_issue_queue(self) -> None:
+        self.github.pr["headRefName"] = "maintenance/supervisor-installer"
+        payload = {
+            "repository": self.config.repository,
+            "pull_request": 12,
+            "head_sha": "abc123",
+        }
+        self.store.create_approval("merge_pr", payload, 60)
+        response = self.supervisor.handle_command("/approve", "101")
+        self.assertIn("maintenance PR did not advance", response)
+        self.assertEqual(self.store.get("current_issue"), "")
+        self.assertEqual(self.github.closed_issues, [])
+
+    def test_paused_supervisor_does_not_start_next_issue_after_merge(self) -> None:
+        self.store.set("paused", "true")
+        payload = {
+            "repository": self.config.repository,
+            "pull_request": 12,
+            "head_sha": "abc123",
+        }
+        self.store.create_approval("merge_pr", payload, 60)
+        response = self.supervisor.handle_command("/approve", "101")
+        self.assertIn("supervisor is paused", response)
+        self.assertEqual(self.store.get("current_issue"), "")
+        self.assertEqual(self.github.closed_issues, [12])
+
     def test_changed_head_rejects_approval(self) -> None:
         payload = {
             "repository": self.config.repository,
