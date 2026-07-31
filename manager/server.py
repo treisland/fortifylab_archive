@@ -20,7 +20,15 @@ from manager.component_registry import ComponentRegistry
 from manager.component_inventory import ComponentInventory
 from manager.kubernetes_observer import KubernetesObserver
 from manager.functional_health import UnixFunctionalHealthProbe
+from manager.health import CheckSpec
 from manager.record_store import LoopRecordStore
+from manager.authorization import ApprovalStore, AuthorizationService
+from manager.microk8s_lifecycle import (
+    MicroK8sLifecycleAdapter,
+    RegistryHealthVerifier,
+)
+from manager.operation_engine import OperationEngine, OperationStore
+from manager.web_operations import WebOperationAPI
 
 
 LOG = logging.getLogger("fortify-manager")
@@ -53,11 +61,14 @@ def load_config(path: Path) -> dict:
             "accounts", "/var/lib/fortify-lab-manager/accounts.json"
         ),
         "cluster": document.get("cluster", {}),
+        "lifecycle_enabled": document.get("lifecycle", {}).get("enabled", False),
     }
     if config["host"] != "0.0.0.0":
         raise ConfigurationError("server.host must be 0.0.0.0 for MicroK8s ingress")
     if not isinstance(config["port"], int) or not 1 <= config["port"] <= 65535:
         raise ConfigurationError("server.port must be an integer from 1 through 65535")
+    if not isinstance(config["lifecycle_enabled"], bool):
+        raise ConfigurationError("lifecycle.enabled must be a boolean")
     return config
 
 
@@ -92,6 +103,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     registry = ComponentRegistry.load()
     cluster = config.get("cluster", {})
     observer = None
+    operation_api = None
     if cluster:
         try:
             functional_probe = (
@@ -113,6 +125,48 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
                 "protected cluster observation is unavailable; desired inventory "
                 "will remain visible"
             )
+    if config["lifecycle_enabled"]:
+        if observer is None:
+            raise ConfigurationError(
+                "lifecycle operations require protected cluster observation"
+            )
+        database = Path(config["state_database"])
+        operation_store = OperationStore(database.with_suffix(".operations.sqlite3"))
+        approval_store = ApprovalStore(database.with_suffix(".approvals.sqlite3"))
+        authorization = AuthorizationService(approval_store)
+
+        def component_states(component_ids: tuple[str, ...]) -> dict[str, str]:
+            states: dict[str, str] = {}
+            for component_id in component_ids:
+                check = next(
+                    item
+                    for item in registry.monitoring_checks(component_id)
+                    if item["type"] == "workload-ready"
+                )
+                result = observer.probe(
+                    CheckSpec(
+                        check["id"], component_id, "workload", check["type"],
+                        check["target"], min(float(check["timeoutSeconds"]), 10),
+                        bool(check["required"]),
+                    )
+                )
+                states[component_id] = (
+                    "running" if result.state == "healthy" else result.state
+                )
+            return states
+
+        engine = OperationEngine(
+            registry,
+            operation_store,
+            MicroK8sLifecycleAdapter(registry),
+            RegistryHealthVerifier(registry, observer),
+            authorization=authorization,
+            state_provider=component_states,
+        )
+        operation_api = WebOperationAPI(
+            engine, operation_store, authorization, component_states
+        )
+        store._lifecycle_stores = (operation_store, approval_store)
     api = ManagerAPI(
         registry_loader=lambda: registry,
         observer=observer,
@@ -120,7 +174,12 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         preflight_probe=observer,
         history_reader=StoreHistoryReader(store),
     )
-    return DashboardApp(accounts=accounts, api=api, secure_cookies=True), store
+    return DashboardApp(
+        accounts=accounts,
+        api=api,
+        operation_api=operation_api,
+        secure_cookies=True,
+    ), store
 
 
 def check(config_path: Path, *, cluster: bool = False) -> None:
@@ -179,6 +238,8 @@ def serve(config_path: Path) -> None:
         LOG.info("manager listening on %s:%d", config["host"], config["port"])
         httpd.serve_forever()
     finally:
+        for lifecycle_store in getattr(store, "_lifecycle_stores", ()):
+            lifecycle_store.close()
         store.close()
         httpd.server_close()
 
