@@ -142,6 +142,12 @@ output in support material.
 
 ## Upgrade, backup, and rollback
 
+For complete pre-upgrade recovery covering manager state, MySQL/SSC,
+PostgreSQL/DAST, configuration metadata, and preserved SSC `secret.key`, use
+the [component-aware backup and restore workflow](backup-restore.md). Its
+profile gate and application verification are distinct from the
+manager-only safety copy described below.
+
 The supported upgrade stops the writer and creates a timestamped, mode-0600
 SQLite online backup plus copies of the verifier/configuration files below
 `/var/lib/fortify-lab-manager/backups`. It then installs the immutable

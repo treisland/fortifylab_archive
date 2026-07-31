@@ -125,6 +125,29 @@ class OperationClient:
             "POST", f"/api/v1alpha1/operations/{operation_id}/retry", body
         )
 
+    def backup_plan(self) -> dict[str, Any]:
+        return self._request("POST", "/api/v1alpha1/recovery/backup/plan", {})
+
+    def backup(self) -> dict[str, Any]:
+        return self._request("POST", "/api/v1alpha1/recovery/backups", {})
+
+    def restore_plan(self, backup_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST", "/api/v1alpha1/recovery/restore/plan",
+            {"backupId": backup_id},
+        )
+
+    def restore(self, backup_id: str, confirmation: str) -> dict[str, Any]:
+        return self._request(
+            "POST", "/api/v1alpha1/recovery/restores",
+            {"backupId": backup_id, "confirmation": confirmation},
+        )
+
+    def recovery_status(self, operation_id: str) -> dict[str, Any]:
+        return self._request(
+            "GET", f"/api/v1alpha1/recovery/operations/{operation_id}"
+        )
+
     def wait(
         self, operation_id: str, *, timeout: float, interval: float = 1
     ) -> dict[str, Any]:
@@ -264,7 +287,41 @@ def _parser() -> argparse.ArgumentParser:
     retry.add_argument("operation_id")
     retry.add_argument("--approval-id")
     retry.add_argument("--wait", type=float, metavar="SECONDS")
+    subparsers.add_parser("backup-plan", help="show protected platform backup scope")
+    backup = subparsers.add_parser("backup", help="create a verified platform backup")
+    backup.add_argument("--wait", type=float, metavar="SECONDS")
+    restore_plan = subparsers.add_parser(
+        "restore-plan", help="check artifact and profile compatibility"
+    )
+    restore_plan.add_argument("backup_id")
+    restore = subparsers.add_parser(
+        "restore", help="restore a complete profile-compatible platform backup"
+    )
+    restore.add_argument("backup_id")
+    restore.add_argument(
+        "--confirm-restore", action="store_true",
+        help="send the exact destructive restore confirmation",
+    )
+    restore.add_argument("--wait", type=float, metavar="SECONDS")
+    recovery_status = subparsers.add_parser("recovery-status")
+    recovery_status.add_argument("operation_id")
     return parser
+
+
+def _wait_recovery(
+    client: OperationClient, operation_id: str, timeout: float
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    while True:
+        document = client.recovery_status(operation_id)
+        if document.get("state") in TERMINAL:
+            return document
+        if time.monotonic() >= deadline:
+            raise ClientError(
+                _error("CLIENT_WAIT_TIMEOUT", "recovery operation is still running"),
+                EXIT_TIMED_OUT,
+            )
+        time.sleep(min(1, max(0, deadline - time.monotonic())))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -322,6 +379,24 @@ def main(argv: list[str] | None = None) -> int:
                 result = client.wait(args.operation_id, timeout=args.wait)
         elif args.command == "cancel":
             result = client.cancel(args.operation_id)
+        elif args.command == "backup-plan":
+            result = client.backup_plan()
+        elif args.command == "backup":
+            result = client.backup()
+            if args.wait is not None:
+                result = _wait_recovery(client, result["id"], args.wait)
+        elif args.command == "restore-plan":
+            result = client.restore_plan(args.backup_id)
+        elif args.command == "restore":
+            if not args.confirm_restore:
+                raise ValueError("restore requires --confirm-restore")
+            result = client.restore(
+                args.backup_id, "RESTORE VERIFIED PLATFORM BACKUP"
+            )
+            if args.wait is not None:
+                result = _wait_recovery(client, result["id"], args.wait)
+        elif args.command == "recovery-status":
+            result = client.recovery_status(args.operation_id)
         else:
             result = client.retry(args.operation_id, args.approval_id)
             if args.wait is not None:

@@ -24,3 +24,13 @@ health_probe_socket = "/run/fortify-lab-manager/health-probe.sock"
 # Fail closed unless the dedicated lifecycle ServiceAccount, protected
 # kubeconfig, authorization stores, and functional probe have been provisioned.
 enabled = false
+
+[recovery]
+# The protected helper owns database credentials, SSC secret.key access, and
+# destination paths. The Manager receives only checksums and sanitized evidence.
+enabled = false
+helper_socket = "/run/fortify-lab-manager/recovery-helper.sock"
+destination_id = "primary"
+destination_class = "local-protected"
+retention_days = 30
+timeout_seconds = 3600

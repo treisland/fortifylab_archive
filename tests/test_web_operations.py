@@ -15,6 +15,7 @@ from manager.component_registry import ComponentRegistry
 from manager.dashboard import DashboardApp, password_verifier
 from manager.operation_engine import OperationEngine, OperationStore, StepCancelled, StepTimedOut
 from manager.web_operations import WebOperationAPI
+from manager.backup_restore import Destination, RecoveryService, RecoveryStore
 
 
 class Adapter:
@@ -36,6 +37,17 @@ class Adapter:
 class Verifier:
     def verify(self, component_id, check_id, *, deadline, cancelled):
         return True
+
+
+class RecoveryAdapter:
+    def backup(self, backup_id, scope, cancelled):
+        return {"checksum": "sha256:" + scope}
+
+    def restore(self, backup_id, scope, cancelled):
+        return {"state": "succeeded"}
+
+    def verify(self, backup_id, checks):
+        return [{"check": check, "state": "passed", "code": "OK"} for check in checks]
 
 
 def request(app, path, method="GET", body=None, cookie=None):
@@ -64,6 +76,13 @@ class WebOperationTests(unittest.TestCase):
         root = Path(self.temp.name)
         self.operation_store = OperationStore(root / "operations.sqlite3")
         self.approval_store = ApprovalStore(root / "approvals.sqlite3")
+        self.recovery_store = RecoveryStore(root / "recovery.sqlite3")
+        self.recovery = RecoveryService(
+            self.recovery_store,
+            RecoveryAdapter(),
+            profile_id="fortify-24.4-eval.1",
+            destination=Destination("primary", "local-protected", 30),
+        )
         self.authorization = AuthorizationService(self.approval_store)
         self.adapter = Adapter()
         registry = ComponentRegistry.load()
@@ -84,6 +103,7 @@ class WebOperationTests(unittest.TestCase):
             self.operation_store,
             self.authorization,
             lambda targets: {target: "running" for target in targets},
+            recovery=self.recovery,
         )
         self.app = DashboardApp(
             accounts={"operator": password_verifier("password", iterations=1)},
@@ -100,6 +120,7 @@ class WebOperationTests(unittest.TestCase):
     def tearDown(self):
         self.operation_store.close()
         self.approval_store.close()
+        self.recovery_store.close()
         self.temp.cleanup()
 
     def post(self, path, body):
@@ -141,6 +162,42 @@ class WebOperationTests(unittest.TestCase):
         self.assertTrue(destructive["destructive"])
         self.assertFalse(destructive["deletesData"])
         self.assertTrue(destructive["approvalRequired"])
+
+    def test_recovery_api_requires_complete_artifact_and_strong_confirmation(self):
+        plan_response = self.post("/api/v1alpha1/recovery/backup/plan", {})
+        self.assertEqual(plan_response["status"], "200 OK")
+        plan = json.loads(plan_response["body"])
+        self.assertIn("ssc-secret-key", plan["scope"])
+        created = json.loads(
+            self.post("/api/v1alpha1/recovery/backups", {})["body"]
+        )
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            backup = self.recovery_store.operation(created["id"])
+            if backup["state"] == "succeeded":
+                break
+            time.sleep(0.002)
+        denied = self.post(
+            "/api/v1alpha1/recovery/restores",
+            {"backupId": created["backupId"], "confirmation": "yes"},
+        )
+        self.assertEqual(denied["status"], "400 Bad Request")
+        accepted = self.post(
+            "/api/v1alpha1/recovery/restores",
+            {
+                "backupId": created["backupId"],
+                "confirmation": "RESTORE VERIFIED PLATFORM BACKUP",
+            },
+        )
+        self.assertEqual(accepted["status"], "202 Accepted")
+
+    def test_recovery_api_rejects_path_and_secret_fields(self):
+        for field in ("path", "secret", "command"):
+            response = self.post(
+                "/api/v1alpha1/recovery/restore/plan",
+                {"backupId": "backup-" + "0" * 32, field: "protected"},
+            )
+            self.assertEqual(response["status"], "400 Bad Request")
 
     def test_success_and_refresh_return_progress_health_and_sanitized_events(self):
         created = self.post(

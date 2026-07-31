@@ -264,3 +264,18 @@ These read models retain the manager API's authorization and disclosure
 boundary. In particular, health supplies authoritative dependency/root-cause
 relationships, freshness, sanitized evidence, and safe remediation; adapters
 must not infer those values by querying workloads themselves.
+# Recovery API
+
+Authenticated local Web UI and CLI clients use:
+
+- `POST /api/v1alpha1/recovery/backup/plan`
+- `POST /api/v1alpha1/recovery/backups`
+- `POST /api/v1alpha1/recovery/restore/plan` with `backupId`
+- `POST /api/v1alpha1/recovery/restores` with `backupId` and the exact typed
+  confirmation
+- `GET /api/v1alpha1/recovery/operations/{id}`
+- `POST /api/v1alpha1/recovery/operations/{id}/cancel`
+
+Requests never accept commands, paths, environments, Secret values, or
+destination credentials. See the
+[operator recovery guide](operations/backup-restore.md).

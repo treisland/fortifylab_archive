@@ -30,6 +30,9 @@ from manager.microk8s_lifecycle import (
 from manager.operation_engine import OperationEngine, OperationStore
 from manager.preflight import PreflightEngine
 from manager.web_operations import WebOperationAPI
+from manager.backup_restore import (
+    Destination, RecoveryService, RecoveryStore, UnixRecoveryAdapter,
+)
 
 
 LOG = logging.getLogger("fortify-manager")
@@ -63,6 +66,7 @@ def load_config(path: Path) -> dict:
         ),
         "cluster": document.get("cluster", {}),
         "lifecycle_enabled": document.get("lifecycle", {}).get("enabled", False),
+        "recovery": document.get("recovery", {}),
     }
     if config["host"] != "0.0.0.0":
         raise ConfigurationError("server.host must be 0.0.0.0 for MicroK8s ingress")
@@ -70,6 +74,18 @@ def load_config(path: Path) -> dict:
         raise ConfigurationError("server.port must be an integer from 1 through 65535")
     if not isinstance(config["lifecycle_enabled"], bool):
         raise ConfigurationError("lifecycle.enabled must be a boolean")
+    recovery = config["recovery"]
+    if recovery and not isinstance(recovery.get("enabled", False), bool):
+        raise ConfigurationError("recovery.enabled must be a boolean")
+    if recovery.get("enabled", False) and not config["lifecycle_enabled"]:
+        raise ConfigurationError(
+            "recovery.enabled requires lifecycle.enabled"
+        )
+    timeout = recovery.get("timeout_seconds", 3600)
+    if not isinstance(timeout, (int, float)) or not 1 <= timeout <= 7200:
+        raise ConfigurationError(
+            "recovery.timeout_seconds must be from 1 through 7200"
+        )
     return config
 
 
@@ -170,7 +186,8 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
             footprint_provider=getattr(observer, "installation_footprint", None),
         )
         operation_api = WebOperationAPI(
-            engine, operation_store, authorization, component_states
+            engine, operation_store, authorization, component_states,
+            recovery=_build_recovery(config, registry, database, store),
         )
         store._lifecycle_stores = (operation_store, approval_store)
     api = ManagerAPI(
@@ -186,6 +203,31 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         operation_api=operation_api,
         secure_cookies=True,
     ), store
+
+
+def _build_recovery(config, registry, database, parent_store):
+    settings = config.get("recovery", {})
+    if not settings.get("enabled", False):
+        return None
+    try:
+        destination = Destination(
+            settings["destination_id"],
+            settings["destination_class"],
+            settings["retention_days"],
+        )
+        socket_path = Path(settings["helper_socket"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ConfigurationError("recovery configuration is invalid") from error
+    recovery_store = RecoveryStore(database.with_suffix(".recovery.sqlite3"))
+    parent_store._recovery_stores = (recovery_store,)
+    return RecoveryService(
+        recovery_store,
+        UnixRecoveryAdapter(
+            socket_path, timeout_seconds=settings.get("timeout_seconds", 3600)
+        ),
+        profile_id=registry.profile.id,
+        destination=destination,
+    )
 
 
 def check(config_path: Path, *, cluster: bool = False) -> None:
@@ -244,7 +286,10 @@ def serve(config_path: Path) -> None:
         LOG.info("manager listening on %s:%d", config["host"], config["port"])
         httpd.serve_forever()
     finally:
-        for lifecycle_store in getattr(store, "_lifecycle_stores", ()):
+        for lifecycle_store in (
+            *getattr(store, "_lifecycle_stores", ()),
+            *getattr(store, "_recovery_stores", ()),
+        ):
             lifecycle_store.close()
         store.close()
         httpd.server_close()

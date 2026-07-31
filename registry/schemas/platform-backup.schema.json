@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/registry/schemas/platform-backup.schema.json",
+  "title": "Complete component-aware platform backup manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "id", "profileId", "scope", "destination", "createdAt", "checksums", "manifestDigest"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/v1alpha1"},
+    "kind": {"const": "PlatformBackup"},
+    "id": {"type": "string", "pattern": "^backup-[a-f0-9]{32}$"},
+    "profileId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+    "scope": {
+      "type": "array",
+      "prefixItems": [
+        {"const": "manager-state"},
+        {"const": "configuration-metadata"},
+        {"const": "mysql-ssc"},
+        {"const": "ssc-secret-key"},
+        {"const": "postgresql-dast"}
+      ],
+      "items": false
+    },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "class", "retentionDays"],
+      "properties": {
+        "id": {"type": "string"},
+        "class": {"enum": ["local-protected", "removable", "object"]},
+        "retentionDays": {"type": "integer", "minimum": 1, "maximum": 3650}
+      }
+    },
+    "createdAt": {"type": "string", "format": "date-time"},
+    "checksums": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "pattern": "^sha256:"},
+      "required": ["manager-state", "configuration-metadata", "mysql-ssc", "ssc-secret-key", "postgresql-dast"]
+    },
+    "manifestDigest": {"type": "string", "pattern": "^sha256:"}
+  }
+}

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add durable, profile-bound component-aware backup and restore planning,
+  strong restore confirmation, protected helper isolation, sanitized recovery
+  evidence, and application-level verification.
+
 All notable changes will be documented in this file.
 
 The project uses [Semantic Versioning](https://semver.org/) for Fortify Lab
