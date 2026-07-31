@@ -20,6 +20,10 @@ platform profiles.
 
 ### Added
 
+- A schema-validated, versioned platform profile contract shared by registry,
+  preflight, Web UI, CLI, and release evidence, with an experimental Fortify
+  24.4 baseline, exact pins and capacity, fail-closed compatibility, and
+  documented deprecation and forward migration.
 - Layered functional health for databases, SSC, ScanCentral SAST/DAST, LIM,
   DNS, ingress, TLS, and storage, with a protected credential-isolating probe
   boundary, earliest-root blocking, bounded sanitized evidence, and recovery

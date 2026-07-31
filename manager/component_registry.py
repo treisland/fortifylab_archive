@@ -7,6 +7,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Iterable
 
+from manager.platform_profiles import PlatformProfile, PlatformProfileError
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REGISTRY = ROOT / "registry" / "components.json"
@@ -19,8 +21,11 @@ class RegistryError(ValueError):
 class ComponentRegistry:
     """Shared component definitions for lifecycle and monitoring consumers."""
 
-    def __init__(self, document: dict[str, Any]) -> None:
+    def __init__(
+        self, document: dict[str, Any], profile: PlatformProfile | None = None
+    ) -> None:
         self.document = document
+        self.profile = profile
         components = document.get("components", [])
         self._components = {component["id"]: component for component in components}
 
@@ -39,10 +44,14 @@ class ComponentRegistry:
         # dependency-cycle checks.
         from manager.registry_validation import validate_registry
 
-        errors = validate_registry(document, ROOT)
+        try:
+            profile = PlatformProfile.load(document.get("profileRef", ""))
+        except PlatformProfileError as error:
+            raise RegistryError("component registry platform profile is invalid") from error
+        errors = validate_registry(document, ROOT, profile)
         if errors:
             raise RegistryError(f"component registry is invalid: {errors[0]}")
-        return cls(document)
+        return cls(document, profile)
 
     @property
     def component_ids(self) -> tuple[str, ...]:

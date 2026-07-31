@@ -81,6 +81,11 @@ class PreflightEngine:
             "kind": "DeploymentPreflight",
             "generatedAt": _timestamp(generated_at),
             "ready": counts["blocker"] == 0,
+            "profile": {
+                "id": self._registry.profile.id,
+                "maturity": self._registry.profile.maturity,
+                "vendorSupported": False,
+            },
             "summary": counts,
             "evidence": {
                 "source": (
@@ -136,7 +141,7 @@ class PreflightEngine:
 
     def _checks(self) -> tuple[PreflightCheck, ...]:
         # Loading ComponentRegistry has already schema-validated the desired bundle.
-        # The adapter compares its pins to the locally supported profile without
+        # The adapter compares its pins to the selected tested profile without
         # receiving configuration or credential values.
         _ = self._registry.component_ids
         definitions = (
@@ -149,9 +154,9 @@ class PreflightEngine:
             ("tls", "dns-tls", "managed-tls", "managed-hosts", "Create a valid managed-host certificate and configure trust before deployment", "tls"),
             ("external-license", "license", "license-readable", "configured-license", "Configure a readable Fortify license file with protected permissions", "external-license"),
             ("registry-authentication", "registry", "registry-authentication", "required-registries", "Configure valid registry credentials without placing them in logs or command arguments", "registry-authentication"),
-            ("image-reachability", "registry", "image-reachability", "evaluation-bundle", "Restore registry access and verify every pinned component image is reachable", "image-reachability"),
+            ("image-reachability", "registry", "image-reachability", self._registry.profile.id, "Restore registry access and verify every pinned component image is reachable", "image-reachability"),
             ("configuration", "configuration", "configuration-valid", "deployment-config", "Correct the reported configuration field using the documented configuration reference", "configuration"),
-            ("compatibility", "compatibility", "profile-compatible", "evaluation-bundle", "Select a documented compatible platform profile and pinned component versions", "compatibility"),
+            ("compatibility", "compatibility", "profile-compatible", self._registry.profile.id, "Select a documented compatible platform profile and pinned component versions", "compatibility"),
         )
         return tuple(
             PreflightCheck(

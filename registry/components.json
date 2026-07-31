@@ -3,6 +3,7 @@
   "apiVersion": "fortifylab.io/v1alpha1",
   "kind": "ComponentRegistry",
   "scope": {"platform": "microk8s", "aspm": false},
+  "profileRef": "fortify-24.4-eval.1",
   "components": [
     {
       "id": "mysql",
@@ -168,7 +169,7 @@
     {
       "id": "lim",
       "displayName": "License and Infrastructure Manager",
-      "version": {"chart": "24.4.0-3", "images": {}},
+      "version": {"chart": "24.4.0-3", "images": {"server": "chart-24.4.0-3-default"}},
       "dependencies": [],
       "workloads": [
         {"id": "server", "kind": "StatefulSet", "name": "lim", "role": "license-server", "scalable": false}
@@ -208,7 +209,7 @@
     {
       "id": "scancentral-dast-core",
       "displayName": "ScanCentral DAST Core",
-      "version": {"chart": "24.4.0-2", "images": {}},
+      "version": {"chart": "24.4.0-2", "images": {"api": "24.4.ubi.9", "config": "24.4.ubi.9", "connect": "24.4.ubi.9", "global-service": "24.4.ubi.9", "two-factor": "24.4.ubi.9"}},
       "dependencies": ["postgresql", "lim", "ssc"],
       "workloads": [
         {"id": "api", "kind": "StatefulSet", "name": "sdast-core-scancentral-dast-core-api", "role": "application", "scalable": false},
@@ -262,7 +263,7 @@
     {
       "id": "scancentral-dast-scanner",
       "displayName": "ScanCentral DAST Scanner",
-      "version": {"chart": "24.4.0-2", "images": {}},
+      "version": {"chart": "24.4.0-2", "images": {"scanner": "24.4.ubi.9", "wise": "24.4.ubi.9"}},
       "dependencies": ["scancentral-dast-core"],
       "workloads": [
         {"id": "scanner", "kind": "StatefulSet", "name": "sdast-scanner-scancentral-dast-scanner", "role": "worker", "scalable": true}

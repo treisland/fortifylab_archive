@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/profiles/schemas/platform-profile.schema.json",
+  "title": "Fortify Lab Manager tested platform profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "apiVersion", "kind", "id", "maturity", "scope", "manager", "microk8s", "capacity", "components", "evidence", "knownLimitations", "cleanInstall", "upgrade"],
+  "properties": {
+    "$schema": {"const": "schemas/platform-profile.schema.json"},
+    "apiVersion": {"const": "fortifylab.io/v1alpha1"},
+    "kind": {"const": "PlatformProfile"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+    "maturity": {"enum": ["experimental", "validated", "recommended", "deprecated", "unsupported"]},
+    "scope": {
+      "type": "object", "additionalProperties": false, "required": ["platform", "topology", "aspm"],
+      "properties": {"platform": {"const": "microk8s"}, "topology": {"const": "single-node"}, "aspm": {"const": false}}
+    },
+    "manager": {"type": "object", "additionalProperties": false, "required": ["versionRange"], "properties": {"versionRange": {"type": "string", "pattern": "^>="}}},
+    "microk8s": {
+      "type": "object", "additionalProperties": false, "required": ["versionRange", "architecture", "addons"],
+      "properties": {
+        "versionRange": {"type": "string", "pattern": "^>=[^ ]+ <[^ ]+$"},
+        "architecture": {"enum": ["amd64"]},
+        "addons": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "capacity": {
+      "type": "object", "additionalProperties": false, "required": ["cpuCores", "memoryGiB", "storageGiB"],
+      "properties": {"cpuCores": {"type": "integer", "minimum": 1}, "memoryGiB": {"type": "integer", "minimum": 1}, "storageGiB": {"type": "integer", "minimum": 1}}
+    },
+    "components": {
+      "type": "object", "minProperties": 6,
+      "additionalProperties": {
+        "type": "object", "additionalProperties": false, "required": ["productVersion", "chart", "images"],
+        "properties": {
+          "productVersion": {"type": "string", "minLength": 1},
+          "chart": {"type": "string", "minLength": 1},
+          "images": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string", "minLength": 1}}
+        }
+      }
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false, "required": ["record", "level"],
+      "properties": {"record": {"type": "string", "pattern": "^evidence/.+\\.json$"}, "level": {"enum": ["static", "licensed-live"]}}
+    },
+    "knownLimitations": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "cleanInstall": {
+      "type": "object", "additionalProperties": false, "required": ["target", "status"],
+      "properties": {"target": {"const": "fresh single-node MicroK8s lab"}, "status": {"enum": ["not-run", "passed", "failed"]}}
+    },
+    "upgrade": {
+      "type": "object", "additionalProperties": false, "required": ["allowedSources", "forwardMigration"],
+      "properties": {
+        "allowedSources": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}},
+        "forwardMigration": {"type": "string", "minLength": 1}
+      }
+    },
+    "replacement": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}
+  }
+}

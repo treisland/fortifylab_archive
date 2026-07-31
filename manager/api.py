@@ -16,6 +16,7 @@ COMPONENTS_PATH = "/api/v1alpha1/components"
 HEALTH_PATH = "/api/v1alpha1/health"
 PREFLIGHT_PATH = "/api/v1alpha1/preflight"
 HISTORY_PATH = "/api/v1alpha1/history"
+PROFILE_PATH = "/api/v1alpha1/platform-profile"
 
 
 class HistoryReader(Protocol):
@@ -50,7 +51,7 @@ class ManagerAPI:
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "")
-        if path not in {COMPONENTS_PATH, HEALTH_PATH, PREFLIGHT_PATH, HISTORY_PATH}:
+        if path not in {COMPONENTS_PATH, HEALTH_PATH, PREFLIGHT_PATH, HISTORY_PATH, PROFILE_PATH}:
             return self._response(
                 start_response,
                 HTTPStatus.NOT_FOUND,
@@ -78,6 +79,8 @@ class ManagerAPI:
                 document = HealthEngine(registry, self._health_probe).document()
             elif path == PREFLIGHT_PATH:
                 document = PreflightEngine(registry, self._preflight_probe).document()
+            elif path == PROFILE_PATH:
+                document = registry.profile.public_document()
             elif path == COMPONENTS_PATH:
                 document = ComponentInventory(registry, self._observer).document()
         except (RegistryError, RuntimeError, ValueError, TypeError):
@@ -98,6 +101,8 @@ class ManagerAPI:
                         else (
                             "preflight read model is unavailable"
                             if path == PREFLIGHT_PATH
+                            else "platform profile is unavailable"
+                            if path == PROFILE_PATH
                             else "component inventory is unavailable"
                         )
                     ),

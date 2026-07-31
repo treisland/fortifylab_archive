@@ -4,11 +4,12 @@
   "title": "Fortify Lab Manager component registry",
   "type": "object",
   "additionalProperties": false,
-  "required": ["$schema", "apiVersion", "kind", "scope", "components"],
+  "required": ["$schema", "apiVersion", "kind", "scope", "profileRef", "components"],
   "properties": {
     "$schema": {"const": "schemas/component-registry.schema.json"},
     "apiVersion": {"const": "fortifylab.io/v1alpha1"},
     "kind": {"const": "ComponentRegistry"},
+    "profileRef": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
     "scope": {
       "type": "object",
       "additionalProperties": false,

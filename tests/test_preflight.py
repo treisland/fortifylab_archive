@@ -113,7 +113,7 @@ class PreflightTests(unittest.TestCase):
                     "managed-hosts",
                     "configured-license",
                     "required-registries",
-                    "evaluation-bundle",
+                    "fortify-24.4-eval.1",
                     "deployment-config",
                 }
                 for check in self.probe.calls
@@ -151,6 +151,14 @@ class PreflightTests(unittest.TestCase):
         )
         document = self.engine().document()
         self.assertTrue(document["ready"])
+        self.assertEqual(
+            document["profile"],
+            {
+                "id": "fortify-24.4-eval.1",
+                "maturity": "experimental",
+                "vendorSupported": False,
+            },
+        )
         self.assertEqual(document["summary"]["warning"], 1)
         self.assertEqual(by_id(document)["tls"]["classification"], "warning")
 

@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from manager.component_registry import ComponentRegistry, RegistryError
+from manager.platform_profiles import PlatformProfile, PlatformProfileError
 
 
-TOP_LEVEL_KEYS = {"$schema", "apiVersion", "kind", "scope", "components"}
+TOP_LEVEL_KEYS = {"$schema", "apiVersion", "kind", "scope", "profileRef", "components"}
 COMPONENT_KEYS = {
     "id",
     "displayName",
@@ -32,9 +33,16 @@ def _unique_ids(items: list[dict[str, Any]], label: str, errors: list[str]) -> s
     return set(identifiers)
 
 
-def validate_registry(document: dict[str, Any], root: Path) -> list[str]:
+def validate_registry(
+    document: dict[str, Any], root: Path, profile: PlatformProfile | None = None
+) -> list[str]:
     """Return sanitized contract errors; an empty list means valid."""
     errors: list[str] = []
+    if profile is None:
+        try:
+            profile = PlatformProfile.load(document.get("profileRef", ""))
+        except PlatformProfileError:
+            profile = None
     extra = set(document) - TOP_LEVEL_KEYS
     missing = TOP_LEVEL_KEYS - set(document)
     if extra:
@@ -49,6 +57,10 @@ def validate_registry(document: dict[str, Any], root: Path) -> list[str]:
         errors.append("registry kind must be ComponentRegistry")
     if document.get("scope") != {"platform": "microk8s", "aspm": False}:
         errors.append("registry scope must be MicroK8s-first with ASPM excluded")
+    if profile is None or document.get("profileRef") != profile.id:
+        errors.append("registry must reference a loadable platform profile")
+    elif profile.maturity == "unsupported":
+        errors.append("registry cannot select an unsupported platform profile")
 
     components = document.get("components")
     if not isinstance(components, list) or not components:
@@ -77,6 +89,16 @@ def validate_registry(document: dict[str, Any], root: Path) -> list[str]:
             )
         ):
             errors.append(f"{prefix} version must contain chart and image pins")
+        elif profile is not None:
+            try:
+                expected = profile.component_version(component_id)
+            except Exception:
+                errors.append(f"{prefix} is absent from the platform profile")
+            else:
+                if version != expected:
+                    errors.append(
+                        f"{prefix} version does not match platform profile"
+                    )
         for field in ("dependencies", "workloads", "operations", "secrets", "persistence", "diagnostics"):
             if not isinstance(component[field], list):
                 errors.append(f"{prefix} {field} must be an array")

@@ -190,7 +190,8 @@ function renderPreflight(document) {
   state.className = `status ${document.ready ? "healthy" : "blocked"}`;
   text(state, document.ready ? "Ready" : "Blocked");
   const summary = document.summary || {};
-  text(byId("preflight-detail"), `${summary.blocker || 0} blockers · ${summary.warning || 0} warnings`);
+  const profile = document.profile || {};
+  text(byId("preflight-detail"), `${profile.id || "Unknown profile"} · ${profile.maturity || "unknown"} · ${summary.blocker || 0} blockers`);
   text(byId("preflight-summary"), `${document.ready ? "Ready" : "Blocked"} · ${summary.blocker || 0} blockers · ${summary.warning || 0} warnings`);
   const list = byId("preflight-list");
   list.replaceChildren();

@@ -31,6 +31,7 @@ if ((${#YAML_FILES[@]} > 0)); then
 fi
 
 printf 'Checking lifecycle contracts...\n'
+python3 scripts/validate-platform-profiles.py
 python3 scripts/validate-component-registry.py
 bash tests/lifecycle-contracts.sh
 

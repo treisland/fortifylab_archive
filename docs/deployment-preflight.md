@@ -132,11 +132,11 @@ paths.
 
 ### compatibility
 
-Compare the registry's chart and image pins, Kubernetes/MicroK8s version, and
-host architecture with a documented compatible platform profile. Select a
-compatible pinned profile before deployment. The current fresh-clone bundle
-remains explicitly unverified as described in
-[Platform compatibility](platform-compatibility.md).
+Compare the registry's pins, Kubernetes/MicroK8s version, addons, architecture,
+and capacity with the exact profile ID in the report. An unknown profile, pin
+mismatch, version outside the range, or unsupported maturity is a blocker. The
+baseline is experimental, not vendor-supported; see
+[Platform profiles](platform-compatibility.md).
 
 ## Example
 
@@ -146,6 +146,7 @@ remains explicitly unverified as described in
   "kind": "DeploymentPreflight",
   "generatedAt": "2026-07-30T12:00:00Z",
   "ready": false,
+  "profile": {"id": "fortify-24.4-eval.1", "maturity": "experimental", "vendorSupported": false},
   "summary": {"blocker": 1, "warning": 0, "information": 11},
   "evidence": {"source": "runtime-adapter", "mode": "read-only"},
   "items": [

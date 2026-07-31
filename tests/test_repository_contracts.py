@@ -46,7 +46,7 @@ class RepositoryContractTests(unittest.TestCase):
         self.assertEqual(values, expected)
         for version in expected.values():
             self.assertIn(f"`{version}`", compatibility)
-        self.assertIn("**unverified**", compatibility)
+        self.assertIn("**experimental**", compatibility)
 
         registry = ComponentRegistry.load()
         registered_pins = {
@@ -57,7 +57,10 @@ class RepositoryContractTests(unittest.TestCase):
                 *registry.component(component_id)["version"]["images"].values(),
             )
         }
-        self.assertEqual(registered_pins, set(expected.values()))
+        self.assertTrue(set(expected.values()).issubset(registered_pins))
+        profile = registry.profile.document
+        self.assertEqual(profile["id"], "fortify-24.4-eval.1")
+        self.assertEqual(profile["maturity"], "experimental")
 
     def test_secret_key_is_saved_before_generated_directory_is_removed(self) -> None:
         script = (ROOT / "scripts/create-secrets.sh").read_text(encoding="utf-8")
