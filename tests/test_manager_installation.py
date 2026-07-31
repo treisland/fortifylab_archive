@@ -8,10 +8,13 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+from datetime import datetime, timezone
 
 import yaml
 
 from manager.dashboard import password_verifier
+from manager.health import ProbeResult
 from manager.server import ConfigurationError, build_app, load_config
 
 
@@ -140,6 +143,45 @@ class ManagerInstallationTests(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_explicit_lifecycle_enablement_composes_authenticated_service(self):
+        class Observer:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def probe(self, _check):
+                return ProbeResult(
+                    "healthy", "sanitized", datetime.now(timezone.utc), 1
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            accounts = root / "accounts.json"
+            accounts.write_text(json.dumps(
+                {"operator": password_verifier("long password")}
+            ))
+            accounts.chmod(0o600)
+            config = {
+                "host": "0.0.0.0",
+                "port": 8080,
+                "state_database": str(root / "history.sqlite3"),
+                "accounts": str(accounts),
+                "cluster": {
+                    "server": "https://127.0.0.1:16443",
+                    "token_file": str(root / "token"),
+                    "ca_file": str(root / "ca.crt"),
+                },
+                "lifecycle_enabled": True,
+            }
+            with patch("manager.server.KubernetesObserver", Observer):
+                app, store = build_app(config)
+            try:
+                self.assertIsNotNone(app._operation_api)
+                self.assertEqual(len(store._lifecycle_stores), 2)
+            finally:
+                for lifecycle_store in store._lifecycle_stores:
+                    lifecycle_store.close()
+                store.close()
+
     def test_listener_fails_closed_when_not_ingress_reachable(self):
         with tempfile.TemporaryDirectory() as directory:
             config_path = Path(directory) / "manager.toml"
@@ -186,6 +228,23 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertIn("persistentvolumeclaims", resources)
         self.assertEqual(role["metadata"]["namespace"], "fortify")
         self.assertEqual(role_binding["metadata"]["namespace"], "fortify")
+
+    def test_lifecycle_rbac_is_namespace_scoped_and_cannot_read_secrets(self):
+        documents = list(yaml.safe_load_all(
+            (ROOT / "packaging/microk8s/manager-lifecycle-rbac.yaml").read_text()
+        ))
+        self.assertFalse(any(item["kind"].endswith("ClusterRole") for item in documents))
+        role = next(item for item in documents if item["kind"] == "Role")
+        binding = next(item for item in documents if item["kind"] == "RoleBinding")
+        resources = {
+            resource for rule in role["rules"] for resource in rule["resources"]
+        }
+        self.assertNotIn("secrets", resources)
+        self.assertNotIn("pods", resources)
+        self.assertNotIn("pods/exec", resources)
+        self.assertNotIn("namespaces", resources)
+        self.assertEqual(role["metadata"]["namespace"], "fortify")
+        self.assertEqual(binding["metadata"]["namespace"], "fortify")
 
 
 if __name__ == "__main__":

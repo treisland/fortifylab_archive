@@ -19,3 +19,8 @@ timeout_seconds = 5
 # Optional protected local service that owns application/database credentials
 # and returns only versioned, sanitized functional health results.
 health_probe_socket = "/run/fortify-lab-manager/health-probe.sock"
+
+[lifecycle]
+# Fail closed unless the dedicated lifecycle ServiceAccount, protected
+# kubeconfig, authorization stores, and functional probe have been provisioned.
+enabled = false

@@ -20,6 +20,11 @@ platform profiles.
 
 ### Added
 
+- A bounded local MicroK8s lifecycle adapter that revalidates exact
+  registry-declared actions, fixes namespace/root/environment, cooperatively
+  cancels and times out child actions, discards action output, verifies only
+  registry-declared functional health, and ships a separate namespace Role
+  with no Kubernetes Secret read access.
 - A schema-validated, versioned platform profile contract shared by registry,
   preflight, Web UI, CLI, and release evidence, with an experimental Fortify
   24.4 baseline, exact pins and capacity, fail-closed compatibility, and

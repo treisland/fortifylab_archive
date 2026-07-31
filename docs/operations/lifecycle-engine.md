@@ -9,7 +9,8 @@ operates only on components in
 ASPM. The shared [local authorization service](authorization.md) is enforced
 before a configured engine calls its adapter. The authenticated Web transport
 is documented in the [manager API reference](../api.md). The repository does
-not expose an unauthenticated mutation route or include a live-cluster adapter.
+not expose an unauthenticated mutation route. Its local MicroK8s adapter is an
+explicit composition dependency; deployments that omit it fail closed.
 
 ## Request contract
 
@@ -68,21 +69,45 @@ On manager startup, operations left queued, running, or cancelling are marked
 authorized operator can inspect the last completed step and submit a bounded
 retry.
 
-## Runtime integration boundary
+## Local MicroK8s adapter
 
-A production MicroK8s adapter must execute only the registry-resolved adapter
-passed by the engine. It must not accept caller arguments, must poll
-cancellation, and must stop at the monotonic deadline. A health adapter must
-evaluate only the supplied component/check IDs without returning secret-bearing
-evidence.
+`MicroK8sLifecycleAdapter` accepts only the immutable step produced by the
+engine. Before process creation it resolves the component and operation again
+against the loaded registry, requires the exact repository-relative action
+under `apps/`, and fixes the repository root and `fortify` namespace. It invokes
+`/bin/bash` with no request arguments, discards child output, closes stdin, and
+supplies only a fixed `PATH`, `FORTIFY_HOME_K8S`, `NAMESPACE`, protected
+`KUBECONFIG`, and `HELM_DRIVER=configmap`. A caller cannot add commands, paths,
+manifests, values, namespaces, or environment entries.
 
-The repository wires this engine to an adapter-neutral authenticated Web
-and CLI/API transport, but not to a live adapter. `DashboardApp` fails closed when no
-operation service is supplied. Before enabling live execution, add narrowly
-scoped MicroK8s permissions and
-integration evidence against a disposable lab. Production composition must
-supply the authorization service and an authoritative current-state provider;
-omission is reserved for isolated engine unit tests without a mutation adapter.
+The adapter polls both cooperative cancellation and the monotonic deadline. It
+terminates the action on cancellation or timeout and escalates to a kill only
+after a bounded termination grace period. Exit details and child output never
+enter operation events or API responses.
+
+`RegistryHealthVerifier` independently resolves every verification ID from the
+same registry and sends only the typed check identity, target, and a
+deadline-capped timeout to the protected health probe. It accepts no response
+bodies or credentials and returns only the pass/fail decision used by the
+engine.
+
+The lifecycle ServiceAccount manifest is separate from the observer identity
+and bound only in `fortify`. It has no cluster role and no access to Secrets,
+pod logs, exec, attach, port-forward, RBAC, namespaces, or persistent volumes.
+Helm must use ConfigMaps for release records (`HELM_DRIVER=configmap`), while
+component charts reference pre-created Secrets by name. Applying the manifest
+and creating its protected kubeconfig are explicit operator steps; repository
+validation never applies them.
+
+`DashboardApp` continues to fail closed when no authorized operation service
+is supplied. Production composition must provide authorization, authoritative
+current state, durable stores, the lifecycle adapter, and the health verifier.
+
+Static and fake-process tests cover dependency-ordered start, stop and restart,
+dependency blocking, timeout, cancellation, adapter failure, bounded retry,
+health failure, and manager restart recovery. They do not claim live-cluster
+evidence; release qualification still requires a disposable lab using the
+dedicated ServiceAccount.
 
 ## Failure codes
 
