@@ -39,6 +39,7 @@ class CapabilityProvider:
         *,
         observation_state: Callable[[], str] | None = None,
         functional_health_configured: bool = False,
+        functional_health_state: Callable[[], bool] | None = None,
         lifecycle_enabled: bool = False,
         lifecycle_configured: bool = False,
         approvals_configured: bool = False,
@@ -51,6 +52,7 @@ class CapabilityProvider:
     ) -> None:
         self._observation_state = observation_state
         self._functional_health_configured = functional_health_configured
+        self._functional_health_state = functional_health_state
         self._lifecycle_enabled = lifecycle_enabled
         self._lifecycle_configured = lifecycle_configured
         self._approvals_configured = approvals_configured
@@ -136,6 +138,19 @@ class CapabilityProvider:
             return _entry(
                 "functional-health", "degraded", True, False,
                 "FUNCTIONAL_PROBE_NOT_CONFIGURED", "health-checks",
+            )
+        try:
+            ready = (
+                self._functional_health_state()
+                if self._functional_health_state is not None
+                else False
+            )
+        except (RuntimeError, OSError, ValueError, TypeError):
+            ready = False
+        if not ready:
+            return _entry(
+                "functional-health", "temporarily-unavailable", True, False,
+                "FUNCTIONAL_PROBE_HANDSHAKE_FAILED", "health-checks",
             )
         return _entry(
             "functional-health", "available", True, False,

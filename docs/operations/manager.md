@@ -41,7 +41,6 @@ sudo ./scripts/fortify-manager bootstrap-account operator
 sudo ./scripts/fortify-manager configure fortifydemo.com <private-node-ip> 8080
 sudo ./scripts/fortify-manager start
 sudo ./scripts/fortify-manager diagnose
-# After the protected functional-health probe is installed and reachable:
 sudo ./scripts/fortify-manager activate-lifecycle
 ```
 
@@ -71,6 +70,8 @@ authorize direct browser access to 8080.
 | `/var/lib/fortify-lab-manager/accounts.json` | PBKDF2 password verifiers only | Preserved |
 | `/var/lib/fortify-lab-manager/history.sqlite3` | Schema-versioned manager history | Migrated in place and preserved |
 | `/var/lib/fortify-lab-manager/cluster-access/lifecycle.kubeconfig` | Dedicated namespace lifecycle credential; mode `0600` | Created only by verified activation; never committed or returned to the browser |
+| `/etc/fortify-lab-manager/health-probe.env` | Optional probe-only external credential inputs; `root:fortify-health-probe`, mode `0640` | Operator managed; never read by the Manager or Web UI |
+| `/run/fortify-lab-manager/health-probe.sock` | Versioned functional-health socket; `fortify-health-probe:fortify-manager`, mode `0660` | Recreated by systemd/service startup |
 | `/opt/fortify-lab-manager/releases` | Immutable installed versions | New release added |
 | `/opt/fortify-lab-manager/current` | Active release symlink | Updated atomically |
 
@@ -237,6 +238,13 @@ report `unknown` and downstream components report `blocked`.
 The versioned request/result format, component checks, safe evidence rules,
 and recovery behavior are defined in the
 [health check reference](../health-checks.md).
+
+The clean installer creates the separate probe account, installs and enables
+its hardened systemd unit, and starts it before the Manager. Use the
+`probe-status`, `probe-diagnose`, `probe-restart`, and `probe-disable`
+subcommands documented in the health reference. A path in `manager.toml`
+does not enable the capability: the Manager performs a fresh bounded protocol
+handshake for each capability document.
 
 `sudo ./scripts/fortify-manager diagnose` checks the authoritative registry,
 protected observer files, Kubernetes API reachability, actual observer

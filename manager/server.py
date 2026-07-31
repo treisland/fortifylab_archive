@@ -125,6 +125,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     operation_api = None
     operation_store = None
     functional_health_configured = False
+    functional_probe = None
     recovery_service = None
     if cluster:
         try:
@@ -215,6 +216,9 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         capability_provider=CapabilityProvider(
             observation_state=observation_state,
             functional_health_configured=functional_health_configured,
+            functional_health_state=(
+                functional_probe.handshake if functional_probe is not None else None
+            ),
             lifecycle_enabled=config["lifecycle_enabled"],
             lifecycle_configured=operation_api is not None,
             approvals_configured=operation_api is not None,

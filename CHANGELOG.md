@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Package a hardened, separately credentialed functional-health probe with a
+  protected versioned Unix-socket protocol, handshake-gated capabilities,
+  sanitized bounded failures, safe service workflows, tests, and operator
+  guidance.
+
 - Add idempotent, fail-closed MicroK8s lifecycle activation and
   preservation-only deactivation with a protected dedicated kubeconfig,
   complete namespace permission checks, mandatory Secret/log/exec/cross-

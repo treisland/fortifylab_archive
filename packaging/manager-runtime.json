@@ -12,11 +12,13 @@
     "VERSION",
     "config/manager.example.toml",
     "packaging/manager-runtime.json",
-    "packaging/systemd/fortify-manager.service"
+    "packaging/systemd/fortify-manager.service",
+    "packaging/systemd/fortify-health-probe.service"
   ],
   "launchers": {
     "bin/fortify-manager-cli": "manager.cli",
-    "bin/fortify-manager-server": "manager.server"
+    "bin/fortify-manager-server": "manager.server",
+    "bin/fortify-health-probe": "manager.functional_probe_service"
   },
   "modes": {
     "directory": "0755",
