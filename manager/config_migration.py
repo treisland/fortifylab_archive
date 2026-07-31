@@ -143,21 +143,66 @@ def observer_ready(access_root: Path, uid: int, gid: int) -> bool:
     )
 
 
+def _multiline_string_state(line: str, state: str | None) -> str | None:
+    """Track TOML multiline strings so their contents are not parsed as structure."""
+    index = 0
+    while index < len(line):
+        if state == '"""':
+            if line.startswith('"""', index):
+                state = None
+                index += 3
+            elif line[index] == "\\":
+                index += 2
+            else:
+                index += 1
+            continue
+        if state == "'''":
+            if line.startswith("'''", index):
+                state = None
+                index += 3
+            else:
+                index += 1
+            continue
+        if line[index] == "#":
+            break
+        if line.startswith('"""', index) or line.startswith("'''", index):
+            state = line[index : index + 3]
+            index += 3
+            continue
+        if line[index] in {'"', "'"}:
+            delimiter = line[index]
+            index += 1
+            while index < len(line):
+                if delimiter == '"' and line[index] == "\\":
+                    index += 2
+                elif line[index] == delimiter:
+                    index += 1
+                    break
+                else:
+                    index += 1
+            continue
+        index += 1
+    return state
+
+
 def _section_keys(lines: list[str]) -> tuple[dict[str, set[str]], dict[str, int]]:
     keys: dict[str, set[str]] = {}
     endings: dict[str, int] = {}
     current = ""
+    multiline_state = None
     for index, line in enumerate(lines):
-        match = SECTION_RE.match(line)
-        if match:
-            if current:
-                endings[current] = index
-            current = match.group(1)
-            keys.setdefault(current, set())
-            continue
-        match = KEY_RE.match(line)
-        if match:
-            keys.setdefault(current, set()).add(match.group(1))
+        if multiline_state is None:
+            match = SECTION_RE.match(line)
+            if match:
+                if current:
+                    endings[current] = index
+                current = match.group(1)
+                keys.setdefault(current, set())
+            else:
+                match = KEY_RE.match(line)
+                if match:
+                    keys.setdefault(current, set()).add(match.group(1))
+        multiline_state = _multiline_string_state(line, multiline_state)
     if current:
         endings[current] = len(lines)
     return keys, endings

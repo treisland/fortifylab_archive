@@ -128,6 +128,20 @@ class ConfigMigrationTests(unittest.TestCase):
         self.assertTrue(document["lifecycle"]["enabled"])
         self.assertEqual(document["cluster"]["token_file"], str(self.access / "token"))
 
+    def test_table_like_lines_in_multiline_values_are_not_treated_as_sections(self) -> None:
+        custom = (
+            LEGACY
+            + '\nnote = """operator text\\n[lifecycle]\\nstill operator text\\n"""\n'
+        )
+        self.write_config(custom)
+        self.run_migration()
+        document = tomllib.loads(self.config.read_text(encoding="utf-8"))
+        self.assertEqual(
+            document["operator"]["note"],
+            "operator text\n[lifecycle]\nstill operator text\n",
+        )
+        self.assertEqual(document["lifecycle"], {"enabled": False})
+
     def test_malformed_ambiguous_and_future_schemas_fail_closed(self) -> None:
         cases = (
             "[server\n",
