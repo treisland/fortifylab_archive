@@ -146,9 +146,13 @@ class HeartbeatStore:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def start(self, issue: int, milestone: str) -> dict:
+    def start(
+        self, issue: int, milestone: str, policy_generation: int, policy_digest: str
+    ) -> dict:
         if issue < 1 or not milestone or len(milestone) > 200:
             raise HeartbeatError("invalid issue heartbeat identity")
+        if policy_generation < 0 or not re.fullmatch(r"[0-9a-f]{64}", policy_digest):
+            raise HeartbeatError("invalid heartbeat policy identity")
         now = self.clock()
         with self._locked():
             previous = self._read_unlocked(issue)
@@ -159,6 +163,8 @@ class HeartbeatStore:
                 "milestone": milestone,
                 "writer_id": uuid.uuid4().hex,
                 "generation": generation,
+                "policy_generation": policy_generation,
+                "policy_digest": policy_digest,
                 "revision": 1,
                 "phase": "preparing",
                 "phase_started_at": _timestamp(now),
@@ -286,6 +292,8 @@ def _cli() -> int:
     start = subparsers.add_parser("start")
     start.add_argument("--issue", type=int, required=True)
     start.add_argument("--milestone", required=True)
+    start.add_argument("--policy-generation", type=int, required=True)
+    start.add_argument("--policy-digest", required=True)
     update = subparsers.add_parser("update")
     update.add_argument("--issue", type=int, required=True)
     update.add_argument("--writer-id", required=True)
@@ -300,7 +308,12 @@ def _cli() -> int:
     store = HeartbeatStore(arguments.root)
     try:
         if arguments.action == "start":
-            result = store.start(arguments.issue, arguments.milestone)
+            result = store.start(
+                arguments.issue,
+                arguments.milestone,
+                arguments.policy_generation,
+                arguments.policy_digest,
+            )
         elif arguments.action == "read":
             result = store.read(arguments.issue)
             if result is None:

@@ -44,6 +44,8 @@ def read_heartbeat(root: Path, issue: int) -> dict[str, Any] | None:
         "issue",
         "milestone",
         "generation",
+        "policy_generation",
+        "policy_digest",
         "revision",
         "phase",
         "phase_started_at",
@@ -62,6 +64,9 @@ def read_heartbeat(root: Path, issue: int) -> dict[str, Any] | None:
         value["schema_version"] != 1
         or value["issue"] != issue
         or not isinstance(value["generation"], int)
+        or not isinstance(value["policy_generation"], int)
+        or not isinstance(value["policy_digest"], str)
+        or len(value["policy_digest"]) != 64
         or not isinstance(value["revision"], int)
     ):
         return None
@@ -109,6 +114,14 @@ def render_card(
         )
         + "\n"
     )
+    if autonomy_policy.get("expires_at"):
+        policy_lines += f"Lease expiry: {autonomy_policy['expires_at']}\n"
+    if autonomy_policy.get("configuration_state") == "mismatch":
+        policy_lines += "Configuration: mismatch — actions blocked\n"
+    elif autonomy_policy.get("configuration_state") == "expired-lease":
+        policy_lines += "Configuration: expired lease — actions blocked\n"
+    elif autonomy_policy.get("configuration_state") == "restart-required":
+        policy_lines += "Configuration: restart required — actions blocked\n"
     if not heartbeat:
         if not issue:
             workflow = "paused" if paused else "idle"

@@ -29,6 +29,7 @@ from autonomy_policy import (
     AutonomyPolicyError,
     EffectivePolicy,
     load_policy,
+    replace_policy,
 )
 from workflow_status import (
     heartbeat_interval,
@@ -1033,6 +1034,9 @@ class Telegram:
     def register_commands(self) -> None:
         commands = [
             {"command": "status", "description": "Show supervisor status"},
+            {"command": "autonomy", "description": "Show or request autonomy"},
+            {"command": "hold", "description": "Confirm a workflow hold"},
+            {"command": "resume", "description": "Confirm workflow resume"},
             {"command": "pr", "description": "Show the tracked pull request"},
             {"command": "approve", "description": "Approve the pending PR merge"},
             {"command": "reject", "description": "Reject the pending PR merge"},
@@ -1128,6 +1132,76 @@ class Supervisor:
         )
         self.audit_policy()
 
+    def reload_policy(self, role: str) -> None:
+        """Atomically adopt one complete policy generation and attest it."""
+
+        try:
+            policy = load_policy(
+                self.config.autonomy_policy_file,
+                now=datetime.datetime.fromtimestamp(
+                    self.store.now(), datetime.timezone.utc
+                ),
+            )
+        except AutonomyPolicyError as error:
+            if "expired" in str(error).lower():
+                self.store.set("autonomy_configuration_state", "expired-lease")
+                raise SupervisorError(
+                    "autonomous lease expired; actions are blocked"
+                ) from error
+            self.store.set("autonomy_configuration_state", "restart-required")
+            raise SupervisorError("configuration restart required") from error
+        if (
+            policy.generation < self.policy.generation
+            or (
+                policy.generation == self.policy.generation
+                and policy.digest != self.policy.digest
+            )
+        ):
+            self.store.set("autonomy_configuration_state", "mismatch")
+            raise SupervisorError("configuration mismatch; actions are blocked")
+        self.policy = policy
+        self.audit_policy()
+        self.store.set("autonomy_configuration_state", "active")
+        self.store.set(
+            f"process_policy:{role}",
+            json.dumps(
+                {
+                    "generation": policy.generation,
+                    "digest": policy.digest,
+                    "updated_at": int(self.store.now()),
+                },
+                sort_keys=True,
+            ),
+        )
+
+    def configuration_state(self) -> str:
+        persisted = self.store.get("autonomy_configuration_state", "active")
+        if persisted in {"expired-lease", "restart-required"}:
+            return persisted
+        now = int(self.store.now())
+        identities = {(self.policy.generation, self.policy.digest)}
+        for role in ("monitor", "listener", "runner", "status"):
+            raw = self.store.get(f"process_policy:{role}")
+            if not raw:
+                continue
+            try:
+                value = json.loads(raw)
+                if now - int(value["updated_at"]) <= max(
+                    90, self.config.poll_seconds * 3
+                ):
+                    identities.add(
+                        (int(value["generation"]), str(value["digest"]))
+                    )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                return "mismatch"
+        return "active" if len(identities) == 1 else "mismatch"
+
+    def require_consistent_policy(self, role: str) -> None:
+        self.reload_policy(role)
+        if self.configuration_state() != "active":
+            self.store.set("autonomy_configuration_state", "mismatch")
+            raise SupervisorError("configuration mismatch; actions are blocked")
+
     def audit_policy(self) -> None:
         """Record each effective policy generation/digest transition once."""
 
@@ -1187,6 +1261,8 @@ class Supervisor:
             if self.config.heartbeat_root and issue.isdigit()
             else None
         )
+        status = self.policy.status()
+        status["configuration_state"] = self.configuration_state()
         return render_card(
             milestone=self.active_milestone(),
             issue=issue,
@@ -1196,7 +1272,7 @@ class Supervisor:
             pr_state=f"#{pr}" if pr and pr != "none" else "none",
             ci_state=self.store.get("ci_state", "not started"),
             approval_ready=bool(self.store.pending_approvals("merge_pr")),
-            autonomy_policy=self.policy.status(),
+            autonomy_policy=status,
             queue_state=self.queue_state(),
             now=self.store.now(),
         )
@@ -1291,6 +1367,13 @@ class Supervisor:
         ).fetchone()
         if not candidate:
             raise SupervisorError("This action is invalid or no longer available")
+        if str(candidate["action"]) not in {
+            "status",
+            "refresh",
+            "workflow-details",
+            "details",
+        }:
+            self.require_consistent_policy("listener")
         if candidate["approval_id"]:
             approval = self.store.approval(str(candidate["approval_id"]))
             approval_payload = json.loads(approval["payload"])
@@ -1308,6 +1391,9 @@ class Supervisor:
         row = self.store.consume_callback_token(token, actor)
         action = str(row["action"])
         callback_payload = json.loads(str(row["payload"] or "{}"))
+        if action == "autonomy-change":
+            self.require_consistent_policy("listener")
+            return self.apply_autonomy_change(callback_payload, actor)
         if action in {"status", "refresh"}:
             return self.status_text()
         if action == "workflow-details":
@@ -1429,6 +1515,82 @@ class Supervisor:
             )
         raise SupervisorError("Unsupported callback action")
 
+    def request_confirmation(
+        self, action: str, payload: dict[str, Any], actor: str
+    ) -> str:
+        token = self.store.create_callback_token(
+            action,
+            min(300, self.config.approval_ttl_seconds),
+            actor=actor,
+            payload=payload,
+        )
+        return (
+            "Pending confirmation. This request expires in 5 minutes and is "
+            f"single-use. Confirm with /confirm {token}"
+        )
+
+    def apply_autonomy_change(self, payload: dict[str, Any], actor: str) -> str:
+        operation = str(payload.get("operation"))
+        if operation == "hold":
+            self.store.set("paused", "true")
+            result = "Held"
+        elif operation == "resume":
+            self.store.set("paused", "false")
+            result = "Resumed"
+        elif operation == "approve-once":
+            self.store.set("autonomy_approve_once", "true")
+            result = "One merge approval armed"
+        else:
+            profile = str(payload.get("profile"))
+            if profile not in {"manual", "assisted", "autonomous"}:
+                raise SupervisorError("Unsupported autonomy change")
+            if self.config.autonomy_policy_file is None:
+                raise SupervisorError("configuration restart required")
+            expiry = payload.get("expires_at")
+            try:
+                self.policy = replace_policy(
+                    self.config.autonomy_policy_file,
+                    profile=profile,
+                    generation=self.policy.generation + 1,
+                    expires_at=str(expiry) if expiry else None,
+                    now=datetime.datetime.fromtimestamp(
+                        self.store.now(), datetime.timezone.utc
+                    ),
+                )
+            except AutonomyPolicyError as error:
+                raise SupervisorError(str(error)) from error
+            self.audit_policy()
+            result = f"Autonomy changed to {profile}"
+        self.store.event(
+            f"autonomy-control:{int(self.store.now())}:{secrets.token_hex(4)}",
+            "autonomy.control_changed",
+            {
+                "actor": actor,
+                "operation": operation,
+                "profile": self.policy.profile,
+                "generation": self.policy.generation,
+                "digest": self.policy.digest,
+            },
+        )
+        self.reload_policy("listener")
+        return f"{result}. {self.autonomy_text()}"
+
+    def autonomy_text(self) -> str:
+        held = self.store.get("paused", "false") == "true"
+        expiry = self.policy.expires_at or "none"
+        decisions = ", ".join(
+            f"{name}={value}" for name, value in self.policy.decisions.items()
+        )
+        state = self.configuration_state()
+        return (
+            f"Autonomy: {self.policy.profile}\n"
+            f"State: {'held' if held else 'active'}\n"
+            f"Generation: {self.policy.generation}\n"
+            f"Digest: {self.policy.digest[:12]}\n"
+            f"Lease expiry: {expiry}\n"
+            f"Configuration: {state}\nPolicy: {decisions}"
+        )
+
     def workflow_actions(self) -> tuple[InlineAction, ...]:
         issue = self.store.get("current_issue")
         paused = self.store.get("paused", "false") == "true"
@@ -1455,6 +1617,55 @@ class Supervisor:
     def handle_command(self, text: str, actor: str) -> str:
         parts = shlex.split(text)
         command = parts[0].split("@", 1)[0].lower()
+        try:
+            self.reload_policy("listener")
+        except SupervisorError:
+            if command == "/autonomy" and len(parts) == 1:
+                return self.autonomy_text()
+            raise
+        if command == "/autonomy":
+            if len(parts) == 1:
+                return self.autonomy_text()
+            if parts[1] not in {"manual", "assisted", "autonomous"}:
+                raise SupervisorError(
+                    "Usage: /autonomy [manual|assisted|autonomous <duration>]"
+                )
+            profile = parts[1]
+            payload: dict[str, Any] = {
+                "operation": "profile",
+                "profile": profile,
+            }
+            if profile == "autonomous":
+                if len(parts) != 3:
+                    raise SupervisorError(
+                        "Usage: /autonomy autonomous <duration>"
+                    )
+                match = re.fullmatch(r"([1-9][0-9]*)(m|h|d)", parts[2])
+                if not match:
+                    raise SupervisorError("Duration must use a positive m, h, or d value")
+                seconds = int(match.group(1)) * {"m": 60, "h": 3600, "d": 86400}[
+                    match.group(2)
+                ]
+                if seconds > 7 * 86400:
+                    raise SupervisorError("Autonomous duration cannot exceed 7 days")
+                payload["expires_at"] = datetime.datetime.fromtimestamp(
+                    self.store.now() + seconds, datetime.timezone.utc
+                ).isoformat().replace("+00:00", "Z")
+            elif len(parts) != 2:
+                raise SupervisorError(f"Usage: /autonomy {profile}")
+            return self.request_confirmation("autonomy-change", payload, actor)
+        if command in {"/hold", "/resume", "/approve-once"}:
+            if len(parts) != 1:
+                raise SupervisorError(f"Usage: {command}")
+            return self.request_confirmation(
+                "autonomy-change",
+                {"operation": command.removeprefix("/")},
+                actor,
+            )
+        if command == "/confirm":
+            if len(parts) != 2:
+                raise SupervisorError("Usage: /confirm <token>")
+            return self.execute_callback(parts[1], actor)
         if command == "/status":
             return self.status_text()
         if command == "/pr":
@@ -1468,6 +1679,7 @@ class Supervisor:
                 f"Merge: {pr.get('mergeStateStatus', 'unknown')}\n"
                 f"{pr.get('url', '')}"
             )
+        self.require_consistent_policy("listener")
         if command == "/pause":
             self.store.set("paused", "true")
             self.store.event(
@@ -1954,6 +2166,7 @@ class Supervisor:
             )
 
     def monitor_once(self) -> None:
+        self.require_consistent_policy("monitor")
         self.deliver_digest()
         self.monitor_runner()
         if self.store.get("paused", "false") == "true":
@@ -2110,6 +2323,10 @@ class Supervisor:
         if merge_decision == "auto":
             self.approve(str(approval["id"]), "autonomy-policy")
             return
+        if self.store.get("autonomy_approve_once") == "true":
+            self.store.set("autonomy_approve_once", "false")
+            self.approve(str(approval["id"]), "autonomy-approve-once")
+            return
         fingerprint = f"pr:{number}:approval-ready:{sha}"
         notification = self.store.notification(fingerprint)
         if notification is None or notification["state"] == "pending":
@@ -2154,6 +2371,23 @@ class Supervisor:
         heartbeat = read_heartbeat(self.config.heartbeat_root, int(issue))
         if not heartbeat:
             return
+        self.store.set(
+            "process_policy:runner",
+            json.dumps(
+                {
+                    "generation": heartbeat["policy_generation"],
+                    "digest": heartbeat["policy_digest"],
+                    "updated_at": int(self.store.now()),
+                },
+                sort_keys=True,
+            ),
+        )
+        if (
+            int(heartbeat["policy_generation"]) != self.policy.generation
+            or str(heartbeat["policy_digest"]) != self.policy.digest
+        ):
+            self.store.set("autonomy_configuration_state", "mismatch")
+            raise SupervisorError("configuration mismatch; runner actions are blocked")
         now = self.store.now()
         generation = int(heartbeat["generation"])
         phase = str(heartbeat["phase"])
@@ -2455,6 +2689,7 @@ def main() -> int:
         if arguments.command == "init":
             print(f"Initialized supervisor state at {config.state_file}")
         elif arguments.command == "status":
+            supervisor.reload_policy("status")
             print(supervisor.status_text())
         elif arguments.command == "track-pr":
             store.set("current_pr", str(arguments.number))
@@ -2462,6 +2697,7 @@ def main() -> int:
         elif arguments.command == "monitor-once":
             supervisor.monitor_once()
         elif arguments.command == "telegram-once":
+            supervisor.reload_policy("listener")
             offset = int(store.get("telegram_offset", "0"))
             for update in supervisor.telegram.updates(offset, 1):
                 offset = max(offset, int(update["update_id"]) + 1)
@@ -2471,6 +2707,7 @@ def main() -> int:
             supervisor.telegram.register_commands()
             while True:
                 try:
+                    supervisor.reload_policy("listener")
                     offset = int(store.get("telegram_offset", "0"))
                     updates = supervisor.telegram.updates(offset, 25)
                     for update in updates:

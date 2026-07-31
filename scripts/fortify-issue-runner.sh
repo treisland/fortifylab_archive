@@ -62,7 +62,7 @@ done
 [ -x "$CODEX_BIN" ] || fail "Codex CLI is not executable: $CODEX_BIN"
 [ -r "$HEARTBEAT_TOOL" ] || fail "runner heartbeat helper is not readable"
 [ -r "$SUPERVISOR_CONFIG" ] || fail "supervisor configuration is not readable"
-APPROVED_MILESTONE="$(
+mapfile -t POLICY_CONTEXT < <(
   python3 - "$SUPERVISOR_CONFIG" "$HEARTBEAT_TOOL" <<'PY'
 import sqlite3
 import sys
@@ -90,9 +90,16 @@ active = str(row[0]) if row else str(supervisor["milestone"])
 if active not in authorized:
     raise SystemExit("active milestone is outside the authorized sequence")
 print(active)
+print(policy.generation)
+print(policy.digest)
 PY
-)"
+)
+APPROVED_MILESTONE="${POLICY_CONTEXT[0]:-}"
+POLICY_GENERATION="${POLICY_CONTEXT[1]:-}"
+POLICY_DIGEST="${POLICY_CONTEXT[2]:-}"
 [ -n "$APPROVED_MILESTONE" ] || fail "approved milestone is empty"
+[[ "$POLICY_GENERATION" =~ ^[0-9]+$ ]] || fail "policy generation is invalid"
+[[ "$POLICY_DIGEST" =~ ^[0-9a-f]{64}$ ]] || fail "policy digest is invalid"
 
 heartbeat_update() {
   [ -n "$HEARTBEAT_WRITER" ] || return 0
@@ -135,7 +142,8 @@ heartbeat_ticker_stop() {
 }
 
 HEARTBEAT_JSON="$(python3 "$HEARTBEAT_TOOL" --root "$HEARTBEAT_ROOT" start \
-  --issue "$ISSUE_NUMBER" --milestone "$APPROVED_MILESTONE")"
+  --issue "$ISSUE_NUMBER" --milestone "$APPROVED_MILESTONE" \
+  --policy-generation "$POLICY_GENERATION" --policy-digest "$POLICY_DIGEST")"
 HEARTBEAT_WRITER="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["writer_id"])' \
   <<<"$HEARTBEAT_JSON")"
 HEARTBEAT_GENERATION="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])' \
