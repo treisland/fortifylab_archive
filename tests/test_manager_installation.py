@@ -597,6 +597,14 @@ class ManagerInstallationTests(unittest.TestCase):
             'command="${1:-}"'
         )]
         self.assertLess(
+            upgrade.index('"$CONFIG_ROOT/manager.toml" "$backup_root/manager.toml"'),
+            upgrade.index('manager_config migrate'),
+        )
+        self.assertLess(
+            upgrade.index('manager_config migrate'),
+            upgrade.index('validate_release_start "$RUNTIME_RELEASE" 1'),
+        )
+        self.assertLess(
             upgrade.index('validate_release_start "$RUNTIME_RELEASE" 1'),
             upgrade.index('systemctl stop "$SERVICE_NAME"'),
         )
