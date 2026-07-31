@@ -8,6 +8,11 @@ platform profiles.
 
 ## [Unreleased]
 
+- Compose the authenticated Manager with a protected, least-privilege
+  MicroK8s observer so desired inventory remains visible during failures and
+  live component, health, preflight, node, namespace, version, freshness, and
+  latency evidence is available without Secrets, logs, or mutation access.
+
 ### Added
 
 - A versioned, machine-checked 0.3 controlled-operations milestone gate

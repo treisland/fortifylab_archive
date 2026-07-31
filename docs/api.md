@@ -115,6 +115,13 @@ secret values or names, credentials, licenses, registry adapter paths,
 configuration paths, persistent-volume paths, logs, or Kubernetes client
 details.
 
+`observation` always includes `state` and `latencyMs`. With live evidence it
+also contains the sanitized single-node name, fixed namespace, Kubernetes
+version, `observedAt`, and `ageSeconds`. Observation failures do not hide
+desired inventory or produce a 503: resources become `unknown` and the
+observation state becomes `unavailable`. A malformed registry remains a
+sanitized `503 REGISTRY_UNAVAILABLE`.
+
 Dependency-aware runtime health is exposed at `GET /api/v1alpha1/health`
 using the same read-only method policy. Its six states, layered dependency
 order, freshness semantics, safe evidence, and remediation catalog are

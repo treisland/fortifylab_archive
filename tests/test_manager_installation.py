@@ -167,6 +167,25 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertIn("fortify-manager-cli", script)
         self.assertNotIn("create-certs.sh", script)
 
+    def test_observer_rbac_is_read_only_and_secret_safe(self):
+        documents = list(yaml.safe_load_all(
+            (ROOT / "packaging/microk8s/manager-observer-rbac.yaml").read_text()
+        ))
+        role = next(item for item in documents if item["kind"] == "Role")
+        cluster_role = next(item for item in documents if item["kind"] == "ClusterRole")
+        role_binding = next(item for item in documents if item["kind"] == "RoleBinding")
+        rules = role["rules"] + cluster_role["rules"]
+        verbs = {verb for rule in rules for verb in rule["verbs"]}
+        resources = {
+            resource for rule in rules for resource in rule.get("resources", [])
+        }
+        self.assertEqual(verbs, {"get", "list"})
+        self.assertNotIn("secrets", resources)
+        self.assertNotIn("pods/log", resources)
+        self.assertNotIn("namespaces", resources)
+        self.assertEqual(role["metadata"]["namespace"], "fortify")
+        self.assertEqual(role_binding["metadata"]["namespace"], "fortify")
+
 
 if __name__ == "__main__":
     unittest.main()

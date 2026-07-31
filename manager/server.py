@@ -16,6 +16,9 @@ from wsgiref.simple_server import WSGIServer, make_server
 from manager.api import ManagerAPI
 from manager.dashboard import DashboardApp
 from manager.history import StoreHistoryReader
+from manager.component_registry import ComponentRegistry
+from manager.component_inventory import ComponentInventory
+from manager.kubernetes_observer import KubernetesObserver
 from manager.record_store import LoopRecordStore
 
 
@@ -48,6 +51,7 @@ def load_config(path: Path) -> dict:
         "accounts": authentication.get(
             "accounts", "/var/lib/fortify-lab-manager/accounts.json"
         ),
+        "cluster": document.get("cluster", {}),
     }
     if config["host"] != "0.0.0.0":
         raise ConfigurationError("server.host must be 0.0.0.0 for MicroK8s ingress")
@@ -84,11 +88,35 @@ def load_accounts(path: Path) -> dict[str, str]:
 def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     accounts = load_accounts(Path(config["accounts"]))
     store = LoopRecordStore(Path(config["state_database"]))
-    api = ManagerAPI(history_reader=StoreHistoryReader(store))
+    registry = ComponentRegistry.load()
+    cluster = config.get("cluster", {})
+    observer = None
+    if cluster:
+        try:
+            observer = KubernetesObserver(
+                cluster["server"],
+                Path(cluster["token_file"]),
+                Path(cluster["ca_file"]),
+                registry,
+                namespace=cluster.get("namespace", "fortify"),
+                timeout_seconds=cluster.get("timeout_seconds", 5),
+            )
+        except (KeyError, OSError, TypeError, ValueError):
+            LOG.warning(
+                "protected cluster observation is unavailable; desired inventory "
+                "will remain visible"
+            )
+    api = ManagerAPI(
+        registry_loader=lambda: registry,
+        observer=observer,
+        health_probe=observer,
+        preflight_probe=observer,
+        history_reader=StoreHistoryReader(store),
+    )
     return DashboardApp(accounts=accounts, api=api, secure_cookies=True), store
 
 
-def check(config_path: Path) -> None:
+def check(config_path: Path, *, cluster: bool = False) -> None:
     config = load_config(config_path)
     accounts = load_accounts(Path(config["accounts"]))
     state_parent = Path(config["state_database"]).parent
@@ -100,6 +128,30 @@ def check(config_path: Path) -> None:
         config["port"],
         len(accounts),
     )
+    if cluster:
+        registry = ComponentRegistry.load()
+        settings = config.get("cluster", {})
+        observer = KubernetesObserver(
+            settings["server"],
+            Path(settings["token_file"]),
+            Path(settings["ca_file"]),
+            registry,
+            namespace=settings.get("namespace", "fortify"),
+            timeout_seconds=settings.get("timeout_seconds", 5),
+        )
+        resources = tuple(
+            resource
+            for _, resource in ComponentInventory(registry)._desired_resources()
+        )
+        evidence = observer.diagnose_access(resources)
+        LOG.info(
+            "registry and protected cluster access valid: namespace=%s node=%s "
+            "kubernetes=%s latency_ms=%d",
+            evidence.namespace,
+            evidence.node,
+            evidence.kubernetes_version,
+            evidence.latency_ms,
+        )
 
 
 def serve(config_path: Path) -> None:
@@ -121,18 +173,18 @@ def serve(config_path: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fortify Lab Manager host service")
-    parser.add_argument("command", choices=("serve", "check"))
+    parser.add_argument("command", choices=("serve", "check", "diagnose-cluster"))
     parser.add_argument(
         "--config", type=Path, default=DEFAULT_CONFIG, help=argparse.SUPPRESS
     )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     try:
-        if args.command == "check":
-            check(args.config)
+        if args.command in {"check", "diagnose-cluster"}:
+            check(args.config, cluster=args.command == "diagnose-cluster")
         else:
             serve(args.config)
-    except (ConfigurationError, OSError, RuntimeError):
+    except (ConfigurationError, KeyError, OSError, RuntimeError, TypeError, ValueError):
         LOG.error(
             "manager could not start; run 'sudo fortify-manager diagnose' "
             "for sanitized checks"

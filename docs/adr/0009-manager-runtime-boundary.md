@@ -106,21 +106,20 @@ session model.
 
 Use a dedicated ServiceAccount bound only in the managed `fortify` namespace.
 The Kubernetes adapter receives a typed, allow-listed read interface. Its
-minimum Role allows `get`, `list`, and `watch` only for the workload and
-configuration metadata needed for observation:
+minimum Role allows `get` and `list` only for metadata used by current read
+models:
 
-- core `pods`, `persistentvolumeclaims`, `services`, `endpoints`, `events`,
-  and `configmaps`;
-- `apps` `deployments`, `statefulsets`, and `replicasets`;
-- `batch` `jobs`; and
+- core `services`;
+- `apps` `deployments` and `statefulsets`; and
 - `networking.k8s.io` `ingresses`.
 
 The Role grants no access to `secrets`, pod logs, pod exec/attach/port-forward,
-service-account token resources, RBAC objects, nodes, namespaces,
-PersistentVolumes, admission resources, or mutation verbs. It is neither a
-ClusterRole nor bound outside the managed namespace. MicroK8s discovery and
-addon preflight that require host or cluster-scoped access remain separate
-operator-side adapters; they do not broaden the manager ServiceAccount.
+service-account token resources, RBAC objects, namespaces, PersistentVolumes,
+admission resources, or mutation verbs. It is bound only in the managed
+namespace. A separate discovery ClusterRole allows only `/version` plus
+get/list of Nodes and StorageClasses so the Manager can identify the
+single-node MicroK8s lab and storage availability. It cannot enumerate
+namespaces or workloads outside `fortify`.
 Future operations must add narrowly scoped permissions with their
 implementation and tests rather than pre-granting write access.
 

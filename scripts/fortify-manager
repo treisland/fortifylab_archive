@@ -10,6 +10,7 @@ INSTALL_ROOT="${FORTIFY_MANAGER_INSTALL_ROOT:-/opt/fortify-lab-manager}"
 UNIT_PATH="${FORTIFY_MANAGER_UNIT_PATH:-/etc/systemd/system/fortify-manager.service}"
 CLI_PATH="${FORTIFY_MANAGER_CLI_PATH:-/usr/local/bin/fortify-manager-cli}"
 MANIFEST_PATH="${FORTIFY_MANAGER_MANIFEST_PATH:-/var/lib/fortify-lab-manager/manager-ingress.yaml}"
+CLUSTER_ACCESS_ROOT="${FORTIFY_MANAGER_CLUSTER_ACCESS_ROOT:-$STATE_ROOT/cluster-access}"
 TLS_SECRET="${FORTIFY_MANAGER_TLS_SECRET:-tls}"
 SERVICE_NAME="fortify-manager.service"
 
@@ -19,6 +20,7 @@ Usage: sudo ./scripts/fortify-manager COMMAND [arguments]
 
 Commands:
   install                         Install/upgrade files without changing config or state
+  install-cluster-access          Install protected read-only cluster access
   bootstrap-account [USERNAME]    Prompt for and persist the first/local account verifier
   configure DOMAIN ADDRESS [PORT] Render and apply the MicroK8s ingress route
   render-ingress DOMAIN ADDRESS [PORT] [OUTPUT]
@@ -125,7 +127,7 @@ install_runtime() {
     install -d -m 700 -o fortify-manager -g fortify-manager "$STATE_ROOT"
     install -d -m 750 -o root -g fortify-manager "$CONFIG_ROOT"
     cp -a "$REPOSITORY_ROOT/manager" "$REPOSITORY_ROOT/contracts" \
-        "$REPOSITORY_ROOT/registry" "$release/"
+        "$REPOSITORY_ROOT/registry" "$REPOSITORY_ROOT/packaging" "$release/"
     find "$release" -type d -exec chmod 755 {} +
     find "$release" -type f -exec chmod 644 {} +
     install -m 755 /dev/stdin "$release/bin/fortify-manager-server" <<EOF
@@ -150,6 +152,39 @@ EOF
     systemctl daemon-reload
     printf 'Installed manager %s; protected configuration and state were preserved.\n' \
         "$VERSION"
+}
+
+install_cluster_access() {
+    require_root
+    local token_candidate ca_candidate
+    microk8s kubectl apply -f \
+        "$REPOSITORY_ROOT/packaging/microk8s/manager-observer-rbac.yaml" >/dev/null ||
+        fail "observer access could not be installed"
+    install -d -m 700 -o fortify-manager -g fortify-manager "$CLUSTER_ACCESS_ROOT"
+    token_candidate="$(mktemp "$CLUSTER_ACCESS_ROOT/.token.XXXXXX")"
+    ca_candidate="$(mktemp "$CLUSTER_ACCESS_ROOT/.ca.XXXXXX")"
+    trap 'rm -f "$token_candidate" "$ca_candidate"' RETURN
+    for _ in {1..15}; do
+        microk8s kubectl -n fortify get secret \
+            fortify-manager-observer-token \
+            -o jsonpath='{.data.token}' 2>/dev/null |
+            base64 -d >"$token_candidate" || true
+        [ -s "$token_candidate" ] && break
+        sleep 1
+    done
+    [ -s "$token_candidate" ] || fail "observer credential was not issued"
+    microk8s kubectl -n fortify get secret \
+        fortify-manager-observer-token \
+        -o jsonpath='{.data.ca\.crt}' |
+        base64 -d >"$ca_candidate" ||
+        fail "cluster CA could not be protected"
+    [ -s "$ca_candidate" ] || fail "cluster CA is empty"
+    chown fortify-manager:fortify-manager "$token_candidate" "$ca_candidate"
+    chmod 600 "$token_candidate" "$ca_candidate"
+    mv -f "$token_candidate" "$CLUSTER_ACCESS_ROOT/token"
+    mv -f "$ca_candidate" "$CLUSTER_ACCESS_ROOT/ca.crt"
+    trap - RETURN
+    printf 'Installed namespace-scoped observer access; no application Secret was read.\n'
 }
 
 bootstrap_account() {
@@ -197,6 +232,8 @@ diagnose() {
     local failed=0
     "$INSTALL_ROOT/current/bin/fortify-manager-server" check ||
         failed=1
+    "$INSTALL_ROOT/current/bin/fortify-manager-server" diagnose-cluster ||
+        { printf 'ERROR: registry, API reachability, or observer permissions failed\n' >&2; failed=1; }
     systemctl is-active --quiet "$SERVICE_NAME" ||
         { printf 'ERROR: manager service is not active\n' >&2; failed=1; }
     backend_port="$(sed -n 's/^port = \([0-9]*\)$/\1/p' "$CONFIG_ROOT/manager.toml")"
@@ -238,6 +275,7 @@ command="${1:-}"
 shift || true
 case "$command" in
     install) install_runtime ;;
+    install-cluster-access) install_cluster_access ;;
     bootstrap-account) bootstrap_account "$@" ;;
     render-ingress) render_ingress "$@" ;;
     configure) configure_route "$@" ;;
