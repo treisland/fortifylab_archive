@@ -6,7 +6,6 @@ import json
 import os
 import tempfile
 import unittest
-from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,7 +13,7 @@ from jsonschema import Draft202012Validator
 
 from manager.capabilities import CapabilityProvider
 from manager.dashboard import CAPABILITIES_PATH, DashboardApp, password_verifier
-from manager.server import microk8s_rbac_activation_state
+from manager.server import read_rbac_activation_state
 from tests.test_dashboard import request
 
 
@@ -138,19 +137,49 @@ class CapabilityProviderTests(unittest.TestCase):
         self.assertEqual(recovered["state"], "available")
         self.assertNotIn("activation", recovered)
 
-    def test_activation_probe_detects_restart_required_without_claiming_activation(self):
+    def test_protected_activation_evidence_is_bounded_and_permission_checked(self):
         with tempfile.TemporaryDirectory() as temporary:
-            arguments = Path(temporary) / "kube-apiserver"
-            arguments.write_text("--authorization-mode=RBAC,Node\n", encoding="utf-8")
-            os.utime(arguments, ns=(2**62, 2**62))
-            environment = {
-                "FORTIFY_MANAGER_APISERVER_ARGS": str(arguments),
-                "FORTIFY_MANAGER_APISERVER_PID": str(os.getpid()),
-            }
-            with mock.patch.dict(os.environ, environment):
-                self.assertEqual(
-                    microk8s_rbac_activation_state(), "restart-required"
-                )
+            evidence = Path(temporary) / "rbac-activation.json"
+            evidence.write_text(json.dumps({
+                "apiVersion": "fortifylab.io/v1alpha1",
+                "kind": "RbacActivationEvidence",
+                "state": "restart-required",
+            }), encoding="utf-8")
+            evidence.chmod(0o640)
+            options = {"expected_uid": os.geteuid(), "expected_gid": os.getegid()}
+            self.assertEqual(
+                read_rbac_activation_state(evidence, **options), "restart-required"
+            )
+            evidence.chmod(0o644)
+            self.assertEqual(
+                read_rbac_activation_state(evidence, **options), "ambiguous"
+            )
+            evidence.unlink()
+            target = Path(temporary) / "target"
+            target.write_text("{}", encoding="utf-8")
+            evidence.symlink_to(target)
+            self.assertEqual(
+                read_rbac_activation_state(evidence, **options), "ambiguous"
+            )
+
+    def test_policy_and_composition_precede_restart_transition(self):
+        common = {
+            "observation_state": lambda: "available",
+            "lifecycle_activation_state": lambda: "restart-required",
+        }
+        disabled = states(self.provider(
+            lifecycle_enabled=False, lifecycle_configured=False, **common
+        ).document())["lifecycle-execution"]
+        self.assertEqual(disabled["state"], "disabled")
+        self.assertEqual(disabled["code"], "OPERATIONS_DISABLED")
+        self.assertNotIn("activation", disabled)
+
+        not_composed = states(self.provider(
+            lifecycle_enabled=True, lifecycle_configured=False, **common
+        ).document())["lifecycle-execution"]
+        self.assertEqual(not_composed["state"], "not-configured")
+        self.assertEqual(not_composed["code"], "OPERATIONS_UNAVAILABLE")
+        self.assertNotIn("activation", not_composed)
 
     def test_partial_observation_failure_temporarily_disables_mutation(self):
         document = self.provider(

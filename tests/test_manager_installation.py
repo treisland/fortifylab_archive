@@ -913,6 +913,27 @@ validate_public_address "$PUBLIC" 172.31.30.41
             self.assertEqual(restart.returncode, 3)
             self.assertIn("action=restart-required", restart.stdout)
 
+    def test_installer_publishes_only_protected_sanitized_rbac_evidence(self):
+        script = (ROOT / "scripts/fortify-manager").read_text(encoding="utf-8")
+        publisher = script[
+            script.index("publish_rbac_activation_evidence() {"):
+            script.index("observer_can() {")
+        ]
+        self.assertIn('chown root:fortify-manager "$candidate"', publisher)
+        self.assertIn('chmod 640 "$candidate"', publisher)
+        self.assertIn('mv -f "$candidate"', publisher)
+        self.assertIn('RbacActivationEvidence', publisher)
+        for forbidden in ("APISERVER_ARGS", "token", "credential", "Secret"):
+            self.assertNotIn(forbidden, publisher)
+        activation = script[script.index("install_cluster_access() {"):
+                            script.index("set_lifecycle_enabled() {")]
+        self.assertIn('publish_rbac_activation_evidence "$state"', activation)
+        self.assertIn("publish_rbac_activation_evidence active", activation)
+        self.assertLess(
+            activation.index("verify_observer_authorization"),
+            activation.rindex("publish_rbac_activation_evidence active"),
+        )
+
     def test_lifecycle_rbac_is_namespace_scoped_and_cannot_read_secrets(self):
         documents = list(yaml.safe_load_all(
             (ROOT / "packaging/microk8s/manager-lifecycle-rbac.yaml").read_text()

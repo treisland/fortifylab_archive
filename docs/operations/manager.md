@@ -191,6 +191,14 @@ The authenticated capability API exposes this exact transition as
 `effective=previous-authorization`, and `action=restart-required`. This is not
 an activation claim: lifecycle mutation remains unavailable until the process
 is restarted and the positive and negative least-privilege probes pass.
+The root-owned `install-cluster-access` workflow records only API version,
+document kind, and the sanitized state in
+`cluster-access/rbac-activation.json`, atomically installed as
+`root:fortify-manager` mode `0640`. The Manager service reads that bounded
+document; it cannot read the root-managed API-server arguments or inspect the
+control-plane process. Incorrect ownership, permissions, type, size, or content
+is treated as ambiguous. A disabled or uncomposed lifecycle service remains
+disabled or setup-required even if the evidence reports restart-required.
 Observation remains a separate capability and deployed workloads are not
 marked unhealthy merely because lifecycle is disabled. For application-level
 rollback, run `deactivate-lifecycle`; reverting MicroK8s authorization is a

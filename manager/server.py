@@ -6,6 +6,8 @@ import argparse
 import json
 import logging
 import os
+import pwd
+import grp
 import stat
 import sys
 import tomllib
@@ -41,7 +43,7 @@ from manager.config_migration import MigrationError, schema_version
 
 LOG = logging.getLogger("fortify-manager")
 DEFAULT_CONFIG = Path("/etc/fortify-lab-manager/manager.toml")
-DEFAULT_APISERVER_ARGS = Path("/var/snap/microk8s/current/args/kube-apiserver")
+RBAC_ACTIVATION_EVIDENCE = "rbac-activation.json"
 
 
 class ConfigurationError(RuntimeError):
@@ -52,47 +54,42 @@ class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
     daemon_threads = True
 
 
-def microk8s_rbac_activation_state() -> str:
-    """Detect a desired-RBAC process restart transition without broad privileges."""
-    arguments = Path(os.environ.get(
-        "FORTIFY_MANAGER_APISERVER_ARGS", str(DEFAULT_APISERVER_ARGS)
-    ))
+def read_rbac_activation_state(
+    path: Path,
+    *,
+    expected_uid: int | None = None,
+    expected_gid: int | None = None,
+) -> str:
+    """Read only root-produced, sanitized activation evidence."""
     try:
-        desired = any(
-            line.startswith("--authorization-mode=")
-            and "RBAC" in line.split("=", 1)[1].split(",")
-            for line in arguments.read_text(encoding="utf-8").splitlines()
-        )
-    except OSError:
-        return "ambiguous"
-    if not desired:
-        return "ambiguous"
-
-    configured_pid = os.environ.get("FORTIFY_MANAGER_APISERVER_PID")
-    candidates = [configured_pid] if configured_pid else []
-    if not candidates:
-        try:
-            candidates = sorted(
-                (item.name for item in Path("/proc").iterdir() if item.name.isdigit()),
-                key=int,
-            )
-        except OSError:
+        metadata = path.stat(follow_symlinks=False)
+        if expected_uid is None:
+            expected_uid = pwd.getpwnam("root").pw_uid
+        if expected_gid is None:
+            expected_gid = grp.getgrnam("fortify-manager").gr_gid
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or stat.S_IMODE(metadata.st_mode) != 0o640
+            or metadata.st_uid != expected_uid
+            or metadata.st_gid != expected_gid
+            or metadata.st_size > 256
+        ):
             return "ambiguous"
-    for pid in candidates:
-        if not pid:
-            continue
-        process = Path("/proc") / pid
-        try:
-            command = (process / "comm").read_text(encoding="utf-8").strip()
-            if not configured_pid and command not in {"kubelite", "kube-apiserver"}:
-                continue
-            return (
-                "restart-required"
-                if arguments.stat().st_mtime_ns > process.stat().st_mtime_ns
-                else "active"
-            )
-        except OSError:
-            continue
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return "ambiguous"
+    if document == {
+        "apiVersion": "fortifylab.io/v1alpha1",
+        "kind": "RbacActivationEvidence",
+        "state": "restart-required",
+    }:
+        return "restart-required"
+    if document == {
+        "apiVersion": "fortifylab.io/v1alpha1",
+        "kind": "RbacActivationEvidence",
+        "state": "active",
+    }:
+        return "active"
     return "ambiguous"
 
 
@@ -173,6 +170,10 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     store = LoopRecordStore(Path(config["state_database"]))
     registry = ComponentRegistry.load()
     cluster = config.get("cluster", {})
+    activation_evidence = (
+        Path(cluster["token_file"]).parent / RBAC_ACTIVATION_EVIDENCE
+        if cluster.get("token_file") else None
+    )
     observer = None
     operation_api = None
     operation_store = None
@@ -279,7 +280,9 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         lifecycle_adapter_state=(
             lifecycle_adapter.runtime_ready if lifecycle_adapter is not None else None
         ),
-        lifecycle_activation_state=microk8s_rbac_activation_state,
+        lifecycle_activation_state=(
+            lambda: read_rbac_activation_state(activation_evidence)
+        ) if activation_evidence is not None else None,
         approvals_configured=operation_api is not None,
         approvals_state=(
             approval_store.available

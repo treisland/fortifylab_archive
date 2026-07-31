@@ -78,7 +78,14 @@ predates that change, lifecycle reports `RBAC_RESTART_REQUIRED` with
 `action=restart-required`. Mutation remains disabled. Follow the documented
 MicroK8s restart workflow, verify the observer and lifecycle least-privilege
 allow/deny probes, and refresh. The Manager never treats an arguments-file
-change alone as proof that RBAC is active. Rolling back the arguments must be
+change alone as proof that RBAC is active. The privileged
+`install-cluster-access` workflow performs that comparison and atomically
+publishes a three-field sanitized activation document as `root:fortify-manager`
+mode `0640`; the unprivileged Web Manager never reads MicroK8s arguments or
+process metadata. Symlinked, oversized, malformed, incorrectly owned, or
+incorrectly permissioned evidence is ambiguous and never enables mutation.
+Explicit lifecycle-disabled and lifecycle-not-composed policy states take
+precedence over this infrastructure transition. Rolling back the arguments must be
 an explicit operator decision; disabling lifecycle is the safe application
 rollback and does not stop or uninstall deployed workloads.
 

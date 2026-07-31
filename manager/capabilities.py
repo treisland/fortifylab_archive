@@ -221,6 +221,16 @@ class CapabilityProvider:
     ) -> dict[str, Any]:
         if not self._authorized(identity, "lifecycle-execution"):
             return _unauthorized("lifecycle-execution", "operations/lifecycle-engine")
+        if not self._lifecycle_enabled:
+            return _entry(
+                "lifecycle-execution", "disabled", True, False,
+                "OPERATIONS_DISABLED", "operations/lifecycle-engine",
+            )
+        if not self._lifecycle_configured:
+            return _entry(
+                "lifecycle-execution", "not-configured", True, False,
+                "OPERATIONS_UNAVAILABLE", "operations/lifecycle-engine",
+            )
         activation = _activation(self._lifecycle_activation_state)
         if activation == "restart-required":
             return _entry(
@@ -231,16 +241,6 @@ class CapabilityProvider:
                     "effective": "previous-authorization",
                     "action": "restart-required",
                 },
-            )
-        if not self._lifecycle_enabled:
-            return _entry(
-                "lifecycle-execution", "disabled", True, False,
-                "OPERATIONS_DISABLED", "operations/lifecycle-engine",
-            )
-        if not self._lifecycle_configured:
-            return _entry(
-                "lifecycle-execution", "not-configured", True, False,
-                "OPERATIONS_UNAVAILABLE", "operations/lifecycle-engine",
             )
         if observation["state"] != "available":
             return _entry(
