@@ -184,6 +184,10 @@ See [Private Telegram manager observability](docs/operations/telegram-observabil
 for the typed, read-only mobile commands that consume manager inventory,
 health, preflight, incidents, and history without direct Kubernetes access.
 
+See [Release-candidate preparation](docs/operations/release-candidates.md) for
+bounded local artifacts, checksums, SBOM, profile and lifecycle evidence,
+objective go/no-go gates, and publication boundaries.
+
 Representative deterministic regression scenarios are documented in the
 [loop evaluation corpus](docs/evaluation-corpus.md).
 

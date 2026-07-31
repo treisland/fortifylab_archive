@@ -34,6 +34,10 @@ platform profiles.
 
 ### Added
 
+- Deterministic local 0.4 release-candidate preparation with bounded
+  tracked-file packaging, sensitive-input rejection, checksums, SPDX SBOM,
+  profile/lifecycle evidence, vulnerability and signature status,
+  documentation references, and objective fail-closed go/no-go gates.
 - Verified clean-install orchestration for the complete selected profile with
   fresh fail-closed preflight, workload/PVC collision detection, dependency
   ordering, durable resume evidence, functional completion gates, and shared
