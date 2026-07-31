@@ -125,6 +125,11 @@ class RecordStoreTests(unittest.TestCase):
             self.assertEqual(len(store.records(kind="HealthObservation")), 1)
 
     def test_concurrent_writers_do_not_lose_records(self) -> None:
+        # Initialize the schema before synchronizing writers. If one thread
+        # fails during first-open migration, the remaining threads would
+        # otherwise wait forever at the barrier and hide the real failure.
+        with LoopRecordStore(self.path):
+            pass
         barrier = threading.Barrier(6)
         failures: list[Exception] = []
 
@@ -133,16 +138,21 @@ class RecordStoreTests(unittest.TestCase):
                 document = copy.deepcopy(self.examples["event"])
                 document["id"] = f"event-{index}"
                 with LoopRecordStore(self.path) as store:
-                    barrier.wait()
+                    barrier.wait(timeout=5)
                     store.append(document)
             except Exception as error:  # pragma: no cover - asserted below
                 failures.append(error)
+                barrier.abort()
 
         threads = [threading.Thread(target=writer, args=(index,)) for index in range(6)]
         for thread in threads:
             thread.start()
         for thread in threads:
-            thread.join()
+            thread.join(timeout=10)
+        self.assertFalse(
+            any(thread.is_alive() for thread in threads),
+            "concurrent writers did not finish within the bounded wait",
+        )
         self.assertEqual(failures, [])
         with LoopRecordStore(self.path) as store:
             self.assertEqual(len(store.records()), 6)

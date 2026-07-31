@@ -8,6 +8,11 @@ platform profiles.
 
 ## [Unreleased]
 
+- Make dashboard read models independently actionable during partial and
+  disconnected failures, with retained stale evidence, observer/node/version
+  and evidence-age context, root-cause and blocked-consumer summaries,
+  sanitized error codes, session-aware bounded refresh, and accessible
+  panel-local recovery guidance.
 - Compose the authenticated Manager with a protected, least-privilege
   MicroK8s observer so desired inventory remains visible during failures and
   live component, health, preflight, node, namespace, version, freshness, and
