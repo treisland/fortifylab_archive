@@ -265,6 +265,11 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("preflightReadiness = null", failure_handler)
         self.assertIn("preflightGeneratedAt = 0", failure_handler)
         self.assertIn("updateSelectedActionControls()", failure_handler)
+        operations_reader = script.split(
+            "function renderOperationsRead", 1
+        )[1].split("function documentNode", 1)[0]
+        self.assertIn("setOperationsAvailable(available", operations_reader)
+        self.assertIn("updateSelectedActionControls()", operations_reader)
 
     def test_each_dashboard_panel_has_an_independent_live_state_region(self):
         html = (WEB / "index.html").read_text(encoding="utf-8")

@@ -598,6 +598,7 @@ function renderOperationsRead(document) {
   }
   const available = lifecycleCapability?.state === "available" && lifecycleCapability?.canMutate === true;
   setOperationsAvailable(available, lifecycleCapability?.code, lifecycleCapability?.state || "unavailable");
+  updateSelectedActionControls();
 }
 
 function documentNode(tag, className, content) {
