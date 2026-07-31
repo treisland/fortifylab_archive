@@ -81,6 +81,33 @@ the polling and SSRF boundary.
 
 ## Functional probe contract
 
+The supported MicroK8s installation packages
+`fortify-health-probe.service`. It runs as the separate
+`fortify-health-probe` identity, shares only the `fortify-manager` socket
+group, and creates `/run/fortify-lab-manager/health-probe.sock` as `0660`
+inside a `0750` systemd runtime directory. The Manager validates the file
+type, group ownership, and exact socket mode before every connection. Functional
+health becomes `available` only after a version `1.0` handshake succeeds; a
+configured path alone is never capability evidence.
+
+The probe process is the credential boundary. Optional external inputs belong
+in `/etc/fortify-lab-manager/health-probe.env`, owned by
+`root:fortify-health-probe` with mode `0640`. The Manager and Web UI never
+read, return, or log that file. Do not place it in the repository or Manager
+configuration. A missing input produces `PROBE_EXTERNAL_INPUT_NOT_CONFIGURED`;
+it never falls back to pod readiness or unauthenticated reachability.
+
+The supported input names are `FORTIFY_PROBE_DOMAIN`,
+`FORTIFY_PROBE_MANAGED_HOST`, and optionally
+`FORTIFY_PROBE_DNS_SERVER` (the MicroK8s service address defaults to
+`10.152.183.10`); `MYSQL_HOST`, `MYSQL_USER`, `MYSQL_PWD`; and `PGHOST`,
+`PGDATABASE`, `PGUSER`, `PGPASSWORD`. Host/domain values are validated as DNS
+names. The service runs fixed `SELECT 1`, native readiness, HTTPS `HEAD`, TLS,
+TCP, DNS, configuration, dependency, and registration operations selected by
+the registry identity. It discards native-client output and never reads HTTP
+response bodies. `FORTIFY_PROBE_TOKEN`, when required by an application
+endpoint, is sent only as an authorization header and is never returned.
+
 One newline-delimited JSON request is sent per check. `type`, `target`, and
 timeout are copied from the validated component registry; API callers cannot
 provide them.
@@ -102,6 +129,46 @@ service operation must honor `timeoutMs` and use a constant native command,
 query, endpoint, and expected-registration definition selected by the check
 identity. It must not accept shell text, paths, URLs, SQL, credentials, or
 license content from the request.
+
+Handshake messages use the same framing:
+
+```json
+{"apiVersion":"fortifylab.io/v1alpha1","kind":"FunctionalHealthProbeHandshake","protocolVersion":"1.0"}
+```
+
+The only successful response has kind
+`FunctionalHealthProbeHandshakeResult`, protocol version `1.0`, and status
+`ready`. Missing sockets, wrong ownership/mode, stale peers, malformed or
+oversized JSON, unsupported protocol versions, and timeouts fail closed.
+
+## Probe operations
+
+Installation enables and starts the probe before the Manager. These workflows
+do not read Kubernetes Secrets, broaden observer RBAC, execute in pods, or
+change Fortify data:
+
+```bash
+sudo ./scripts/fortify-manager probe-status
+sudo ./scripts/fortify-manager probe-diagnose
+sudo ./scripts/fortify-manager probe-restart
+sudo ./scripts/fortify-manager probe-disable
+```
+
+`probe-restart` restarts the Manager afterward so a recovered handshake is
+visible immediately. `probe-disable` stops and disables only functional
+health; metadata observation, configuration, credentials, workloads, and
+persistent data are preserved. Re-run `install` to safely re-enable the
+packaged service.
+
+Diagnostics report only service state, socket policy, and sanitized codes.
+Never attach the environment file, process environment, response bodies, or
+unredacted journal output to a support case. `PROBE_REQUEST_MALFORMED` means
+the peer did not send an exact registry identity;
+`PROBE_TIMEOUT` means the bounded operation expired;
+`PROBE_TARGET_UNREACHABLE` means the fixed target could not be reached; and
+`FUNCTIONAL_PROBE_HANDSHAKE_FAILED` means capability negotiation did not
+succeed. Correct the external input or service state, run `probe-restart`,
+then confirm recovery with `probe-diagnose`.
 
 ## Safe diagnostics
 

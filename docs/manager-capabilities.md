@@ -57,6 +57,12 @@ allow-listed observer. Auto-refresh performs the same read within 30 seconds
 while the page is visible. Recovery changes the same authenticated session's
 capability document; signing out and back in is not required.
 
+For `functional-health`, composition means a successful versioned handshake
+with the protected socket. Merely configuring
+`cluster.health_probe_socket` yields
+`FUNCTIONAL_PROBE_HANDSHAKE_FAILED` and `temporarily-unavailable` until the
+service is live and the socket policy is valid.
+
 If the Web client reports `CAPABILITY_CONTRACT_UNSUPPORTED_OR_STALE`, refresh
 once. If the state persists, update the Web client and Manager together or
 restore Manager clock accuracy. Do not broaden Kubernetes RBAC, add Secret

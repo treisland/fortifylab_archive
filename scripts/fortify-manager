@@ -8,6 +8,7 @@ CONFIG_ROOT="${FORTIFY_MANAGER_CONFIG_ROOT:-/etc/fortify-lab-manager}"
 STATE_ROOT="${FORTIFY_MANAGER_STATE_ROOT:-/var/lib/fortify-lab-manager}"
 INSTALL_ROOT="${FORTIFY_MANAGER_INSTALL_ROOT:-/opt/fortify-lab-manager}"
 UNIT_PATH="${FORTIFY_MANAGER_UNIT_PATH:-/etc/systemd/system/fortify-manager.service}"
+PROBE_UNIT_PATH="${FORTIFY_MANAGER_PROBE_UNIT_PATH:-/etc/systemd/system/fortify-health-probe.service}"
 CLI_PATH="${FORTIFY_MANAGER_CLI_PATH:-/usr/local/bin/fortify-manager-cli}"
 MANIFEST_PATH="${FORTIFY_MANAGER_MANIFEST_PATH:-/var/lib/fortify-lab-manager/manager-ingress.yaml}"
 CLUSTER_ACCESS_ROOT="${FORTIFY_MANAGER_CLUSTER_ACCESS_ROOT:-$STATE_ROOT/cluster-access}"
@@ -20,6 +21,7 @@ HELM_CLIENT="${FORTIFY_MANAGER_HELM_CLIENT:-/snap/microk8s/current/bin/helm}"
 KUBERNETES_SERVER="${FORTIFY_MANAGER_KUBERNETES_SERVER:-https://127.0.0.1:16443}"
 TLS_SECRET="${FORTIFY_MANAGER_TLS_SECRET:-tls}"
 SERVICE_NAME="fortify-manager.service"
+PROBE_SERVICE_NAME="fortify-health-probe.service"
 
 usage() {
     cat <<'EOF'
@@ -37,6 +39,8 @@ Commands:
   render-ingress DOMAIN ADDRESS [PORT] [OUTPUT]
                                   Render only; does not contact MicroK8s
   start | stop | restart | status Manage the host service
+  probe-status | probe-diagnose | probe-restart | probe-disable
+                                  Operate the protected functional-health probe
   upgrade                         Back up manager state, install, and restart
   diagnose                        Run sanitized service and ingress checks
   uninstall                       Remove service and ingress; preserve config/state
@@ -150,6 +154,11 @@ install_runtime() {
     id fortify-manager >/dev/null 2>&1 ||
         useradd --system --gid fortify-manager --home-dir "$STATE_ROOT" \
             --shell /usr/sbin/nologin fortify-manager
+    getent group fortify-health-probe >/dev/null ||
+        groupadd --system fortify-health-probe
+    id fortify-health-probe >/dev/null 2>&1 ||
+        useradd --system --gid fortify-health-probe --groups fortify-manager \
+            --home-dir /nonexistent --shell /usr/sbin/nologin fortify-health-probe
     install -d -m 700 -o fortify-manager -g fortify-manager "$STATE_ROOT"
     install -d -m 750 -o root -g fortify-manager "$CONFIG_ROOT"
     if [ -e "$release" ]; then
@@ -169,7 +178,10 @@ install_runtime() {
     fi
     install -m 644 "$release/packaging/systemd/fortify-manager.service" \
         "$UNIT_PATH"
+    install -m 644 "$release/packaging/systemd/fortify-health-probe.service" \
+        "$PROBE_UNIT_PATH"
     systemctl daemon-reload
+    systemctl enable --now "$PROBE_SERVICE_NAME"
     printf 'Installed manager %s; protected configuration and state were preserved.\n' \
         "$VERSION"
 }
@@ -631,6 +643,7 @@ diagnose() {
         { printf 'ERROR: registry, API reachability, or observer permissions failed\n' >&2; failed=1; }
     systemctl is-active --quiet "$SERVICE_NAME" ||
         { printf 'ERROR: manager service is not active\n' >&2; failed=1; }
+    probe_diagnose || failed=1
     backend_port="$(sed -n 's/^port = \([0-9]*\)$/\1/p' "$CONFIG_ROOT/manager.toml")"
     validate_port "$backend_port"
     readiness_url="http://127.0.0.1:$backend_port/ready"
@@ -666,6 +679,22 @@ diagnose() {
     printf 'Manager service, readiness, and ingress checks passed.\n'
 }
 
+probe_diagnose() {
+    local health_socket
+    systemctl is-active --quiet "$PROBE_SERVICE_NAME" ||
+        { printf 'ERROR: functional probe service is not active\n' >&2; return 1; }
+    health_socket="$(sed -n 's/^[[:space:]]*health_probe_socket[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CONFIG_ROOT/manager.toml")"
+    [ -S "$health_socket" ] &&
+        [ "$(stat -c '%a' "$health_socket")" = 660 ] &&
+        [ "$(stat -c '%G' "$health_socket")" = fortify-manager ] ||
+        { printf 'ERROR: functional probe socket owner/group/mode is invalid\n' >&2; return 1; }
+    runuser -u fortify-manager -- \
+        "$INSTALL_ROOT/current/bin/fortify-health-probe" ping \
+        --socket "$health_socket" >/dev/null ||
+        { printf 'ERROR: functional probe protocol handshake failed\n' >&2; return 1; }
+    printf 'Functional probe service and protected socket passed sanitized diagnostics.\n'
+}
+
 command="${1:-}"
 shift || true
 case "$command" in
@@ -680,6 +709,26 @@ case "$command" in
     start|stop|restart|status)
         require_root
         systemctl "$command" "$SERVICE_NAME"
+        ;;
+    probe-status)
+        require_root
+        systemctl status "$PROBE_SERVICE_NAME"
+        ;;
+    probe-diagnose)
+        require_root
+        probe_diagnose
+        ;;
+    probe-restart)
+        require_root
+        systemctl restart "$PROBE_SERVICE_NAME"
+        systemctl try-restart "$SERVICE_NAME"
+        probe_diagnose
+        ;;
+    probe-disable)
+        require_root
+        systemctl disable --now "$PROBE_SERVICE_NAME"
+        systemctl try-restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+        printf 'Functional health disabled; observation and lab data were preserved.\n'
         ;;
     upgrade)
         require_root
@@ -724,10 +773,12 @@ PY
     uninstall)
         require_root
         systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+        systemctl disable --now "$PROBE_SERVICE_NAME" 2>/dev/null || true
         microk8s kubectl -n fortify delete ingress fortify-manager \
             service fortify-manager-host endpoints fortify-manager-host \
             --ignore-not-found
         rm -f "$UNIT_PATH"
+        rm -f "$PROBE_UNIT_PATH"
         rm -f "$CLI_PATH"
         systemctl daemon-reload
         printf 'Manager service and ingress removed. Configuration and state preserved.\n'

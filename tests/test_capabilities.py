@@ -30,6 +30,7 @@ class CapabilityProviderTests(unittest.TestCase):
         document = self.provider(
             observation_state=lambda: "available",
             functional_health_configured=True,
+            functional_health_state=lambda: True,
             lifecycle_enabled=True,
             lifecycle_configured=True,
             approvals_configured=True,
@@ -56,6 +57,21 @@ class CapabilityProviderTests(unittest.TestCase):
             states(document)["lifecycle-execution"]["prerequisites"],
             ["OBSERVATION_AVAILABLE", "LIFECYCLE_SERVICE_COMPOSED"],
         )
+
+    def test_functional_health_requires_successful_live_handshake(self):
+        unavailable = states(self.provider(
+            observation_state=lambda: "available",
+            functional_health_configured=True,
+            functional_health_state=lambda: False,
+        ).document())["functional-health"]
+        self.assertEqual(unavailable["state"], "temporarily-unavailable")
+        self.assertEqual(unavailable["code"], "FUNCTIONAL_PROBE_HANDSHAKE_FAILED")
+        recovered = states(self.provider(
+            observation_state=lambda: "available",
+            functional_health_configured=True,
+            functional_health_state=lambda: True,
+        ).document())["functional-health"]
+        self.assertEqual(recovered["state"], "available")
 
     def test_disabled_and_intentionally_unconfigured_states_explain_failure(self):
         document = self.provider().document()

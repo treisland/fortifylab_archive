@@ -1,7 +1,7 @@
 [Unit]
 Description=Fortify Lab Manager 0.2
-After=network-online.target microk8s.daemon-kubelite.service
-Wants=network-online.target
+After=network-online.target microk8s.daemon-kubelite.service fortify-health-probe.service
+Wants=network-online.target fortify-health-probe.service
 
 [Service]
 Type=simple
