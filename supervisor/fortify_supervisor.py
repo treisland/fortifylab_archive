@@ -2347,6 +2347,8 @@ class Supervisor:
         """Apply every fail-closed gate unique to unattended merging."""
 
         self.verify_merge_plan(pr, payload)
+        if self.revert_expired_lease():
+            raise SupervisorError("Autonomous lease expired before merge")
         if self.policy.profile != "autonomous" or self.policy.expires_at is None:
             raise SupervisorError("Autonomous lease is not active")
         if self.store.get("paused", "false") == "true":

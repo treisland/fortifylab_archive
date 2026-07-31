@@ -537,6 +537,24 @@ class SupervisorTest(unittest.TestCase):
             self.supervisor.approve(str(approval["id"]), "autonomy-policy")
         self.assertEqual(self.github.merges, [])
 
+    def test_lease_expiring_during_monitor_blocks_merge_and_reverts(self) -> None:
+        self.activate_autonomous()
+        expiry = datetime.datetime.fromisoformat(
+            self.supervisor.policy.expires_at.replace("Z", "+00:00")
+        )
+        self.clock[0] = expiry.timestamp()
+        self.store.set("process_policy:monitor", "")
+        self.store.set("process_policy:listener", "")
+        payload = {
+            "repository": self.config.repository,
+            "pull_request": 12,
+            "head_sha": "abc123",
+        }
+        with self.assertRaisesRegex(SupervisorError, "expired before merge"):
+            self.supervisor.verify_autonomous_merge(self.github.pr, payload)
+        self.assertEqual(self.supervisor.policy.profile, "assisted")
+        self.assertEqual(self.github.merges, [])
+
     def test_expired_lease_survives_restart_and_reverts_before_action(self) -> None:
         path = self.configure_policy_file()
         pending = self.supervisor.handle_command(
