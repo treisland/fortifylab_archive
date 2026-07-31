@@ -101,24 +101,31 @@ validate_resource_name() {
 }
 
 render_ingress() {
-    local domain="$1" address="$2" port="${3:-8080}" output="${4:-$MANIFEST_PATH}"
+    local domain="$1" address="$2" port="${3:-8080}" output="${4:-$MANIFEST_PATH}" template address_type
     validate_domain "$domain"
     validate_address "$address"
     validate_port "$port"
     validate_resource_name "$TLS_SECRET"
+    address_type="$(python3 -c 'import ipaddress,sys; print("IPv4" if ipaddress.ip_address(sys.argv[1]).version == 4 else "IPv6")' "$address")"
     install -d -m 700 "$(dirname "$output")"
+    case "${FORTIFY_MANAGER_ENDPOINT_API:-endpointslice}" in
+        endpointslice) template="$REPOSITORY_ROOT/packaging/microk8s/manager-ingress.yaml.in" ;;
+        legacy) template="$REPOSITORY_ROOT/packaging/microk8s/manager-ingress-legacy-endpoints.yaml.in" ;;
+        *) fail "endpoint API must be endpointslice or legacy" ;;
+    esac
     sed -e "s/@DOMAIN@/$domain/g" \
         -e "s/@BACKEND_ADDRESS@/$address/g" \
+        -e "s/@ADDRESS_TYPE@/$address_type/g" \
         -e "s/@BACKEND_PORT@/$port/g" \
         -e "s/@TLS_SECRET@/$TLS_SECRET/g" \
-        "$REPOSITORY_ROOT/packaging/microk8s/manager-ingress.yaml.in" >"$output"
+        "$template" >"$output"
     chmod 600 "$output"
     printf 'Rendered manager ingress at %s\n' "$output"
 }
 
 configure_route() {
     require_root
-    local domain="$1" address="$2" port="${3:-8080}" config_candidate manifest_candidate
+    local domain="$1" address="$2" port="${3:-8080}" config_candidate manifest_candidate endpoint_resources
     [ -f "$CONFIG_ROOT/manager.toml" ] ||
         fail "install the manager before configuring ingress"
     validate_domain "$domain"
@@ -131,7 +138,16 @@ configure_route() {
         "$CONFIG_ROOT/manager.toml" >"$config_candidate"
     grep -q "^port = $port$" "$config_candidate" ||
         fail "manager configuration has no server port"
-    render_ingress "$domain" "$address" "$port" "$manifest_candidate"
+    endpoint_resources="$(microk8s kubectl api-resources --api-group=discovery.k8s.io -o name 2>/dev/null)" ||
+        fail "Kubernetes API discovery failed; existing configuration was preserved"
+    if grep -qx endpointslices.discovery.k8s.io <<<"$endpoint_resources"; then
+        FORTIFY_MANAGER_ENDPOINT_API=endpointslice \
+            render_ingress "$domain" "$address" "$port" "$manifest_candidate"
+    else
+        printf 'WARNING: EndpointSlice v1 is unavailable; using the documented legacy Endpoints compatibility path.\n' >&2
+        FORTIFY_MANAGER_ENDPOINT_API=legacy \
+            render_ingress "$domain" "$address" "$port" "$manifest_candidate"
+    fi
     microk8s kubectl apply --dry-run=server -f "$manifest_candidate" >/dev/null ||
         fail "manager ingress configuration was rejected; existing configuration was preserved"
     microk8s kubectl apply -f "$manifest_candidate" ||
@@ -737,6 +753,123 @@ PY
         "$username"
 }
 
+route_result() {
+    printf 'Manager route: layer=%s state=%s detail=%s\n' "$1" "$2" "$3"
+}
+
+manager_route_expectations() {
+    python3 - "$MANIFEST_PATH" <<'PY'
+import sys
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    documents = list(yaml.safe_load_all(stream))
+service = next(item for item in documents if item.get("kind") == "Service")
+backend = next(item for item in documents if item.get("kind") in {"EndpointSlice", "Endpoints"})
+ingress = next(item for item in documents if item.get("kind") == "Ingress")
+rule = ingress["spec"]["rules"][0]
+path = rule["http"]["paths"][0]["backend"]["service"]
+if backend["kind"] == "EndpointSlice":
+    address = backend["endpoints"][0]["addresses"][0]
+    port = backend["ports"][0]["port"]
+    discovery = "endpointslice"
+else:
+    address = backend["subsets"][0]["addresses"][0]["ip"]
+    port = backend["subsets"][0]["ports"][0]["port"]
+    discovery = "legacy"
+values = (
+    discovery, address, str(port), rule["host"],
+    ingress["spec"].get("ingressClassName", ""),
+    ingress["spec"]["tls"][0]["secretName"], path["name"],
+    str(path["port"]["number"]), service["metadata"]["name"],
+)
+if any("\t" in value or "\n" in value for value in values):
+    raise SystemExit(1)
+print("\t".join(values))
+PY
+}
+
+diagnose_manager_route() {
+    local expected discovery address port host ingress_class tls_secret backend_name ingress_port service_name
+    local failed=0 actual route_json resolved private_code external_code
+    expected="$(manager_route_expectations)" || {
+        route_result configuration failed protected-manifest-invalid
+        return 1
+    }
+    IFS=$'\t' read -r discovery address port host ingress_class tls_secret \
+        backend_name ingress_port service_name <<<"$expected"
+
+    if [ "$discovery" = endpointslice ]; then
+        route_json="$(microk8s kubectl -n fortify get endpointslices.discovery.k8s.io \
+            -l "kubernetes.io/service-name=$service_name" -o json 2>/dev/null)" || route_json=""
+        actual="$(python3 -c 'import json,sys
+try:
+ d=json.load(sys.stdin); pairs={(a, str(p.get("port"))) for i in d.get("items",[]) for e in i.get("endpoints",[]) if e.get("conditions",{}).get("ready",True) for a in e.get("addresses",[]) for p in i.get("ports",[])}
+ print("yes" if (sys.argv[1],sys.argv[2]) in pairs else "no")
+except Exception: print("no")' "$address" "$port" <<<"$route_json")"
+    else
+        route_json="$(microk8s kubectl -n fortify get endpoints "$service_name" -o json 2>/dev/null)" || route_json=""
+        actual="$(python3 -c 'import json,sys
+try:
+ d=json.load(sys.stdin); pairs={(a.get("ip"),str(p.get("port"))) for s in d.get("subsets",[]) for a in s.get("addresses",[]) for p in s.get("ports",[])}
+ print("yes" if (sys.argv[1],sys.argv[2]) in pairs else "no")
+except Exception: print("no")' "$address" "$port" <<<"$route_json")"
+    fi
+    if [ "$actual" = yes ]; then
+        route_result private-backend healthy "${discovery}-address-and-port-match"
+    else
+        route_result private-backend failed "${discovery}-address-or-port-mismatch"
+        failed=1
+    fi
+
+    route_json="$(microk8s kubectl -n fortify get ingress fortify-manager -o json 2>/dev/null)" || route_json=""
+    actual="$(python3 -c 'import json,sys
+try:
+ d=json.load(sys.stdin); s=d.get("spec",{}); r=s.get("rules",[])[0]; b=r["http"]["paths"][0]["backend"]["service"]
+ values=(r.get("host"),s.get("ingressClassName"),b.get("name"),str(b.get("port",{}).get("number")))
+ print("yes" if values==tuple(sys.argv[1:]) else "no")
+except Exception: print("no")' "$host" "$ingress_class" "$backend_name" "$ingress_port" <<<"$route_json")"
+    if [ "$actual" = yes ]; then
+        route_result ingress-routing healthy hostname-class-backend-and-port-match
+    else
+        route_result ingress-routing failed hostname-class-backend-or-port-mismatch
+        failed=1
+    fi
+
+    actual="$(python3 -c 'import json,sys
+try:
+ s=json.load(sys.stdin).get("spec",{}); print("yes" if any(t.get("secretName")==sys.argv[1] and sys.argv[2] in t.get("hosts",[]) for t in s.get("tls",[])) else "no")
+except Exception: print("no")' "$tls_secret" "$host" <<<"$route_json")"
+    private_code="$(curl --silent --output /dev/null --max-time 5 --resolve "$host:443:$address" \
+        --write-out '%{http_code}' "https://$host/ready" 2>/dev/null)" || private_code="000"
+    if [ "$actual" = yes ] &&
+        microk8s kubectl -n fortify get secret "$tls_secret" -o name >/dev/null 2>&1 &&
+        [[ "$private_code" =~ ^(200|302|303|401|403)$ ]]; then
+        route_result tls healthy secret-reference-and-private-handshake-valid
+    else
+        route_result tls failed secret-reference-secret-or-private-handshake-invalid
+        failed=1
+    fi
+
+    resolved="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u)" || resolved=""
+    if [ -n "$resolved" ] && [ "$resolved" = "$address" ]; then
+        route_result dns-resolution healthy resolves-to-configured-private-address
+        external_code="$(curl --silent --output /dev/null --max-time 5 --write-out '%{http_code}' \
+            "https://$host/ready" 2>/dev/null)" || external_code="000"
+        if [[ "$external_code" =~ ^(200|302|303|401|403)$ ]]; then
+            route_result external-reachability healthy operator-route-reachable
+        else
+            route_result external-reachability unreachable operator-route-not-reachable
+            failed=1
+        fi
+    else
+        route_result dns-resolution failed does-not-resolve-exclusively-to-configured-private-address
+        route_result external-reachability blocked dns-mismatch
+        failed=1
+    fi
+    return "$failed"
+}
+
 diagnose() {
     require_root
     local failed=0
@@ -772,14 +905,13 @@ diagnose() {
             esac
             failed=1
         fi
-        microk8s kubectl -n fortify get secret "$TLS_SECRET" >/dev/null ||
-            { printf 'ERROR: configured wildcard TLS Secret is missing\n' >&2; failed=1; }
+        diagnose_manager_route || failed=1
     else
         printf 'ERROR: manager ingress has not been configured\n' >&2
         failed=1
     fi
     [ "$failed" -eq 0 ] || fail "one or more checks failed; no secret values were collected"
-    printf 'Manager service, readiness, and ingress checks passed.\n'
+    printf 'Manager service, readiness, and layered route checks passed.\n'
 }
 
 probe_diagnose() {

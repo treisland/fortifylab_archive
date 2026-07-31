@@ -421,8 +421,15 @@ class ManagerInstallationTests(unittest.TestCase):
             )
             service, endpoints, ingress = list(yaml.safe_load_all(output.read_text()))
         self.assertEqual(service["spec"]["ports"][0]["port"], 8080)
-        self.assertEqual(endpoints["subsets"][0]["ports"][0]["port"], 8080)
-        self.assertEqual(endpoints["subsets"][0]["addresses"][0]["ip"], "10.0.0.10")
+        self.assertEqual(endpoints["kind"], "EndpointSlice")
+        self.assertEqual(endpoints["apiVersion"], "discovery.k8s.io/v1")
+        self.assertEqual(endpoints["addressType"], "IPv4")
+        self.assertEqual(endpoints["ports"][0]["port"], 8080)
+        self.assertEqual(endpoints["endpoints"][0]["addresses"], ["10.0.0.10"])
+        self.assertEqual(
+            endpoints["metadata"]["labels"]["kubernetes.io/service-name"],
+            "fortify-manager-host",
+        )
         self.assertEqual(ingress["spec"]["rules"][0]["host"], "lab.fortifydemo.com")
         self.assertEqual(
             ingress["spec"]["tls"][0],
@@ -431,6 +438,93 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertEqual(
             ingress["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"],
             {"name": "fortify-manager-host", "port": {"number": 8080}},
+        )
+
+    def test_legacy_endpoint_renderer_is_explicit_compatibility_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "ingress.yaml"
+            result = subprocess.run(
+                [
+                    "bash", "scripts/fortify-manager", "render-ingress",
+                    "fortifydemo.com", "10.0.0.10", "8080", str(output),
+                ],
+                cwd=ROOT,
+                env=os.environ | {"FORTIFY_MANAGER_ENDPOINT_API": "legacy"},
+                capture_output=True,
+                text=True,
+            )
+            documents = list(yaml.safe_load_all(output.read_text()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(documents[1]["kind"], "Endpoints")
+
+    def run_route_diagnostic(self, dns_address="10.0.0.10", external_code="200"):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manager-ingress.yaml"
+            subprocess.run(
+                [
+                    "bash", "scripts/fortify-manager", "render-ingress",
+                    "fortifydemo.com", "10.0.0.10", "8080", str(manifest),
+                ],
+                cwd=ROOT, check=True, capture_output=True, text=True,
+            )
+            command = r'''
+export FORTIFY_MANAGER_LIBRARY_ONLY=1
+source scripts/fortify-manager
+microk8s() {
+  case "$*" in
+    *"get endpointslices"*) printf '%s\n' '{"items":[{"endpoints":[{"addresses":["10.0.0.10"],"conditions":{"ready":true}}],"ports":[{"port":8080}]}]}' ;;
+    *"get ingress"*) printf '%s\n' '{"spec":{"ingressClassName":"public","tls":[{"hosts":["lab.fortifydemo.com"],"secretName":"tls"}],"rules":[{"host":"lab.fortifydemo.com","http":{"paths":[{"backend":{"service":{"name":"fortify-manager-host","port":{"number":8080}}}}]}}]}}' ;;
+    *"get secret"*) printf '%s\n' 'secret/tls' ;;
+    *) return 1 ;;
+  esac
+}
+getent() { printf '%s STREAM lab.fortifydemo.com\n' "$FAKE_DNS_ADDRESS"; }
+curl() {
+  case " $* " in
+    *" --resolve "*) printf '200' ;;
+    *) printf '%s' "$FAKE_EXTERNAL_CODE" ;;
+  esac
+}
+diagnose_manager_route
+'''
+            return subprocess.run(
+                ["bash", "-c", command], cwd=ROOT,
+                env=os.environ | {
+                    "FORTIFY_MANAGER_MANIFEST_PATH": str(manifest),
+                    "FAKE_DNS_ADDRESS": dns_address,
+                    "FAKE_EXTERNAL_CODE": external_code,
+                }, capture_output=True, text=True,
+            )
+
+    def test_route_diagnostics_report_five_independent_healthy_layers(self):
+        result = self.run_route_diagnostic()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for layer in (
+            "private-backend", "ingress-routing", "tls", "dns-resolution",
+            "external-reachability",
+        ):
+            self.assertIn(f"layer={layer} state=healthy", result.stdout)
+
+    def test_dns_mismatch_blocks_external_route_despite_private_https(self):
+        result = self.run_route_diagnostic(dns_address="203.0.113.44")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("layer=tls state=healthy", result.stdout)
+        self.assertIn("layer=dns-resolution state=failed", result.stdout)
+        self.assertIn(
+            "layer=external-reachability state=blocked detail=dns-mismatch",
+            result.stdout,
+        )
+
+    def test_external_timeout_does_not_hide_healthy_private_layers(self):
+        result = self.run_route_diagnostic(external_code="000")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("layer=private-backend state=healthy", result.stdout)
+        self.assertIn("layer=tls state=healthy", result.stdout)
+        self.assertIn("layer=dns-resolution state=healthy", result.stdout)
+        self.assertIn(
+            "layer=external-reachability state=unreachable",
+            result.stdout,
         )
 
     def test_renderer_rejects_public_backend_and_invalid_port(self):
@@ -468,7 +562,13 @@ class ManagerInstallationTests(unittest.TestCase):
             )
             config.write_text(original)
             microk8s = bin_root / "microk8s"
-            microk8s.write_text("#!/bin/sh\nexit 1\n")
+            microk8s.write_text(
+                "#!/bin/sh\n"
+                "case \"$*\" in\n"
+                "  *api-resources*) echo endpointslices.discovery.k8s.io; exit 0 ;;\n"
+                "  *) exit 1 ;;\n"
+                "esac\n"
+            )
             microk8s.chmod(0o755)
             fake_id = bin_root / "id"
             fake_id.write_text("#!/bin/sh\n[ \"$1\" = \"-u\" ] && echo 0\n")
