@@ -138,8 +138,13 @@ and bound only in `fortify`. It has no cluster role and no access to Secrets,
 pod logs, exec, attach, port-forward, RBAC, namespaces, or persistent volumes.
 Helm must use ConfigMaps for release records (`HELM_DRIVER=configmap`), while
 component charts reference pre-created Secrets by name. Applying the manifest
-and creating its protected kubeconfig are explicit operator steps; repository
-validation never applies them.
+and creating its protected kubeconfig are performed only by the verified
+`sudo ./scripts/fortify-manager activate-lifecycle` workflow. It validates the
+installed package, observer, functional probe, dedicated credential, complete
+allowlist, and mandatory denials before atomically enabling the Manager.
+`deactivate-lifecycle` revokes the binding and token without removing lab
+workloads or persistent data. Repository validation exercises fakes and static
+contracts only; it never applies these resources.
 
 `DashboardApp` continues to fail closed when no authorized operation service
 is supplied. Production composition must provide authorization, authoritative

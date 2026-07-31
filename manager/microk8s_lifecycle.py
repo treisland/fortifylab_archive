@@ -22,6 +22,7 @@ from manager.operation_engine import (
 
 ROOT = Path(__file__).resolve().parents[1]
 LIFECYCLE_KUBECONFIG = "/var/lib/fortify-lab-manager/cluster-access/lifecycle.kubeconfig"
+LIFECYCLE_CLIENT_ROOT = "/var/lib/fortify-lab-manager/lifecycle-bin"
 _LAYERS = {
     "workload-ready": "workload",
     "persistent-volume": "storage",
@@ -78,7 +79,10 @@ class MicroK8sLifecycleAdapter(OperationAdapter):
                 ["/bin/bash", str(adapter)],
                 cwd=str(self._root),
                 env={
-                    "PATH": "/snap/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "PATH": (
+                        f"{LIFECYCLE_CLIENT_ROOT}:"
+                        "/usr/sbin:/usr/bin:/sbin:/bin"
+                    ),
                     "FORTIFY_HOME_K8S": str(self._root),
                     "NAMESPACE": self._namespace,
                     "KUBECONFIG": LIFECYCLE_KUBECONFIG,

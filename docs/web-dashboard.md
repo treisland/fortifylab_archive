@@ -128,9 +128,15 @@ reduced-motion handling.
 ## Controlled operations
 
 Before interaction, the browser reads
-[`GET /api/v1alpha1/capabilities`](manager-capabilities.md). The
+[`GET /api/v1alpha1/capabilities`](manager-capabilities.md). The effective
 `lifecycle-execution` entry is authoritative for both the header badge and
-operation panel. `disabled`, `not-configured`, `unauthorized`, `degraded`, and
+operation panel. Operators must use the local
+host command `sudo ./scripts/fortify-manager activate-lifecycle`; the Web UI
+cannot create, upload, reveal, or repair its kubeconfig. Until verified
+activation succeeds, all mutation controls remain disabled while inventory,
+health, and history stay inspectable. Use `deactivate-lifecycle` for a
+preservation-only return to inspection mode, then refresh the page.
+`disabled`, `not-configured`, `unauthorized`, `degraded`, and
 `temporarily-unavailable` states explain why an action cannot succeed before
 submission and link to safe operator guidance. Component inventory never
 enables mutation controls.

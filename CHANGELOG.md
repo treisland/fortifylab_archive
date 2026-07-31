@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add idempotent, fail-closed MicroK8s lifecycle activation and
+  preservation-only deactivation with a protected dedicated kubeconfig,
+  complete namespace permission checks, mandatory Secret/log/exec/cross-
+  namespace denials, restart rollback, tests, and operator recovery guidance.
 - Add a fail-closed MicroK8s RBAC preflight and observer activation workflow
   with explicit enable/restart approval, partial-addon detection, mandatory
   positive and negative authorization checks, and documented rollback.

@@ -12,6 +12,12 @@ CLI_PATH="${FORTIFY_MANAGER_CLI_PATH:-/usr/local/bin/fortify-manager-cli}"
 MANIFEST_PATH="${FORTIFY_MANAGER_MANIFEST_PATH:-/var/lib/fortify-lab-manager/manager-ingress.yaml}"
 CLUSTER_ACCESS_ROOT="${FORTIFY_MANAGER_CLUSTER_ACCESS_ROOT:-$STATE_ROOT/cluster-access}"
 APISERVER_ARGS="${FORTIFY_MANAGER_APISERVER_ARGS:-/var/snap/microk8s/current/args/kube-apiserver}"
+PACKAGE_VALIDATOR="${FORTIFY_MANAGER_PACKAGE_VALIDATOR:-$REPOSITORY_ROOT/scripts/package-manager-runtime.py}"
+LIFECYCLE_KUBECONFIG="$CLUSTER_ACCESS_ROOT/lifecycle.kubeconfig"
+LIFECYCLE_CLIENT_ROOT="${FORTIFY_MANAGER_LIFECYCLE_CLIENT_ROOT:-$STATE_ROOT/lifecycle-bin}"
+KUBECTL_CLIENT="${FORTIFY_MANAGER_KUBECTL_CLIENT:-/snap/microk8s/current/kubectl}"
+HELM_CLIENT="${FORTIFY_MANAGER_HELM_CLIENT:-/snap/microk8s/current/bin/helm}"
+KUBERNETES_SERVER="${FORTIFY_MANAGER_KUBERNETES_SERVER:-https://127.0.0.1:16443}"
 TLS_SECRET="${FORTIFY_MANAGER_TLS_SECRET:-tls}"
 SERVICE_NAME="fortify-manager.service"
 
@@ -24,6 +30,8 @@ Commands:
   rbac-preflight                  Report desired/effective MicroK8s RBAC state
   install-cluster-access [--approve-enable-rbac] [--approve-restart]
                                   Verify RBAC and activate protected observer access
+  activate-lifecycle              Verify and activate bounded lifecycle execution
+  deactivate-lifecycle            Revoke lifecycle mutation; preserve all lab data
   bootstrap-account [USERNAME]    Prompt for and persist the first/local account verifier
   configure DOMAIN ADDRESS [PORT] Render and apply the MicroK8s ingress route
   render-ingress DOMAIN ADDRESS [PORT] [OUTPUT]
@@ -321,6 +329,259 @@ install_cluster_access() {
     printf 'Verified effective RBAC and activated namespace-scoped observer access; no application Secret was read.\n'
 }
 
+set_lifecycle_enabled() {
+    local enabled="$1" source="$CONFIG_ROOT/manager.toml" candidate
+    [ -f "$source" ] || fail "install the manager before changing lifecycle access"
+    candidate="$(mktemp "$CONFIG_ROOT/.manager.toml.XXXXXX")"
+    trap 'rm -f "$candidate"' RETURN
+    python3 - "$source" "$candidate" "$enabled" <<'PY'
+import os
+import re
+import sys
+
+source, target, enabled = sys.argv[1:]
+lines = open(source, encoding="utf-8").readlines()
+in_lifecycle = False
+replaced = False
+for index, line in enumerate(lines):
+    section = re.match(r"\s*\[([^]]+)\]\s*(?:#.*)?$", line)
+    if section:
+        in_lifecycle = section.group(1) == "lifecycle"
+    elif in_lifecycle and re.match(r"\s*enabled\s*=", line):
+        lines[index] = f"enabled = {enabled}\n"
+        replaced = True
+if not replaced:
+    raise SystemExit("lifecycle.enabled is missing from manager configuration")
+with open(target, "w", encoding="utf-8") as stream:
+    stream.writelines(lines)
+os.chmod(target, 0o640)
+PY
+    chown root:fortify-manager "$candidate"
+    mv -f "$candidate" "$source"
+    trap - RETURN
+}
+
+lifecycle_can() {
+    local kubeconfig="$1"
+    shift
+    runuser -u fortify-manager -- env \
+        KUBECONFIG="$kubeconfig" \
+        PATH="$LIFECYCLE_CLIENT_ROOT:/usr/sbin:/usr/bin:/sbin:/bin" \
+        microk8s kubectl auth can-i "$@" 2>/dev/null
+}
+
+install_lifecycle_clients() {
+    local candidate
+    [ -x "$KUBECTL_CLIENT" ] && [ -x "$HELM_CLIENT" ] ||
+        fail "unprivileged Kubernetes lifecycle clients are unavailable; lifecycle remains disabled"
+    install -d -m 755 "$LIFECYCLE_CLIENT_ROOT"
+    chown root:fortify-manager "$LIFECYCLE_CLIENT_ROOT"
+    candidate="$(mktemp "$LIFECYCLE_CLIENT_ROOT/.microk8s.XXXXXX")"
+    trap 'rm -f "$candidate"' RETURN
+    python3 - "$candidate" "$KUBECTL_CLIENT" "$HELM_CLIENT" <<'PY'
+import os
+import shlex
+import sys
+
+target, kubectl, helm = sys.argv[1:]
+document = f"""#!/bin/sh
+case "${{1:-}}" in
+    kubectl)
+        shift
+        exec {shlex.quote(kubectl)} "$@"
+        ;;
+    helm3)
+        shift
+        exec {shlex.quote(helm)} "$@"
+        ;;
+    *)
+        printf 'ERROR: unsupported lifecycle client command\n' >&2
+        exit 64
+        ;;
+esac
+"""
+with open(target, "w", encoding="utf-8") as stream:
+    stream.write(document)
+os.chmod(target, 0o755)
+PY
+    chown root:fortify-manager "$candidate"
+    mv -f "$candidate" "$LIFECYCLE_CLIENT_ROOT/microk8s"
+    trap - RETURN
+    runuser -u fortify-manager -- \
+        "$LIFECYCLE_CLIENT_ROOT/microk8s" kubectl version --client >/dev/null ||
+        fail "unprivileged Kubernetes lifecycle client verification failed; lifecycle remains disabled"
+    runuser -u fortify-manager -- \
+        "$LIFECYCLE_CLIENT_ROOT/microk8s" helm3 version --short >/dev/null ||
+        fail "unprivileged Helm lifecycle client verification failed; lifecycle remains disabled"
+}
+
+verify_lifecycle_authorization() {
+    local kubeconfig="$1" result check resource verb
+    for resource in \
+        configmaps services persistentvolumeclaims serviceaccounts \
+        deployments.apps statefulsets.apps replicasets.apps jobs.batch \
+        ingresses.networking.k8s.io; do
+        for verb in get list watch create update patch delete; do
+            result="$(lifecycle_can "$kubeconfig" "$verb" "$resource" -n fortify)" ||
+                return 1
+            [ "$result" = "yes" ] || return 1
+        done
+    done
+    for resource in deployments.apps statefulsets.apps; do
+        for verb in get update patch; do
+            result="$(lifecycle_can "$kubeconfig" "$verb" "$resource" \
+                --subresource=scale -n fortify)" || return 1
+            [ "$result" = "yes" ] || return 1
+        done
+    done
+    for check in \
+        "get secrets -n fortify" \
+        "list secrets -n fortify" \
+        "get pods --subresource=log -n fortify" \
+        "create pods --subresource=exec -n fortify" \
+        "create pods --subresource=attach -n fortify" \
+        "create pods --subresource=portforward -n fortify" \
+        "get configmaps -n default" \
+        "get namespaces" \
+        "get persistentvolumes" \
+        "get roles.rbac.authorization.k8s.io -n fortify" \
+        "get clusterroles.rbac.authorization.k8s.io"; do
+        # shellcheck disable=SC2086
+        result="$(lifecycle_can "$kubeconfig" $check)" || return 1
+        [ "$result" = "no" ] || return 1
+    done
+}
+
+render_lifecycle_kubeconfig() {
+    local token_file="$1" ca_file="$2" output="$3"
+    python3 - "$token_file" "$ca_file" "$output" "$KUBERNETES_SERVER" <<'PY'
+import base64
+import os
+import sys
+
+token_path, ca_path, output, server = sys.argv[1:]
+token = open(token_path, encoding="utf-8").read().strip()
+ca = base64.b64encode(open(ca_path, "rb").read()).decode("ascii")
+if not token or not ca or "\n" in token:
+    raise SystemExit("dedicated lifecycle credential is invalid")
+document = f"""apiVersion: v1
+kind: Config
+clusters:
+- name: fortify-microk8s
+  cluster:
+    server: {server}
+    certificate-authority-data: {ca}
+users:
+- name: fortify-manager-lifecycle
+  user:
+    token: {token}
+contexts:
+- name: fortify-lifecycle
+  context:
+    cluster: fortify-microk8s
+    namespace: fortify
+    user: fortify-manager-lifecycle
+current-context: fortify-lifecycle
+"""
+with open(output, "w", encoding="utf-8") as stream:
+    stream.write(document)
+os.chmod(output, 0o600)
+PY
+}
+
+activate_lifecycle() {
+    require_root
+    local token_candidate ca_candidate kubeconfig_candidate config_activated=0 ready=0
+    install -d -m 700 "$CLUSTER_ACCESS_ROOT"
+    chown fortify-manager:fortify-manager "$CLUSTER_ACCESS_ROOT"
+
+    # A retry after any partial attempt always begins without mutation enabled.
+    set_lifecycle_enabled false
+    rm -f "$LIFECYCLE_KUBECONFIG"
+    systemctl try-restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+
+    [ -d "$INSTALL_ROOT/current" ] ||
+        fail "installed Manager runtime is missing; lifecycle remains disabled"
+    python3 "$PACKAGE_VALIDATOR" validate --target "$INSTALL_ROOT/current" >/dev/null ||
+        fail "installed Manager packaging verification failed; lifecycle remains disabled"
+    "$INSTALL_ROOT/current/bin/fortify-manager-server" diagnose-cluster >/dev/null ||
+        fail "protected observer verification failed; lifecycle remains disabled"
+    install_lifecycle_clients
+
+    health_socket="$(sed -n 's/^[[:space:]]*health_probe_socket[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CONFIG_ROOT/manager.toml")"
+    [ -n "$health_socket" ] && [ -S "$health_socket" ] &&
+        runuser -u fortify-manager -- test -r "$health_socket" &&
+        runuser -u fortify-manager -- test -w "$health_socket" ||
+        fail "protected functional health probe is unavailable; lifecycle remains disabled"
+
+    microk8s kubectl apply -f \
+        "$REPOSITORY_ROOT/packaging/microk8s/manager-lifecycle-rbac.yaml" >/dev/null ||
+        fail "lifecycle identity could not be installed; lifecycle remains disabled"
+
+    token_candidate="$(mktemp "$CLUSTER_ACCESS_ROOT/.lifecycle-token.XXXXXX")"
+    ca_candidate="$(mktemp "$CLUSTER_ACCESS_ROOT/.lifecycle-ca.XXXXXX")"
+    kubeconfig_candidate="$(mktemp "$CLUSTER_ACCESS_ROOT/.lifecycle-kubeconfig.XXXXXX")"
+    trap 'rm -f "$token_candidate" "$ca_candidate" "$kubeconfig_candidate"' RETURN
+    for _ in {1..15}; do
+        microk8s kubectl -n fortify get secret \
+            fortify-manager-lifecycle-token \
+            -o jsonpath='{.data.token}' 2>/dev/null |
+            base64 -d >"$token_candidate" || true
+        [ -s "$token_candidate" ] && break
+        sleep 1
+    done
+    [ -s "$token_candidate" ] ||
+        fail "dedicated lifecycle credential was not issued; lifecycle remains disabled"
+    microk8s kubectl -n fortify get secret \
+        fortify-manager-lifecycle-token \
+        -o jsonpath='{.data.ca\.crt}' 2>/dev/null |
+        base64 -d >"$ca_candidate" ||
+        fail "lifecycle cluster CA could not be protected; lifecycle remains disabled"
+    [ -s "$ca_candidate" ] ||
+        fail "lifecycle cluster CA is empty; lifecycle remains disabled"
+    render_lifecycle_kubeconfig "$token_candidate" "$ca_candidate" "$kubeconfig_candidate"
+    chown fortify-manager:fortify-manager "$kubeconfig_candidate"
+    chmod 600 "$kubeconfig_candidate"
+    verify_lifecycle_authorization "$kubeconfig_candidate" ||
+        fail "lifecycle allow-list or mandatory denial verification failed; lifecycle remains disabled"
+
+    mv -f "$kubeconfig_candidate" "$LIFECYCLE_KUBECONFIG"
+    rm -f "$token_candidate" "$ca_candidate"
+    trap - RETURN
+    set_lifecycle_enabled true
+    config_activated=1
+    if ! "$INSTALL_ROOT/current/bin/fortify-manager-server" check >/dev/null ||
+        ! systemctl restart "$SERVICE_NAME"; then
+        set_lifecycle_enabled false
+        rm -f "$LIFECYCLE_KUBECONFIG"
+        systemctl try-restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+        fail "Manager activation failed and lifecycle access was rolled back"
+    fi
+    for _ in {1..15}; do
+        systemctl is-active --quiet "$SERVICE_NAME" && { ready=1; break; }
+        sleep 1
+    done
+    if [ "$ready" -ne 1 ]; then
+        [ "$config_activated" -eq 0 ] || set_lifecycle_enabled false
+        rm -f "$LIFECYCLE_KUBECONFIG"
+        systemctl try-restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+        fail "Manager did not become active and lifecycle access was rolled back"
+    fi
+    printf 'lifecycle-execution: available\n'
+}
+
+deactivate_lifecycle() {
+    require_root
+    set_lifecycle_enabled false
+    rm -f "$LIFECYCLE_KUBECONFIG"
+    rm -f "$LIFECYCLE_CLIENT_ROOT/microk8s"
+    microk8s kubectl -n fortify delete rolebinding fortify-manager-lifecycle \
+        secret fortify-manager-lifecycle-token --ignore-not-found >/dev/null ||
+        fail "lifecycle configuration is disabled, but credential revocation needs operator attention"
+    systemctl try-restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+    printf 'lifecycle-execution: disabled; lab workloads, data, Secrets, configuration, and operation history were preserved.\n'
+}
+
 bootstrap_account() {
     require_root
     local username="${1:-operator}" first second verifier temporary
@@ -411,6 +672,8 @@ case "$command" in
     install) install_runtime ;;
     rbac-preflight) rbac_preflight ;;
     install-cluster-access) install_cluster_access "$@" ;;
+    activate-lifecycle) activate_lifecycle "$@" ;;
+    deactivate-lifecycle) deactivate_lifecycle "$@" ;;
     bootstrap-account) bootstrap_account "$@" ;;
     render-ingress) render_ingress "$@" ;;
     configure) configure_route "$@" ;;

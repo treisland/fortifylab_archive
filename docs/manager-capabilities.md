@@ -38,6 +38,13 @@ and confirmation buttons, cancellation, and retry controls all consume the
 same `lifecycle-execution` entry. A retained operation can still be inspected
 when those mutation controls are disabled.
 
+The supported operator transition is
+`sudo ./scripts/fortify-manager activate-lifecycle`. It publishes `available`
+only after protected package, observer, health-probe, credential, positive
+permission, negative permission, restart, and service-state checks pass.
+`deactivate-lifecycle` revokes mutation without deleting operation history or
+lab data. Neither command exposes credential material through this API.
+
 Backup/restore, upgrade, write-only secret, and notification services report
 `not-configured` until their independently protected runtime services are
 composed. This is intentional while those features remain unavailable; the

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -23,6 +24,97 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ManagerInstallationTests(unittest.TestCase):
+    def lifecycle_activation_fixture(self, root: Path):
+        config_root = root / "config"
+        state_root = root / "state"
+        install_root = root / "install"
+        bin_root = root / "bin"
+        for path in (
+            config_root,
+            state_root / "cluster-access",
+            install_root / "current" / "bin",
+            bin_root,
+        ):
+            path.mkdir(parents=True)
+        health_socket = state_root / "health-probe.sock"
+        config = config_root / "manager.toml"
+        config.write_text(
+            '[server]\nhost = "0.0.0.0"\nport = 8080\n'
+            f'[storage]\ndatabase = "{state_root / "history.sqlite3"}"\n'
+            f'[authentication]\naccounts = "{state_root / "accounts.json"}"\n'
+            '[cluster]\nserver = "https://127.0.0.1:16443"\n'
+            f'token_file = "{state_root / "cluster-access/token"}"\n'
+            f'ca_file = "{state_root / "cluster-access/ca.crt"}"\n'
+            f'health_probe_socket = "{health_socket}"\n'
+            "[lifecycle]\nenabled = false\n"
+        )
+        validator = root / "validate-runtime.py"
+        validator.write_text("raise SystemExit(0)\n")
+        server = install_root / "current/bin/fortify-manager-server"
+        server.write_text(
+            "#!/usr/bin/env bash\n"
+            '[ "${FAKE_SERVER_FAILURE:-0}" = 0 ]\n'
+        )
+        server.chmod(0o755)
+        (bin_root / "id").write_text(
+            "#!/usr/bin/env bash\n"
+            '[ "$1" = "-u" ] && printf "0\\n"\n'
+        )
+        (bin_root / "chown").write_text("#!/usr/bin/env bash\nexit 0\n")
+        (bin_root / "sleep").write_text("#!/usr/bin/env bash\nexit 0\n")
+        (bin_root / "runuser").write_text(
+            "#!/usr/bin/env bash\nshift 3\nexec \"$@\"\n"
+        )
+        (bin_root / "systemctl").write_text(
+            "#!/usr/bin/env bash\n"
+            'if [ "$1" = restart ] && [ "${FAKE_RESTART_FAILURE:-0}" = 1 ]; '
+            "then exit 1; fi\n"
+            "exit 0\n"
+        )
+        (bin_root / "microk8s").write_text(
+            "#!/usr/bin/env bash\n"
+            'arguments="$*"\n'
+            'if [[ "$arguments" == *"auth can-i"* ]]; then\n'
+            '  [ -s "${KUBECONFIG:-}" ] || exit 1\n'
+            '  if [[ "$arguments" =~ secrets|subresource=log|subresource=exec|'
+            'subresource=attach|subresource=portforward|"-n default"|namespaces|'
+            'persistentvolumes|roles.rbac|clusterroles.rbac ]]; then\n'
+            '    [ "${FAKE_EXCESS_PERMISSION:-0}" = 1 ] && echo yes || echo no\n'
+            "  else echo yes; fi\n"
+            'elif [[ "$arguments" == *"data.token"* ]]; then\n'
+            '  [ "${FAKE_TOKEN_READY:-1}" = 1 ] && printf "bGlmZWN5Y2xlLXRva2Vu"\n'
+            'elif [[ "$arguments" == *"data.ca"* ]]; then\n'
+            '  printf "bGFiLWNh"\n'
+            "else exit 0; fi\n"
+        )
+        for executable in bin_root.iterdir():
+            executable.chmod(0o755)
+        environment = os.environ | {
+            "PATH": f"{bin_root}:{os.environ['PATH']}",
+            "FORTIFY_MANAGER_CONFIG_ROOT": str(config_root),
+            "FORTIFY_MANAGER_STATE_ROOT": str(state_root),
+            "FORTIFY_MANAGER_INSTALL_ROOT": str(install_root),
+            "FORTIFY_MANAGER_CLUSTER_ACCESS_ROOT": str(
+                state_root / "cluster-access"
+            ),
+            "FORTIFY_MANAGER_PACKAGE_VALIDATOR": str(validator),
+            "FORTIFY_MANAGER_LIFECYCLE_CLIENT_ROOT": str(
+                state_root / "lifecycle-bin"
+            ),
+            "FORTIFY_MANAGER_KUBECTL_CLIENT": str(bin_root / "microk8s"),
+            "FORTIFY_MANAGER_HELM_CLIENT": str(bin_root / "microk8s"),
+        }
+        return config, state_root / "cluster-access/lifecycle.kubeconfig", health_socket, environment
+
+    def run_lifecycle_command(self, command: str, environment: dict):
+        return subprocess.run(
+            ["bash", "scripts/fortify-manager", command],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+
     def test_manifest_stages_complete_runtime_with_policy_modes(self):
         with tempfile.TemporaryDirectory() as directory:
             candidate = Path(directory) / "candidate"
@@ -405,6 +497,12 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertFalse(any(item["kind"].endswith("ClusterRole") for item in documents))
         role = next(item for item in documents if item["kind"] == "Role")
         binding = next(item for item in documents if item["kind"] == "RoleBinding")
+        token = next(
+            item
+            for item in documents
+            if item["kind"] == "Secret"
+            and item["metadata"]["name"] == "fortify-manager-lifecycle-token"
+        )
         resources = {
             resource for rule in role["rules"] for resource in rule["resources"]
         }
@@ -414,6 +512,96 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertNotIn("namespaces", resources)
         self.assertEqual(role["metadata"]["namespace"], "fortify")
         self.assertEqual(binding["metadata"]["namespace"], "fortify")
+        self.assertEqual(token["type"], "kubernetes.io/service-account-token")
+
+    def test_lifecycle_activation_success_is_idempotent_and_secret_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, kubeconfig, health_path, environment = (
+                self.lifecycle_activation_fixture(Path(directory))
+            )
+            probe = socket.socket(socket.AF_UNIX)
+            probe.bind(str(health_path))
+            try:
+                first = self.run_lifecycle_command("activate-lifecycle", environment)
+                second = self.run_lifecycle_command("activate-lifecycle", environment)
+            finally:
+                probe.close()
+            for result in (first, second):
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("lifecycle-execution: available", result.stdout)
+                self.assertNotIn("lifecycle-token", result.stdout + result.stderr)
+            self.assertIn("enabled = true", config.read_text())
+            self.assertTrue(kubeconfig.is_file())
+            self.assertEqual(kubeconfig.stat().st_mode & 0o777, 0o600)
+            lifecycle_client = Path(directory) / "state/lifecycle-bin/microk8s"
+            self.assertTrue(lifecycle_client.is_file())
+            self.assertEqual(lifecycle_client.stat().st_mode & 0o777, 0o755)
+
+    def test_lifecycle_activation_denial_partial_retry_and_rollback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, kubeconfig, health_path, environment = (
+                self.lifecycle_activation_fixture(Path(directory))
+            )
+            probe = socket.socket(socket.AF_UNIX)
+            probe.bind(str(health_path))
+            try:
+                partial = self.run_lifecycle_command(
+                    "activate-lifecycle", environment | {"FAKE_TOKEN_READY": "0"}
+                )
+                partial_config = config.read_text()
+                denied = self.run_lifecycle_command(
+                    "activate-lifecycle",
+                    environment | {"FAKE_EXCESS_PERMISSION": "1"},
+                )
+                denied_config = config.read_text()
+                rollback = self.run_lifecycle_command(
+                    "activate-lifecycle",
+                    environment | {"FAKE_RESTART_FAILURE": "1"},
+                )
+                rollback_config = config.read_text()
+                retry = self.run_lifecycle_command("activate-lifecycle", environment)
+            finally:
+                probe.close()
+            for result, failed_config in (
+                (partial, partial_config),
+                (denied, denied_config),
+                (rollback, rollback_config),
+            ):
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("enabled = false", failed_config)
+            self.assertIn("credential was not issued", partial.stderr)
+            self.assertIn("mandatory denial", denied.stderr)
+            self.assertIn("rolled back", rollback.stderr)
+            self.assertEqual(retry.returncode, 0, retry.stderr)
+            self.assertTrue(kubeconfig.exists())
+
+    def test_lifecycle_deactivation_revokes_mutation_without_state_deletion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, kubeconfig, health_path, environment = (
+                self.lifecycle_activation_fixture(Path(directory))
+            )
+            history = Path(directory) / "state/history.sqlite3"
+            history.write_text("preserved")
+            probe = socket.socket(socket.AF_UNIX)
+            probe.bind(str(health_path))
+            try:
+                activated = self.run_lifecycle_command(
+                    "activate-lifecycle", environment
+                )
+                deactivated = self.run_lifecycle_command(
+                    "deactivate-lifecycle", environment
+                )
+            finally:
+                probe.close()
+            self.assertEqual(activated.returncode, 0, activated.stderr)
+            self.assertEqual(deactivated.returncode, 0, deactivated.stderr)
+            self.assertIn("enabled = false", config.read_text())
+            self.assertFalse(kubeconfig.exists())
+            self.assertFalse(
+                (Path(directory) / "state/lifecycle-bin/microk8s").exists()
+            )
+            self.assertEqual(history.read_text(), "preserved")
+            self.assertIn("operation history were preserved", deactivated.stdout)
 
 
 if __name__ == "__main__":
