@@ -34,8 +34,8 @@ PROFILE_DEFAULTS: dict[str, dict[str, str]] = {
     "assisted": {
         "start_next_issue": "auto",
         "close_completed_issue": "auto",
-        "advance_milestone": "approval",
-        "retry_idempotent_failure": "approval",
+        "advance_milestone": "auto",
+        "retry_idempotent_failure": "auto",
         "merge_pull_request": "approval",
         "destructive_operations": "approval",
         "secret_operations": "approval",

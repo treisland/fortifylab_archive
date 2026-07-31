@@ -429,6 +429,13 @@ class SupervisorTest(unittest.TestCase):
         self.supervisor = Supervisor(
             self.config, self.store, self.github, self.telegram
         )
+        self.supervisor.policy = dataclasses.replace(
+            self.supervisor.policy,
+            decisions={
+                **self.supervisor.policy.decisions,
+                "advance_milestone": "approval",
+            },
+        )
         self.github.issue = None
         self.github.issues[following] = {
             "number": 33,
@@ -503,6 +510,13 @@ class SupervisorTest(unittest.TestCase):
         )
         self.supervisor = Supervisor(
             self.config, self.store, self.github, self.telegram
+        )
+        self.supervisor.policy = dataclasses.replace(
+            self.supervisor.policy,
+            decisions={
+                **self.supervisor.policy.decisions,
+                "advance_milestone": "approval",
+            },
         )
         self.github.issue = None
         self.github.milestones[self.config.milestone] = {
@@ -618,6 +632,120 @@ class SupervisorTest(unittest.TestCase):
         self.assertEqual(
             len([message for message in self.telegram.messages if "Queued issue" in message]),
             1,
+        )
+
+    def test_assisted_rollover_starts_next_issue_in_same_monitor_cycle(self) -> None:
+        following = "0.2 — Observable Manager MVP"
+        self.config = dataclasses.replace(
+            self.config, milestones=(self.config.milestone, following)
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.github.discovered = []
+        self.github.issue = None
+        self.github.issues[following] = {
+            "number": 33,
+            "title": "Lifecycle engine",
+            "url": "https://github.test/issues/33",
+        }
+        self.github.milestones[self.config.milestone] = {
+            "title": self.config.milestone,
+            "state": "closed",
+            "open_issues": 0,
+        }
+
+        self.supervisor.monitor_once()
+
+        self.assertEqual(self.store.get("active_milestone"), following)
+        self.assertEqual(self.store.get("current_issue"), "33")
+        event = self.store.connection.execute(
+            "SELECT payload FROM events WHERE kind = 'milestone.rollover'"
+        ).fetchone()
+        self.assertIsNotNone(event)
+        audit = json.loads(event["payload"])
+        self.assertEqual(audit["decision"], "auto")
+        self.assertTrue(audit["preconditions"]["current_closed"])
+        self.assertTrue(audit["preconditions"]["sequence_match"])
+        self.assertFalse(audit["preconditions"]["paused"])
+        self.assertFalse(audit["preconditions"]["conflicting_approval"])
+
+    def test_two_stores_cannot_claim_the_same_queue_slot_twice(self) -> None:
+        second_store = Store(self.config.state_file, now=lambda: self.clock[0])
+        try:
+            self.github.discovered = []
+            second = Supervisor(
+                self.config, second_store, self.github, self.telegram
+            )
+            self.supervisor.monitor_once()
+            second.monitor_once()
+            selected = self.store.connection.execute(
+                "SELECT COUNT(*) AS count FROM events WHERE kind = 'issue.selected'"
+            ).fetchone()["count"]
+            self.assertEqual(selected, 1)
+            self.assertEqual(self.store.get("current_issue"), "2")
+        finally:
+            second_store.connection.close()
+
+    def test_closed_next_milestone_fails_closed_with_status(self) -> None:
+        following = "0.2 — Observable Manager MVP"
+        self.config = dataclasses.replace(
+            self.config, milestones=(self.config.milestone, following)
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.github.issue = None
+        self.github.milestones[self.config.milestone] = {
+            "title": self.config.milestone,
+            "state": "closed",
+            "open_issues": 0,
+        }
+        self.github.milestones[following] = {
+            "title": following,
+            "state": "closed",
+            "open_issues": 0,
+        }
+
+        self.supervisor.queue_next_issue()
+
+        self.assertEqual(self.store.get("active_milestone", self.config.milestone), self.config.milestone)
+        self.assertTrue(any("must be open" in message for message in self.telegram.messages))
+        self.assertIn("Milestone progress: blocked", self.supervisor.status_text())
+
+        self.github.milestones[following]["state"] = "open"
+        self.github.issues[following] = {
+            "number": 34,
+            "title": "Recovery",
+            "url": "https://github.test/issues/34",
+        }
+        self.supervisor.queue_next_issue()
+        self.assertEqual(self.store.get("active_milestone"), following)
+        self.assertEqual(self.store.get("current_issue"), "34")
+        self.assertEqual(self.store.get("last_error"), "")
+
+    def test_assisted_auto_retry_requires_verified_allowlist(self) -> None:
+        self.store.set("current_pr", "12")
+        self.github.pr["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+        self.supervisor.monitor_once()
+        self.assertTrue(
+            self.store.has_event("retry:pr:12:checks:abc123")
+        )
+
+        self.store.connection.execute(
+            "DELETE FROM events WHERE fingerprint = 'retry:pr:12:checks:abc123'"
+        )
+        self.store.connection.commit()
+        self.config = dataclasses.replace(
+            self.config,
+            notifications=NotificationPreferences(retry_stages=()),
+        )
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.supervisor.monitor_once()
+        self.assertFalse(
+            self.store.has_event("retry:pr:12:checks:abc123")
         )
 
     def test_paused_idle_monitor_does_not_select_issue(self) -> None:
