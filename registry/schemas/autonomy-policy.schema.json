@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortify-lab-manager.local/schemas/autonomy-policy.schema.json",
+  "title": "Fortify supervisor autonomy policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "profile", "generation"],
+  "properties": {
+    "schema_version": {
+      "const": "fortify.autonomy/v1alpha1"
+    },
+    "profile": {
+      "enum": ["manual", "assisted", "autonomous"]
+    },
+    "generation": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "start_next_issue": {"$ref": "#/$defs/decision"},
+        "close_completed_issue": {"$ref": "#/$defs/decision"},
+        "advance_milestone": {"$ref": "#/$defs/decision"},
+        "retry_idempotent_failure": {"$ref": "#/$defs/decision"},
+        "merge_pull_request": {"$ref": "#/$defs/decision"},
+        "destructive_operations": {"$ref": "#/$defs/approvalOnly"},
+        "secret_operations": {"$ref": "#/$defs/approvalOnly"},
+        "scope_changes": {"$ref": "#/$defs/approvalOnly"}
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"profile": {"const": "autonomous"}}},
+      "then": {"required": ["expires_at"]},
+      "else": {"not": {"required": ["expires_at"]}}
+    }
+  ],
+  "$defs": {
+    "decision": {
+      "enum": ["auto", "approval", "disabled"]
+    },
+    "approvalOnly": {
+      "const": "approval"
+    }
+  }
+}

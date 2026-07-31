@@ -17,6 +17,10 @@ telegram_token_file = "/home/ubuntu/.config/fortify-lab-manager/telegram/bot-tok
 telegram_user_file = "/home/ubuntu/.config/fortify-lab-manager/telegram/allowed-user-id"
 telegram_chat_file = "/home/ubuntu/.config/fortify-lab-manager/telegram/private-chat-id"
 
+# Optional protected JSON policy. Omit it to preserve the migration-compatible
+# assisted profile. See docs/operations/sdlc-supervisor.md.
+# autonomy_policy_file = "/home/ubuntu/.config/fortify-lab-manager/autonomy-policy.json"
+
 # Optional bounded Codex runner. The selected issue number is appended as the
 # final argument. Keep commented until the supervisor-only loop is verified.
 # runner_command = ["/home/ubuntu/.local/bin/fortify-issue-dispatch"]

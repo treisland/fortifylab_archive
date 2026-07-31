@@ -45,6 +45,12 @@ for every mutation adapter.
 | [0008](adr/0008-ssc-system-of-record.md) | Keep SSC as the application-security system of record |
 | [0009](adr/0009-manager-runtime-boundary.md) | Define the minimum manager runtime boundary |
 
+## Proposed decisions
+
+| ADR | Decision |
+| --- | --- |
+| [0010](adr/0010-supervisor-autonomy-policy.md) | Externalize the supervisor autonomy policy |
+
 ## Process
 
 Create one ADR for each consequential, durable decision. Each record states

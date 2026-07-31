@@ -63,13 +63,24 @@ done
 [ -r "$HEARTBEAT_TOOL" ] || fail "runner heartbeat helper is not readable"
 [ -r "$SUPERVISOR_CONFIG" ] || fail "supervisor configuration is not readable"
 APPROVED_MILESTONE="$(
-  python3 - "$SUPERVISOR_CONFIG" <<'PY'
+  python3 - "$SUPERVISOR_CONFIG" "$HEARTBEAT_TOOL" <<'PY'
 import sqlite3
 import sys
 import tomllib
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
+from autonomy_policy import AutonomyPolicyError, load_policy
 
 with open(sys.argv[1], "rb") as stream:
     supervisor = tomllib.load(stream)["supervisor"]
+policy_path = supervisor.get("autonomy_policy_file")
+try:
+    policy = load_policy(Path(policy_path) if policy_path else None)
+except AutonomyPolicyError as error:
+    raise SystemExit(str(error)) from error
+if policy.decision("start_next_issue") == "disabled":
+    raise SystemExit("issue runner start is disabled by autonomy policy")
 authorized = tuple(supervisor.get("milestones") or (supervisor["milestone"],))
 with sqlite3.connect(supervisor["state_file"]) as connection:
     row = connection.execute(
