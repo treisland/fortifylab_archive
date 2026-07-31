@@ -103,6 +103,9 @@ class OperationClient:
     def status(self, operation_id: str) -> dict[str, Any]:
         return self._request("GET", f"/api/v1alpha1/operations/{operation_id}")
 
+    def profile(self) -> dict[str, Any]:
+        return self._request("GET", "/api/v1alpha1/platform-profile")
+
     def cancel(self, operation_id: str) -> dict[str, Any]:
         return self._request(
             "POST", f"/api/v1alpha1/operations/{operation_id}/cancel", {}
@@ -223,6 +226,7 @@ def _parser() -> argparse.ArgumentParser:
         help="read one password line from standard input",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("profile", help="show the selected tested platform profile")
     for name in ("plan", "submit", "approval-request"):
         command = subparsers.add_parser(name)
         command.add_argument("operation")
@@ -261,7 +265,9 @@ def main(argv: list[str] | None = None) -> int:
         client = OperationClient(args.url)
         client.login(args.username, password)
         password = ""
-        if args.command == "plan":
+        if args.command == "profile":
+            result = client.profile()
+        elif args.command == "plan":
             result = client.plan(args.operation, args.components)
         elif args.command == "approval-request":
             result = client.request_approval(args.operation, args.components)

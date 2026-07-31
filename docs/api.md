@@ -1,7 +1,9 @@
 # Manager API reference
 
 The local Fortify Lab Manager exposes a versioned component
-inventory at `GET /api/v1alpha1/components`. `HEAD` is also supported.
+inventory at `GET /api/v1alpha1/components` and the selected tested-platform
+contract at `GET /api/v1alpha1/platform-profile`. The CLI consumes the same
+profile endpoint with `fortify-manager-cli ... profile`. `HEAD` is also supported.
 Mutation methods are rejected with `405 Method Not Allowed`. This contract is
 MicroK8s-first, limited to the managed `fortify` namespace, and excludes ASPM.
 

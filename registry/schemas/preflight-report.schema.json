@@ -4,12 +4,22 @@
   "title": "Read-only deployment preflight report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "kind", "generatedAt", "ready", "summary", "evidence", "items"],
+  "required": ["apiVersion", "kind", "generatedAt", "ready", "profile", "summary", "evidence", "items"],
   "properties": {
     "apiVersion": {"const": "fortifylab.io/v1alpha1"},
     "kind": {"const": "DeploymentPreflight"},
     "generatedAt": {"type": "string", "format": "date-time"},
     "ready": {"type": "boolean"},
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "maturity", "vendorSupported"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "maturity": {"enum": ["experimental", "validated", "recommended", "deprecated", "unsupported"]},
+        "vendorSupported": {"const": false}
+      }
+    },
     "summary": {
       "type": "object",
       "additionalProperties": false,

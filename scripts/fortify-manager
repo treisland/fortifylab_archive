@@ -127,7 +127,8 @@ install_runtime() {
     install -d -m 700 -o fortify-manager -g fortify-manager "$STATE_ROOT"
     install -d -m 750 -o root -g fortify-manager "$CONFIG_ROOT"
     cp -a "$REPOSITORY_ROOT/manager" "$REPOSITORY_ROOT/contracts" \
-        "$REPOSITORY_ROOT/registry" "$REPOSITORY_ROOT/packaging" "$release/"
+        "$REPOSITORY_ROOT/registry" "$REPOSITORY_ROOT/profiles" \
+        "$REPOSITORY_ROOT/packaging" "$release/"
     find "$release" -type d -exec chmod 755 {} +
     find "$release" -type f -exec chmod 644 {} +
     install -m 755 /dev/stdin "$release/bin/fortify-manager-server" <<EOF

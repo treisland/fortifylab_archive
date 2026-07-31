@@ -25,7 +25,7 @@ Core.
 
 Each component declares:
 
-- desired chart and image versions for the pinned evaluation bundle;
+- desired chart and image versions checked against the selected platform profile;
 - stable dependencies and Kubernetes workloads;
 - bounded lifecycle operations, adapter paths, disruption and destruction;
 - Kubernetes Secret references and classifications, never values;

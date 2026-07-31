@@ -1,0 +1,10 @@
+{
+  "$schema": "../schemas/release-evidence.schema.json",
+  "apiVersion": "fortifylab.io/v1alpha1",
+  "kind": "PlatformProfileEvidence",
+  "profileId": "fortify-24.4-eval.1",
+  "recordedAt": "2026-07-31T00:00:00Z",
+  "evidenceLevel": "static",
+  "checks": {"schema": "passed", "registryPins": "passed", "repositoryValidation": "passed", "cleanInstall": "not-run", "upgrade": "not-run", "backupRestore": "not-run"},
+  "conclusion": "experimental"
+}

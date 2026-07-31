@@ -16,10 +16,10 @@ mkcert-issued TLS. Every step driven by an interactive wizard or a single
 
 Fortify Lab Manager targets a local, single-node MicroK8s lab. Other
 Kubernetes distributions and ASPM are outside the current project scope.
-The pinned component versions in `.env.example` are intentional evaluation
-defaults, not a verified or vendor-supported platform profile. See
-[Platform compatibility](docs/platform-compatibility.md) for the precise
-evidence boundary.
+The selected versioned profile is experimental and not vendor-supported.
+`.env.example` mirrors its deployment pins for shell compatibility. See
+[Platform profiles](docs/platform-compatibility.md) for exact versions,
+evidence, limitations, and migration policy.
 
 ## What you get
 
