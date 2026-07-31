@@ -169,8 +169,10 @@ class DashboardApp:
                     {"code": "AUTHENTICATION_REQUIRED", "message": "authentication required"},
                     method,
                 )
-            if path.startswith("/api/v1alpha1/operations") or path.startswith(
-                "/api/v1alpha1/approvals"
+            if (
+                path.startswith("/api/v1alpha1/operations")
+                or path.startswith("/api/v1alpha1/approvals")
+                or path.startswith("/api/v1alpha1/clean-install")
             ):
                 if self._operation_api is None:
                     return self._json(

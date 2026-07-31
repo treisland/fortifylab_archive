@@ -29,6 +29,7 @@ MAX_BODY = 16_384
 COLLECTION = "/api/v1alpha1/operations"
 PLANS = COLLECTION + "/plans"
 APPROVALS = "/api/v1alpha1/approvals"
+CLEAN_INSTALL = "/api/v1alpha1/clean-install"
 
 
 class WebOperationAPI:
@@ -60,6 +61,19 @@ class WebOperationAPI:
             ),
         )
         try:
+            if path == CLEAN_INSTALL + "/plan" and method == "POST":
+                self._body(environ)
+                plan = self._engine.clean_install_plan()
+                plan["workflow"] = "clean-install"
+                return self._json(start_response, HTTPStatus.OK, plan)
+            if path == CLEAN_INSTALL and method == "POST":
+                self._body(environ)
+                document = self._engine.submit_clean_install_async(
+                    actor=identity.actor, identity=identity
+                )
+                return self._json(
+                    start_response, HTTPStatus.ACCEPTED, self._detail(document)
+                )
             if path == PLANS and method == "POST":
                 request = self._body(environ)
                 return self._json(start_response, HTTPStatus.OK, self._plan(request))

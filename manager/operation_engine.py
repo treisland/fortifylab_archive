@@ -49,6 +49,14 @@ class OperationNotFound(OperationError):
     code = "OPERATION_NOT_FOUND"
 
 
+class PreflightBlocked(OperationError):
+    code = "PREFLIGHT_BLOCKED"
+
+
+class ExistingInstallation(OperationError):
+    code = "EXISTING_INSTALLATION"
+
+
 class StepTimedOut(OperationError):
     code = "OPERATION_TIMEOUT"
 
@@ -149,6 +157,14 @@ class OperationStore:
             )
         ]
 
+    def recent(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT payload FROM lifecycle_operations ORDER BY "
+            "json_extract(payload, '$.updatedAt') DESC LIMIT ?",
+            (max(0, min(limit, 100)),),
+        )
+        return [json.loads(row["payload"]) for row in rows]
+
     def event(self, operation_id: str, event: dict[str, Any]) -> None:
         self.connection.execute(
             "INSERT INTO lifecycle_events(operation_id, payload) VALUES (?, ?)",
@@ -181,6 +197,8 @@ class OperationEngine:
         max_step_timeout: float = 3600,
         authorization: AuthorizationService | None = None,
         state_provider: Callable[[tuple[str, ...]], dict[str, str]] | None = None,
+        preflight_provider: Callable[[], dict[str, Any]] | None = None,
+        footprint_provider: Callable[[tuple[str, ...]], dict[str, str]] | None = None,
     ) -> None:
         if max_attempts < 1 or max_step_timeout <= 0:
             raise ValueError("operation bounds must be positive")
@@ -194,6 +212,8 @@ class OperationEngine:
         self._max_step_timeout = max_step_timeout
         self._authorization = authorization
         self._state_provider = state_provider
+        self._preflight_provider = preflight_provider
+        self._footprint_provider = footprint_provider
         self._cancelled: set[str] = set()
         self._lock = threading.RLock()
 
@@ -232,6 +252,52 @@ class OperationEngine:
         threading.Thread(target=self._run, args=(document, steps), daemon=True).start()
         return self._store.get(document["id"])
 
+    def clean_install_plan(self) -> dict[str, Any]:
+        """Return fresh, read-only evidence for the full verified-profile install."""
+        if self._preflight_provider is None or self._footprint_provider is None:
+            raise PreflightBlocked("clean-install observation is unavailable")
+        components = self._registry.dependency_order()
+        try:
+            preflight = self._preflight_provider()
+            footprint = self._footprint_provider(components)
+        except Exception as error:
+            raise PreflightBlocked("clean-install evidence is unavailable") from error
+        if set(footprint) != set(components):
+            raise PreflightBlocked("clean-install footprint evidence is incomplete")
+        existing = sorted(
+            component for component, state in footprint.items() if state != "absent"
+        )
+        plan = self.plan("install", components)
+        return {
+            "apiVersion": "fortifylab.io/v1alpha1",
+            "kind": "CleanInstallPlan",
+            "profile": {
+                "id": self._registry.profile.id,
+                "maturity": self._registry.profile.maturity,
+            },
+            "ready": bool(preflight.get("ready")) and not existing,
+            "preflight": preflight,
+            "existingComponents": existing,
+            **plan,
+        }
+
+    def submit_clean_install_async(
+        self, *, actor: str, identity: ActorIdentity | None = None
+    ) -> dict[str, Any]:
+        plan = self.clean_install_plan()
+        if not plan["preflight"].get("ready"):
+            raise PreflightBlocked("deployment preflight has blocking checks")
+        if plan["existingComponents"]:
+            raise ExistingInstallation(
+                "existing installation or retained data requires operator review"
+            )
+        document, steps = self._prepare(
+            "install", tuple(plan["requestedTargets"]), actor=actor, retry_of=None,
+            identity=identity, approval_id=None, workflow="clean-install",
+        )
+        threading.Thread(target=self._run, args=(document, steps), daemon=True).start()
+        return self._store.get(document["id"])
+
     def _prepare(
         self,
         operation: str,
@@ -241,6 +307,7 @@ class OperationEngine:
         retry_of: str | None,
         identity: ActorIdentity | None,
         approval_id: str | None,
+        workflow: str | None = None,
     ) -> tuple[dict[str, Any], tuple[Step, ...]]:
         if operation not in REQUEST_OPERATIONS:
             raise InvalidOperation("operation is not an allowed lifecycle action")
@@ -294,6 +361,9 @@ class OperationEngine:
                 "retryOf": retry_of,
                 "error": None,
             }
+            if workflow is not None:
+                document["workflow"] = workflow
+                document["profileId"] = self._registry.profile.id
             self._store.create(document)
         return document, steps
 
@@ -361,13 +431,49 @@ class OperationEngine:
         previous = self._store.get(operation_id)
         if previous["state"] not in TERMINAL_STATES - {"succeeded", "cancelled"}:
             raise InvalidOperation("only a failed, timed-out, or interrupted operation can retry")
+        if previous.get("workflow") == "clean-install":
+            if self._preflight_provider is None:
+                raise PreflightBlocked("clean-install preflight is unavailable")
+            try:
+                preflight = self._preflight_provider()
+            except Exception as error:
+                raise PreflightBlocked("clean-install preflight is unavailable") from error
+            if not preflight.get("ready"):
+                raise PreflightBlocked("deployment preflight has blocking checks")
+            completed = {
+                (event.get("component"), event.get("operation"))
+                for event in self._store.events(operation_id)
+                if event.get("type") in {"step-succeeded", "step-resumed"}
+            }
+            document, steps = self._prepare(
+                previous["operation"], previous["requestedTargets"], actor=actor,
+                retry_of=operation_id, identity=identity, approval_id=approval_id,
+                workflow="clean-install",
+            )
+            remaining = tuple(
+                step for step in steps
+                if (step.component_id, step.operation) not in completed
+            )
+            document["completedSteps"] = len(steps) - len(remaining)
+            self._store.update(document)
+            for step in steps:
+                if (step.component_id, step.operation) in completed:
+                    self._store.event(
+                        document["id"],
+                        {
+                            "type": "step-resumed",
+                            "component": step.component_id,
+                            "operation": step.operation,
+                            "at": _timestamp(self._clock()),
+                        },
+                    )
+            threading.Thread(
+                target=self._run, args=(document, remaining), daemon=True
+            ).start()
+            return self._store.get(document["id"])
         return self.submit_async(
-            previous["operation"],
-            previous["requestedTargets"],
-            actor=actor,
-            retry_of=operation_id,
-            identity=identity,
-            approval_id=approval_id,
+            previous["operation"], previous["requestedTargets"], actor=actor,
+            retry_of=operation_id, identity=identity, approval_id=approval_id,
         )
 
     def cancel(
@@ -464,7 +570,8 @@ class OperationEngine:
         document["state"] = "running"
         self._save(document)
         try:
-            for index, step in enumerate(steps, 1):
+            first = document["completedSteps"] + 1
+            for index, step in enumerate(steps, first):
                 document["currentStep"] = {
                     "number": index,
                     "component": step.component_id,

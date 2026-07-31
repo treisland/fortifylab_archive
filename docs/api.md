@@ -32,6 +32,8 @@ bypass authorization or approvals.
 | `GET /api/v1alpha1/operations/{id}` | Read durable progress, sanitized events, and completion health |
 | `POST /api/v1alpha1/operations/{id}/cancel` | Request cooperative cancellation |
 | `POST /api/v1alpha1/operations/{id}/retry` | Retry failed, timed-out, or interrupted work |
+| `POST /api/v1alpha1/clean-install/plan` | Refresh preflight and detect allow-listed workloads/PVCs for the complete selected profile |
+| `POST /api/v1alpha1/clean-install` | Recheck all gates, then queue the complete dependency-ordered profile install |
 
 For example, `{"operation":"start","components":["scancentral-sast"]}`
 resolves MySQL and SSC dependency steps without exposing adapter paths.
@@ -39,6 +41,18 @@ Dependency-blocked stop plans fail before execution. Uninstall and
 `delete-data` are separate actions. A capability is supported only when the
 component registry declares it; `configure` therefore fails closed until an
 approved bounded capability exists.
+
+The clean-install routes take only `{}`. The plan is ready only when every
+preflight requirement passes and every registered component workload and
+retained PVC is absent. Submission repeats those observations to close the
+plan/execution race. Existing resources or data return
+`EXISTING_INSTALLATION`; unavailable or failing readiness evidence returns
+`PREFLIGHT_BLOCKED`. A new install never adopts or overwrites existing state.
+After interruption, retry the durable operation ID. Retry skips steps with a
+recorded `step-succeeded`/`step-resumed` event and re-enters only the
+idempotent incomplete step and its remaining dependents. Each executed step
+still completes only after all registry-declared application and functional
+checks pass.
 
 The internal [write-only secret service](operations/write-only-secrets.md)
 defines a separate high-risk replacement contract for approved external
@@ -70,6 +84,20 @@ fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
 fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
   submit start scancentral-sast --wait 1200
 ```
+
+Inspect and run a complete clean install:
+
+```bash
+fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
+  clean-install-plan
+fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
+  clean-install --wait 7200
+```
+
+The returned operation ID remains queryable after CLI or browser disconnect.
+The Web UI renders the same step counts and sanitized events. Recent history,
+including clean-install state and step counts, is also the source used by the
+private Telegram `/history` status command.
 
 For a disruptive or high-risk action, `submit --request-approval` requests
 and approves the exact plan in the same authenticated session before

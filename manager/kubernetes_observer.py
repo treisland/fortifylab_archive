@@ -124,6 +124,40 @@ class KubernetesObserver:
             latency_ms=max(0, round((time.monotonic() - started) * 1000)),
         )
 
+    def installation_footprint(
+        self, component_ids: tuple[str, ...]
+    ) -> dict[str, str]:
+        """Detect allow-listed workloads and retained PVCs without reading data."""
+        result: dict[str, str] = {}
+        for component_id in component_ids:
+            component = self._registry.component(component_id)
+            paths = [
+                _WORKLOAD_PATHS[item["kind"]].format(
+                    namespace=self._namespace,
+                    name=urllib.parse.quote(item["name"], safe=""),
+                )
+                for item in component["workloads"]
+            ]
+            paths.extend(
+                f"api/v1/namespaces/{self._namespace}/persistentvolumeclaims/"
+                f"{urllib.parse.quote(item['claim'], safe='')}"
+                for item in component["persistence"]
+            )
+            present = False
+            for path in paths:
+                try:
+                    self._get(path)
+                    present = True
+                except urllib.error.HTTPError as error:
+                    if error.code != 404:
+                        error.close()
+                        raise ClusterUnavailable(
+                            "installation footprint observation failed"
+                        ) from error
+                    error.close()
+            result[component_id] = "present" if present else "absent"
+        return result
+
     def diagnose_access(self, resources: Sequence[ResourceIdentity]) -> ClusterEvidence:
         """Verify positive and negative permissions without returning API bodies."""
         evidence = self.evidence()

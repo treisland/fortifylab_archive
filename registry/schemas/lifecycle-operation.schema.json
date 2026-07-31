@@ -35,6 +35,8 @@
     "completedSteps": {"type": "integer", "minimum": 0},
     "totalSteps": {"type": "integer", "minimum": 1},
     "retryOf": {"oneOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]},
-    "error": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 256}]}
+    "error": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 256}]},
+    "workflow": {"enum": ["clean-install"]},
+    "profileId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}
   }
 }

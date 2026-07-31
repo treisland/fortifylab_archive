@@ -193,6 +193,24 @@ class KubernetesObserverTests(unittest.TestCase):
             self.assertEqual(self.observer.probe(pvc).state, "healthy")
             self.assertEqual(self.observer.probe(workload).state, "healthy")
 
+    def test_clean_install_footprint_detects_workloads_and_retained_pvcs(self):
+        urls = []
+
+        def metadata(request, **kwargs):
+            urls.append(request.full_url)
+            if request.full_url.endswith("/statefulsets/mysql"):
+                return Response({"metadata": {"name": "mysql"}})
+            raise urllib.error.HTTPError(
+                request.full_url, 404, "missing", {}, io.BytesIO()
+            )
+
+        with patch("manager.kubernetes_observer.urllib.request.urlopen", metadata):
+            result = self.observer.installation_footprint(("mysql", "lim"))
+        self.assertEqual(result, {"mysql": "present", "lim": "absent"})
+        self.assertTrue(any("persistentvolumeclaims/data-mysql-0" in url for url in urls))
+        self.assertTrue(any("persistentvolumeclaims/lim-pvc" in url for url in urls))
+        self.assertFalse(any("/secrets" in url or "/pods/" in url for url in urls))
+
     def test_functional_checks_delegate_and_missing_service_is_unknown(self):
         functional = unittest.mock.Mock()
         functional.probe.return_value = ProbeResult(

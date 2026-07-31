@@ -334,7 +334,17 @@ function operationRequest() {
 byId("operation-form").addEventListener("submit", async event => {
   event.preventDefault();
   try {
-    selectedPlan = await mutate("/api/v1alpha1/operations/plans", operationRequest());
+    const cleanInstall = byId("operation").value === "clean-install";
+    selectedPlan = await mutate(
+      cleanInstall ? "/api/v1alpha1/clean-install/plan" : "/api/v1alpha1/operations/plans",
+      cleanInstall ? {} : operationRequest()
+    );
+    if (cleanInstall && !selectedPlan.ready) {
+      const reason = selectedPlan.existingComponents.length
+        ? `Existing footprint detected: ${selectedPlan.existingComponents.join(", ")}`
+        : "Deployment preflight has blockers";
+      throw new Error(`${reason}. Review clean-install evidence before retrying.`);
+    }
     text(byId("plan-risk"), `${selectedPlan.risk} risk`);
     text(byId("plan-impact"), selectedPlan.dependencyImpact.length ? `Adds dependencies: ${selectedPlan.dependencyImpact.join(", ")}` : "No implicit dependency additions");
     const list = byId("plan-steps");
@@ -368,6 +378,15 @@ byId("operation-confirmation").addEventListener("close", () => {
 
 async function startOperation() {
   try {
+    if (selectedPlan.workflow === "clean-install") {
+      const operation = await mutate("/api/v1alpha1/clean-install", {});
+      activeOperationId = operation.id;
+      sessionStorage.setItem("fortifylab.activeOperation", activeOperationId);
+      byId("operation-plan").hidden = true;
+      renderOperation(operation);
+      scheduleProgress();
+      return;
+    }
     const request = {operation: selectedPlan.operation, components: selectedPlan.requestedTargets};
     if (selectedPlan.approvalRequired) {
       const approval = await mutate("/api/v1alpha1/approvals", request);

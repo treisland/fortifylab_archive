@@ -74,6 +74,10 @@ class WebOperationTests(unittest.TestCase):
             Verifier(),
             authorization=self.authorization,
             state_provider=lambda targets: {target: "running" for target in targets},
+            preflight_provider=lambda: {"ready": True, "items": []},
+            footprint_provider=lambda targets: {
+                target: "absent" for target in targets
+            },
         )
         operation_api = WebOperationAPI(
             self.engine,
@@ -151,6 +155,22 @@ class WebOperationTests(unittest.TestCase):
         self.assertTrue(detail["terminal"])
         self.assertEqual(detail["events"][0]["type"], "step-succeeded")
         self.assertNotIn("adapter", json.dumps(detail).lower())
+
+    def test_clean_install_plan_and_submit_share_durable_progress_contract(self):
+        plan_response = self.post("/api/v1alpha1/clean-install/plan", {})
+        self.assertEqual(plan_response["status"], "200 OK")
+        plan = json.loads(plan_response["body"])
+        self.assertEqual(plan["workflow"], "clean-install")
+        self.assertTrue(plan["ready"])
+        self.assertEqual(plan["existingComponents"], [])
+
+        created = self.post("/api/v1alpha1/clean-install", {})
+        self.assertEqual(created["status"], "202 Accepted")
+        detail = self.completed(json.loads(created["body"])["id"])
+        self.assertEqual(detail["workflow"], "clean-install")
+        self.assertEqual(detail["profileId"], "fortify-24.4-eval.1")
+        self.assertEqual(detail["state"], "succeeded")
+        self.assertEqual(detail["completionHealth"], "verified")
 
     def test_blocked_pending_approval_and_high_risk_confirmation(self):
         blocked = self.post(
