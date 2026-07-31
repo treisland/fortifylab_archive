@@ -343,6 +343,40 @@ class ManagerInstallationTests(unittest.TestCase):
             self.assertEqual(rollback.returncode, 0, rollback.stderr)
             self.assertEqual((install_root / "current").resolve(), prior.resolve())
 
+    def test_activation_rollback_restores_prior_service_states(self):
+        environment = os.environ | {"FORTIFY_MANAGER_LIBRARY_ONLY": "1"}
+        restored = subprocess.run(
+            [
+                "bash", "-c",
+                'source scripts/fortify-manager; '
+                'systemctl() { printf "%s\\n" "$*"; }; '
+                'restore_service_state manager.service 1; '
+                'restore_service_state probe.service 0',
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        self.assertEqual(
+            restored.stdout.splitlines(),
+            ["restart manager.service", "stop probe.service"],
+        )
+
+        failed = subprocess.run(
+            [
+                "bash", "-c",
+                'source scripts/fortify-manager; systemctl() { return 1; }; '
+                'restore_service_state manager.service 1',
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(failed.returncode, 0)
+
     def test_rendered_ingress_has_host_tls_and_backend_symmetry(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "ingress.yaml"
@@ -545,7 +579,9 @@ class ManagerInstallationTests(unittest.TestCase):
         rollback = upgrade[upgrade.index('restore_current "$prior"') :]
         self.assertLess(
             rollback.index('restore_current "$prior"'),
-            rollback.index('systemctl restart "$SERVICE_NAME" >/dev/null'),
+            rollback.index(
+                'restore_service_state "$SERVICE_NAME" "$was_active"'
+            ),
         )
         self.assertNotIn('find "$release" -type f -exec chmod', script)
         self.assertIn("fortify-manager-cli", script)
