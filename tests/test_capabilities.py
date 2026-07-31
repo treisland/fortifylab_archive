@@ -166,6 +166,25 @@ class CapabilityProviderTests(unittest.TestCase):
         adapter[0] = True
         self.assertTrue(states(provider.document())["lifecycle-execution"]["canMutate"])
 
+    def test_unexpected_runtime_evidence_failure_is_sanitized_and_fails_closed(self):
+        def unavailable():
+            raise Exception("sensitive runtime detail")
+
+        document = self.provider(
+            observation_state=lambda: "available",
+            lifecycle_enabled=True,
+            lifecycle_configured=True,
+            lifecycle_credential_state=lambda: True,
+            lifecycle_authorization_state=lambda: True,
+            lifecycle_adapter_state=lambda: True,
+            approvals_configured=True,
+            approvals_state=unavailable,
+        ).document()
+        approval = states(document)["approvals"]
+        self.assertEqual(approval["state"], "temporarily-unavailable")
+        self.assertEqual(approval["code"], "APPROVAL_STORE_UNAVAILABLE")
+        self.assertNotIn("sensitive", str(document))
+
 
 class CapabilityAPITests(unittest.TestCase):
     @classmethod

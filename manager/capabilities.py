@@ -133,7 +133,7 @@ class CapabilityProvider:
             )
         try:
             state = self._observation_state()
-        except (RuntimeError, OSError, ValueError, TypeError):
+        except Exception:
             state = "unavailable"
         if state == "available":
             return _entry(
@@ -166,7 +166,7 @@ class CapabilityProvider:
                 if self._functional_health_state is not None
                 else False
             )
-        except (RuntimeError, OSError, ValueError, TypeError):
+        except Exception:
             ready = False
         if not ready:
             return _entry(
@@ -272,7 +272,7 @@ def _current(check: Callable[[], bool] | None) -> bool:
         return False
     try:
         return check() is True
-    except (RuntimeError, OSError, ValueError, TypeError):
+    except Exception:
         return False
 
 

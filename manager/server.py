@@ -229,7 +229,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         ),
         approvals_configured=operation_api is not None,
         approvals_state=(
-            lambda: approval_store.connection.execute("SELECT 1").fetchone() is not None
+            approval_store.available
         ) if approval_store is not None else None,
         recovery_configured=recovery_service is not None,
         recovery_state=(
