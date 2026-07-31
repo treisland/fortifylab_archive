@@ -181,8 +181,61 @@ class DashboardTests(unittest.TestCase):
             path.read_text(encoding="utf-8")
             for path in (WEB / "index.html", WEB / "assets/dashboard.js")
         )
-        for marker in ("loading", "inventory-empty", "health-empty", "preflight-empty", "history-empty", "api-error", "Disconnected"):
+        for marker in (
+            "loading", "empty", "stale", "unavailable", "unauthorized", "error",
+            "inventory-empty", "health-empty", "preflight-empty", "history-empty",
+            "session-expired", "Disconnected",
+        ):
             self.assertIn(marker, sources)
+
+    def test_browser_partial_503_retains_successful_panels_and_sanitizes_errors(self):
+        script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("Promise.allSettled", script)
+        self.assertIn("panelDocuments.has(name)", script)
+        self.assertIn('panelDocuments.set(name, result.value)', script)
+        self.assertIn('response.status === 503 ? "unavailable" : "error"', script)
+        self.assertIn("errorCodePattern", script)
+        self.assertNotIn("document.message", script)
+
+    def test_browser_disconnected_adapter_empty_cluster_and_live_failures_are_actionable(self):
+        sources = "".join(
+            path.read_text(encoding="utf-8")
+            for path in (WEB / "index.html", WEB / "assets/dashboard.js")
+        )
+        for marker in (
+            "OBSERVER_DISCONNECTED",
+            "Desired inventory is available; live observation is unavailable",
+            "No managed components are registered",
+            "Primary root causes",
+            "Blocked consumers",
+            "Do not broaden observer permissions",
+            "node",
+            "kubernetesVersion",
+            "ageSeconds",
+        ):
+            self.assertIn(marker, sources)
+
+    def test_browser_refresh_recovery_and_session_expiry_are_bounded(self):
+        script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
+        html = (WEB / "index.html").read_text(encoding="utf-8")
+        for marker in (
+            "autoRefreshMilliseconds = 30000",
+            "refreshInFlight",
+            "visibilitychange",
+            "document.hidden",
+            "scheduleAutoRefresh",
+            "AUTHENTICATION_REQUIRED",
+        ):
+            self.assertIn(marker, script)
+        self.assertIn('id="auto-refresh"', html)
+        self.assertIn('id="session-expired"', html)
+        self.assertNotIn('window.location.assign("/")', script.split("async function readModel", 1)[1].split("async function mutate", 1)[0])
+
+    def test_each_dashboard_panel_has_an_independent_live_state_region(self):
+        html = (WEB / "index.html").read_text(encoding="utf-8")
+        for panel in ("components", "health", "preflight", "history", "operations"):
+            self.assertIn(f'id="{panel}-panel-state"', html)
+        self.assertGreaterEqual(html.count('aria-live="polite"'), 7)
 
     def test_every_durable_record_kind_has_a_bounded_history_projection(self):
         examples = json.loads((CONTRACT_ROOT / "examples.json").read_text())

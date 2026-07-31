@@ -38,15 +38,28 @@ Policy.
 
 The page does not convert missing evidence into success:
 
+- components, health, preflight, recent history, and lifecycle operations each
+  own a live state region. A `503` or adapter failure in one read model leaves
+  successful panels visible; previously successful evidence in the failed
+  panel is retained and explicitly labelled stale;
 - `healthy`, `starting`, `degraded`, `blocked`, `misconfigured`, `stopped`,
   `unreachable`, and `unknown` are separately labelled and colored; the
   current health contract also preserves `unhealthy` and `stale`;
 - a disconnected cluster keeps desired inventory and versions visible while
-  observed resources become unknown;
-- loading, an empty read model, and an API failure each have distinct text;
+  observed resources become unknown and disables lifecycle planning until
+  safe observation recovers;
+- loading, empty, stale, unavailable, unauthorized, and other API errors have
+  distinct text and a safe next action;
 - downstream failures retain `blockedBy` and `rootCause`, so the page
   emphasizes the primary problem instead of repeating symptoms;
 - remediation links point only to repository health and preflight guides.
+
+The summary identifies the connected node and Kubernetes version, observer
+connectivity, observed component count, degraded count, primary root-cause
+identifiers, blocked consumers, preflight blockers, last successful refresh,
+and evidence age. When the API supplies no node, version, timestamp, or age,
+the page says that the field was not reported rather than presenting an
+ambiguous `unknown`.
 
 Color is never the only health cue: every badge includes visible state text.
 The page provides landmarks, a skip link, labelled controls, table headers,
@@ -98,19 +111,36 @@ submitted secret values. Secret status remains metadata-only under
 
 ## Failure recovery
 
-Use **Refresh** after a transient manager or adapter failure. Failed,
+Use **Refresh** after a transient manager or adapter failure. Auto-refresh is
+enabled by default at a bounded 30-second interval, never overlaps an active
+refresh, and pauses while the page is hidden. It can be disabled from the
+keyboard-accessible header control. A successful retry replaces stale panel
+evidence without reloading the page.
+
+Only `401` or `403` responses show the session-expired action and pause
+refreshes; a `503`, network interruption, or disconnected observer does not
+send the operator to sign-in. Error detail is restricted to a normalized
+status such as `REGISTRY_UNAVAILABLE`, `OBSERVER_DISCONNECTED`, or
+`AUTHENTICATION_REQUIRED`; response bodies, adapter exceptions, logs, paths,
+and protected values are not rendered.
+
+Failed,
 timed-out, and manager-interrupted operations offer **Retry** after the
 operator reviews sanitized events and current health. If the session
-expires, the next API request returns `401` and the page returns to sign-in.
+expires, the next API request returns `401` and the page presents a sign-in
+link while leaving prior evidence visible and marked stale or unauthorized.
 If only cluster observation is unavailable, investigate the manager's
 allow-listed observer; do not broaden RBAC or grant access to Secrets. Health
 and preflight remediation remain in
 [health-checks.md](health-checks.md) and
 [deployment-preflight.md](deployment-preflight.md).
 
-Tests in `tests/test_dashboard.py` and `tests/test_web_operations.py` cover authentication, expiry, logout,
+Browser contract tests in `tests/test_dashboard.py` and operation transport
+tests in `tests/test_web_operations.py` cover authentication, expiry, logout,
 method rejection, headers, disclosure, API history, accessibility structure,
-loading/empty/failure/disconnected presentations, plans, dependency blocks,
+independent loading/empty/stale/unavailable/unauthorized/error presentations,
+partial `503`, disconnected adapter, recovery, empty cluster, current
+live-cluster failure projection, plans, dependency blocks,
 approval, timeout, cancellation, retry, reconnect, completion health, and
 sanitized failures. They are static and in-process tests: no live MicroK8s
 validation was performed.

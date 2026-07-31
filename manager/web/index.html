@@ -12,41 +12,56 @@
     <div><p class="eyebrow">FORTIFY LAB MANAGER</p><h1>Lab overview</h1></div>
     <div class="header-actions">
       <span class="read-only">CONTROLLED OPERATIONS</span>
+      <label class="auto-refresh"><input id="auto-refresh" type="checkbox" checked> Auto-refresh</label>
       <button id="refresh" class="secondary" type="button">Refresh</button>
       <button id="logout" class="ghost" type="button">Sign out</button>
     </div>
   </header>
   <main id="main">
     <div id="loading" class="notice" role="status">Loading the latest lab evidence…</div>
-    <div id="api-error" class="notice danger" role="alert" hidden>
-      <strong>Manager data is unavailable.</strong>
-      <span>The page could not load one or more read models. Refresh to retry.</span>
+    <div id="refresh-status" class="refresh-status" role="status" aria-live="polite">
+      <span id="last-refresh">No refresh completed</span>
+      <span id="refresh-summary">Loading five independent dashboard panels</span>
+    </div>
+    <div id="session-expired" class="notice danger" role="alert" hidden>
+      <strong>Your session expired.</strong>
+      <span>Sign in again to resume dashboard refreshes. Existing evidence remains visible but stale.</span>
+      <a href="/">Sign in</a>
     </div>
     <section class="summary-grid" aria-label="Environment summary">
-      <article><p>Environment</p><strong id="environment-state" class="status unknown">Unknown</strong><small id="checked-at">Not checked</small></article>
+      <article><p>Environment</p><strong id="environment-state" class="status loading">Loading</strong><small id="checked-at">Waiting for health evidence</small></article>
       <article><p>Components</p><strong id="component-count">—</strong><small id="component-detail">Waiting for inventory</small></article>
-      <article><p>Preflight</p><strong id="preflight-state" class="status unknown">Unknown</strong><small id="preflight-detail">No result</small></article>
-      <article><p>Cluster link</p><strong id="cluster-state" class="status unknown">Unknown</strong><small>Read-only observation</small></article>
+      <article><p>Degraded</p><strong id="degraded-count">—</strong><small id="degraded-detail">Waiting for health evidence</small></article>
+      <article><p>Cluster link</p><strong id="cluster-state" class="status loading">Loading</strong><small id="cluster-detail">Waiting for observer evidence</small></article>
+    </section>
+    <section class="summary-detail panel" aria-label="Failure summary">
+      <div><strong>Primary root causes</strong><span id="root-cause-summary">Waiting for health evidence</span></div>
+      <div><strong>Blocked consumers</strong><span id="blocked-summary">Waiting for health evidence</span></div>
+      <div><strong>Preflight</strong><span id="preflight-summary">Waiting for preflight evidence</span></div>
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">SYSTEM MAP</p><h2>Dependencies and versions</h2></div><p class="muted">Upstream services appear before their consumers.</p></div>
+      <div id="components-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading component inventory…</div>
       <div id="dependency-graph" class="graph" aria-live="polite"></div>
       <p id="inventory-empty" class="empty" hidden>No managed components are registered.</p>
     </section>
     <section class="two-column">
       <article class="panel">
         <div class="section-heading"><div><p class="eyebrow">ROOT CAUSE</p><h2>Health evidence</h2></div></div>
+        <div id="health-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading health evidence…</div>
         <div id="health-list"></div>
         <p id="health-empty" class="empty" hidden>No health evidence is available.</p>
       </article>
       <article class="panel">
-        <div class="section-heading"><div><p class="eyebrow">READINESS</p><h2>Deployment preflight</h2></div></div>
+        <div class="section-heading"><div><p class="eyebrow">READINESS</p><h2>Deployment preflight</h2></div><div class="panel-heading-state"><strong id="preflight-state" class="status loading">Loading</strong><small id="preflight-detail">Waiting for evidence</small></div></div>
+        <div id="preflight-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading preflight evidence…</div>
         <div id="preflight-list"></div>
         <p id="preflight-empty" class="empty" hidden>No preflight checks are available.</p>
       </article>
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">LIFECYCLE</p><h2>Component operations</h2></div><p class="muted">Plans are resolved and authorized by the shared manager service.</p></div>
+      <div id="operations-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading operation prerequisites…</div>
       <form id="operation-form" class="operation-form">
         <label for="operation">Action</label>
         <select id="operation" name="operation">
@@ -89,6 +104,7 @@
     </dialog>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>Recent operations</h2></div><p class="muted">Sanitized manager-owned history only.</p></div>
+      <div id="history-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading recent operations…</div>
       <div class="table-wrap"><table><thead><tr><th scope="col">Time</th><th scope="col">Type</th><th scope="col">Subject</th><th scope="col">Summary</th><th scope="col">State</th></tr></thead><tbody id="history-list"></tbody></table></div>
       <p id="history-empty" class="empty" hidden>No recent operations have been recorded.</p>
     </section>
