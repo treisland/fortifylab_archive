@@ -190,7 +190,7 @@ def collect(registry: ComponentRegistry, settings: CollectionSettings, *,
 def write(path: Path, document: dict, *, staging: Path,
           expected_uid: int | None = None, expected_gid: int | None = None) -> None:
     root_uid = pwd.getpwnam("root").pw_uid if expected_uid is None else expected_uid
-    root_gid = pwd.getpwnam("root").pw_gid if expected_uid is None else expected_gid
+    root_gid = pwd.getpwnam("root").pw_gid if expected_gid is None else expected_gid
     manager_gid = grp.getgrnam("fortify-manager").gr_gid if expected_gid is None else expected_gid
     staging_meta = staging.stat(follow_symlinks=False)
     parent_meta = path.parent.stat(follow_symlinks=False)
