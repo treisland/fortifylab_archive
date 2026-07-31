@@ -12,6 +12,13 @@ browser-facing mutation route is enabled yet. The service accepts component
 and operation identifiers only; arbitrary commands and caller-supplied paths
 are outside the contract.
 
+The internal [write-only secret service](operations/write-only-secrets.md)
+defines a separate high-risk replacement contract for approved external
+paths, protected uploads, existing Kubernetes Secret references, and generated
+values. It returns only `SecretUpdate` metadata and is not exposed as an HTTP
+route until a namespace-scoped live adapter and authenticated mutation
+transport are implemented and validated.
+
 The endpoint is a safe projection of the authoritative
 [`registry/components.json`](../registry/components.json). It never returns
 secret values or names, credentials, licenses, registry adapter paths,

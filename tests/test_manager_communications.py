@@ -262,6 +262,17 @@ class TelegramAdapterTests(unittest.TestCase):
         self.assertEqual(self.manager.calls, [("incidents", 2, 10)])
         self.assertEqual(self.telegram.answers, [("cb-1", "Updated")])
 
+    def test_secret_content_is_neither_accepted_nor_echoed(self):
+        marker = "unique-sensitive-telegram-marker"
+        self.assertTrue(self.adapter.handle(private_update(marker)))
+        self.assertEqual(self.manager.calls, [])
+        self.assertEqual(self.telegram.messages, [])
+
+        self.assertTrue(self.adapter.handle(private_update(f"/replace token={marker}")))
+        self.assertEqual(self.manager.calls, [])
+        self.assertEqual(self.telegram.messages[-1][0], "Unknown read-only command. Use /help.")
+        self.assertNotIn(marker, json.dumps(self.telegram.messages))
+
 
 class HTTPManagerClientTests(unittest.TestCase):
     def test_client_only_calls_versioned_manager_get_endpoint(self):

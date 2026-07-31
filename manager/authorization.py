@@ -22,6 +22,7 @@ RISK_BY_OPERATION = {
     "upgrade": "high",
     "uninstall": "high",
     "delete-data": "high",
+    "replace-secret": "high",
 }
 APPROVAL_REQUIRED = frozenset({"disruptive", "high"})
 HIGH_RISK_SOURCES = frozenset({"local-cli", "web"})
