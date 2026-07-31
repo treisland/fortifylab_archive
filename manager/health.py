@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Protocol
@@ -88,16 +88,26 @@ class HealthEngine:
         clock: Callable[[], datetime] | None = None,
         stale_after: timedelta = timedelta(minutes=5),
         max_probe_timeout: float = 30.0,
+        max_workers: int = 8,
+        aggregate_timeout: float | None = None,
     ) -> None:
         self._registry = registry
         self._probe = probe or UnavailableHealthProbe()
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._stale_after = stale_after
         self._max_probe_timeout = max_probe_timeout
+        self._max_workers = max(1, max_workers)
+        self._aggregate_timeout = (
+            max_probe_timeout if aggregate_timeout is None else aggregate_timeout
+        )
 
     def document(self) -> dict:
         now = self._clock()
         subjects = self._subjects()
+        executor = ThreadPoolExecutor(
+            max_workers=self._max_workers, thread_name_prefix="health-probe"
+        )
+        deadline = time.monotonic() + max(0.0, self._aggregate_timeout)
         items: list[dict] = []
         results: dict[str, dict] = {}
         for subject in subjects:
@@ -113,9 +123,33 @@ class HealthEngine:
                 root = results[failed_dependency].get("rootCause", failed_dependency)
                 item = self._blocked(subject, failed_dependency, root, now)
             else:
-                item = self._evaluate(subject, now)
+                started = {check.id: time.monotonic() for check in subject.checks}
+                futures = {
+                    executor.submit(self._probe.probe, check): check
+                    for check in subject.checks
+                }
+                done, pending = wait(
+                    futures, timeout=max(0.0, deadline - time.monotonic())
+                )
+                for future in pending:
+                    future.cancel()
+                item = self._evaluate(
+                    subject,
+                    now,
+                    [
+                        self._result(
+                            check,
+                            future,
+                            future in done,
+                            now,
+                            started[check.id],
+                        )
+                        for future, check in futures.items()
+                    ],
+                )
             results[subject.id] = item
             items.append(item)
+        executor.shutdown(wait=False, cancel_futures=True)
 
         aggregate = self._aggregate(items)
         return {
@@ -134,8 +168,9 @@ class HealthEngine:
             "items": items,
         }
 
-    def _evaluate(self, subject: _Subject, now: datetime) -> dict:
-        evidence = [self._run(check, now) for check in subject.checks]
+    def _evaluate(
+        self, subject: _Subject, now: datetime, evidence: list[dict]
+    ) -> dict:
         required = [entry for entry in evidence if entry["required"]]
         state = "healthy"
         root: str | None = None
@@ -162,14 +197,18 @@ class HealthEngine:
             item["rootCause"] = root
         return item
 
-    def _run(self, check: CheckSpec, now: datetime) -> dict:
-        started = time.monotonic()
-        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="health-probe")
-        future = executor.submit(self._probe.probe, check)
+    def _result(
+        self,
+        check: CheckSpec,
+        future: Future[ProbeResult],
+        completed: bool,
+        now: datetime,
+        started: float,
+    ) -> dict:
         try:
-            result = future.result(
-                timeout=min(check.timeout_seconds, self._max_probe_timeout)
-            )
+            if not completed:
+                raise TimeoutError
+            result = future.result()
             age = now - result.observed_at.astimezone(timezone.utc)
             state = "stale" if age > self._stale_after else result.state
             summary = (
@@ -179,10 +218,9 @@ class HealthEngine:
             )
             observed_at = result.observed_at
         except TimeoutError:
-            future.cancel()
             state, summary, observed_at = (
                 "unknown",
-                "Check exceeded its bounded deadline",
+                "Check exceeded the aggregate bounded deadline",
                 now,
             )
         except Exception:
@@ -191,8 +229,6 @@ class HealthEngine:
                 "Check could not obtain safe evidence",
                 now,
             )
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
         measured_latency = max(0, round((time.monotonic() - started) * 1000))
         return {
             "id": check.id,

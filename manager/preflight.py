@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Protocol
@@ -61,15 +61,43 @@ class PreflightEngine:
         *,
         clock: Callable[[], datetime] | None = None,
         max_probe_timeout: float = 30.0,
+        max_workers: int = 6,
+        aggregate_timeout: float | None = None,
     ) -> None:
         self._registry = registry
         self._probe = probe or UnavailablePreflightProbe()
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._max_probe_timeout = max_probe_timeout
+        self._max_workers = max(1, max_workers)
+        self._aggregate_timeout = (
+            max_probe_timeout if aggregate_timeout is None else aggregate_timeout
+        )
 
     def document(self) -> dict:
         generated_at = self._clock()
-        items = [self._run(check) for check in self._checks()]
+        checks = self._checks()
+        executor = ThreadPoolExecutor(
+            max_workers=self._max_workers, thread_name_prefix="preflight"
+        )
+        started = {check.id: time.monotonic() for check in checks}
+        futures = {
+            executor.submit(self._probe.probe, check): check for check in checks
+        }
+        done, pending = wait(
+            futures, timeout=max(0.0, self._aggregate_timeout)
+        )
+        for future in pending:
+            future.cancel()
+        items = [
+            self._result(
+                check,
+                future,
+                future in done,
+                started[check.id],
+            )
+            for future, check in futures.items()
+        ]
+        executor.shutdown(wait=False, cancel_futures=True)
         counts = {
             classification: sum(
                 item["classification"] == classification for item in items
@@ -98,25 +126,25 @@ class PreflightEngine:
             "items": items,
         }
 
-    def _run(self, check: PreflightCheck) -> dict:
-        started = time.monotonic()
-        executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="preflight")
-        future = executor.submit(self._probe.probe, check)
+    def _result(
+        self,
+        check: PreflightCheck,
+        future: Future[PreflightResult],
+        completed: bool,
+        started: float,
+    ) -> dict:
         try:
-            result = future.result(
-                timeout=min(check.timeout_seconds, self._max_probe_timeout)
-            )
+            if not completed:
+                raise TimeoutError
+            result = future.result()
             state = result.state
             summary = _result_summary(check.id, state)
         except TimeoutError:
-            future.cancel()
             state = "fail"
-            summary = "Check exceeded its bounded deadline"
+            summary = "Check exceeded the aggregate bounded deadline"
         except Exception:
             state = "fail"
             summary = "Check could not obtain safe evidence"
-        finally:
-            executor.shutdown(wait=False, cancel_futures=True)
 
         classification = {
             "pass": "information",

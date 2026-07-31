@@ -192,11 +192,21 @@ class PreflightTests(unittest.TestCase):
         self.assertFalse(document["ready"])
         self.assertTrue(
             all(
-                item["summary"] == "Check exceeded its bounded deadline"
+                item["summary"] == "Check exceeded the aggregate bounded deadline"
                 and "remediation" in item
                 for item in document["items"]
             )
         )
+
+    def test_independent_checks_run_with_controlled_concurrency(self):
+        started = time.monotonic()
+        document = self.engine(
+            SlowProbe(),
+            max_probe_timeout=0.2,
+            max_workers=6,
+        ).document()
+        self.assertLess(time.monotonic() - started, 0.15)
+        self.assertTrue(document["ready"])
 
     def test_api_is_get_head_only_and_schema_valid(self):
         app = ManagerAPI(preflight_probe=self.probe)

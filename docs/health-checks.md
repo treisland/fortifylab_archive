@@ -34,7 +34,12 @@ Checks run from roots to consumers:
 
 Registry dependencies are preserved. When a dependency is not healthy, its
 consumers are `blocked` without running their probes. The root item therefore
-appears before downstream symptoms.
+appears before downstream symptoms. Eligible checks for one subject use a
+fixed worker pool; the whole report shares a 30-second aggregate deadline.
+When that deadline expires, unfinished checks become sanitized `unknown`
+evidence and queued work is cancelled. Runtime adapters must also honor each
+allow-listed check timeout because worker threads cannot forcibly interrupt an
+adapter that ignores cancellation.
 
 | State | Meaning |
 | --- | --- |

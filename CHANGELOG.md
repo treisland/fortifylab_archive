@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Render all six dashboard evidence panels progressively with cancellable
+  eight-second reads, non-overlapping refresh generations, retained evidence,
+  honest per-panel observation/refresh times, derived counts, and bounded
+  concurrent aggregate health and preflight evaluation.
 - Add a versioned 0.4 verified-platform-lifecycle evaluation suite covering
   inventory, partial API failure, layered health, lifecycle and recovery,
   browser acceptance, and secret safety, with a fail-closed fresh,

@@ -43,7 +43,8 @@ Policy.
 
 The page does not convert missing evidence into success:
 
-- components, health, preflight, recent history, and lifecycle operations each
+- components, health, preflight, recent history, tested-profile capabilities,
+  and lifecycle operations each
   own a live state region. A `503` or adapter failure in one read model leaves
   successful panels visible; previously successful evidence in the failed
   panel is retained and explicitly labelled stale;
@@ -65,6 +66,15 @@ identifiers, blocked consumers, preflight blockers, last successful refresh,
 and evidence age. When the API supplies no node, version, timestamp, or age,
 the page says that the field was not reported rather than presenting an
 ambiguous `unknown`.
+
+Every panel settles as soon as its own request finishes; it does not wait for
+the other read models. Each read has an eight-second browser deadline and is
+cancelled with `AbortController` when it expires or the page becomes hidden.
+Loading is therefore terminal within eight seconds plus local rendering time.
+A panel reports both the evidence observation time (when its contract supplies
+one) and the browser refresh time. Missing observation time is labelled
+`not reported`, never inferred from another panel. The header count is derived
+from the same panel registry that starts the reads.
 
 Color is never the only health cue: every badge includes visible state text.
 The page provides landmarks, a skip link, labelled controls, table headers,
@@ -116,9 +126,10 @@ submitted secret values. Secret status remains metadata-only under
 
 ## Failure recovery
 
-Use **Refresh** after a transient manager or adapter failure. Auto-refresh is
-enabled by default at a bounded 30-second interval, never overlaps an active
-refresh, and pauses while the page is hidden. It can be disabled from the
+Use **Refresh** after a transient manager or adapter failure. Refresh and
+auto-refresh share one generation and never overlap. Auto-refresh is enabled
+by default at a bounded 30-second interval and pauses while the page is
+hidden; hiding the page also cancels unfinished reads. It can be disabled from the
 keyboard-accessible header control. A successful retry replaces stale panel
 evidence without reloading the page.
 

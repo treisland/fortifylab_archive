@@ -40,14 +40,14 @@ main { width:min(1500px,94vw); margin:2rem auto 4rem; }
 .check-row a { grid-column:2; font-size:.85rem; }
 .root-cause { color:var(--red); font-weight:700; margin:.6rem 0; }
 .status { display:inline-block; width:max-content; border-radius:99px; padding:.18rem .5rem; text-transform:uppercase; letter-spacing:.05em; font-size:.67rem; font-weight:850; border:1px solid currentColor; }
-.healthy { color:#60e6b2; }.starting,.loading { color:#8fd3ff; }.degraded { color:#f2c14e; }.blocked { color:#ff9f66; }.misconfigured { color:#ff7eaa; }.stopped { color:#c9a0ff; }.unreachable,.unavailable { color:#78bfff; }.unknown { color:#c3ced5; }.unhealthy,.error,.unauthorized { color:#ff8585; }.stale { color:#e6b957; border-style:dashed; }
+.healthy { color:#60e6b2; }.starting,.loading { color:#8fd3ff; }.degraded { color:#f2c14e; }.blocked { color:#ff9f66; }.misconfigured { color:#ff7eaa; }.stopped { color:#c9a0ff; }.unreachable,.unavailable { color:#78bfff; }.unknown { color:#c3ced5; }.unhealthy,.error,.unauthorized,.timed-out { color:#ff8585; }.stale { color:#e6b957; border-style:dashed; }
 .notice { padding:1rem; margin-bottom:1rem; border:1px solid var(--line); border-radius:.55rem; background:#142520; }
 .notice.danger { border-color:#7a3434; display:flex; gap:.5rem; flex-wrap:wrap; }
 .empty { color:var(--muted); padding:1rem; text-align:center; border:1px dashed var(--line); border-radius:.5rem; }
 .refresh-status { display:flex; justify-content:space-between; gap:1rem; color:var(--muted); margin-bottom:1rem; }
 .panel-state { padding:.7rem .85rem; margin-bottom:1rem; border:1px solid currentColor; border-radius:.5rem; }
 .panel-state.available { color:var(--muted); border-color:var(--line); }
-.panel-state.stale,.panel-state.unavailable,.panel-state.unauthorized,.panel-state.error { background:#211b14; }
+.panel-state.stale,.panel-state.unavailable,.panel-state.unauthorized,.panel-state.timed-out,.panel-state.error { background:#211b14; }
 .table-wrap { overflow-x:auto; }
 table { width:100%; border-collapse:collapse; }
 th,td { text-align:left; padding:.75rem; border-bottom:1px solid var(--line); }

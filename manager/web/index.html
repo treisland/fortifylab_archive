@@ -21,7 +21,7 @@
     <div id="loading" class="notice" role="status">Loading the latest lab evidence…</div>
     <div id="refresh-status" class="refresh-status" role="status" aria-live="polite">
       <span id="last-refresh">No refresh completed</span>
-      <span id="refresh-summary">Loading five independent dashboard panels</span>
+      <span id="refresh-summary">Dashboard panels have not settled</span>
     </div>
     <div id="session-expired" class="notice danger" role="alert" hidden>
       <strong>Your session expired.</strong>
@@ -38,6 +38,10 @@
       <div><strong>Primary root causes</strong><span id="root-cause-summary">Waiting for health evidence</span></div>
       <div><strong>Blocked consumers</strong><span id="blocked-summary">Waiting for health evidence</span></div>
       <div><strong>Preflight</strong><span id="preflight-summary">Waiting for preflight evidence</span></div>
+    </section>
+    <section class="panel capability-panel">
+      <div class="section-heading"><div><p class="eyebrow">CAPABILITIES</p><h2>Tested platform profile</h2></div><div class="panel-heading-state"><strong id="capability-profile">—</strong><small id="capability-detail">Waiting for capability evidence</small></div></div>
+      <div id="capabilities-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading capability evidence…</div>
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">SYSTEM MAP</p><h2>Dependencies and versions</h2></div><p class="muted">Upstream services appear before their consumers.</p></div>
