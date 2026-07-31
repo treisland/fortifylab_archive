@@ -91,6 +91,13 @@ Neither role grants Secrets, pod logs, exec, mutation, or workload access in
 another namespace. Re-running the command refreshes only the observer
 credential and CA; it does not read application Secrets.
 
+MicroK8s clusters upgraded from older releases can retain a trusted cluster CA
+without the RFC 5280 `keyUsage` extension. The Manager accepts that documented
+legacy CA shape by disabling only OpenSSL strict-extension enforcement for its
+Kubernetes client. CA-chain validation, hostname verification, HTTPS-only
+origins, bounded timeouts, and the observer authorization checks remain
+mandatory. An untrusted CA or hostname mismatch still fails closed.
+
 ## Health and sanitized diagnostics
 
 Application-level health requires the protected functional probe configured
