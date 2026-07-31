@@ -21,7 +21,12 @@ from manager.authorization import (
     OperationPlan,
 )
 from manager.communications import MAX_MESSAGE, Action, Message
-from manager.operation_engine import OperationEngine, OperationStore, TERMINAL_STATES
+from manager.operation_engine import (
+    RECOVERY_CLASS_BY_OPERATION,
+    OperationEngine,
+    OperationStore,
+    TERMINAL_STATES,
+)
 
 
 REMOTE_APPROVABLE_RISKS = frozenset({"disruptive"})
@@ -221,8 +226,26 @@ class RemoteActionService:
         timeout = sum(float(step["timeoutSeconds"]) for step in resolved["steps"])
         requested = set(resolved["requestedTargets"])
         dependencies = [item for item in affected if item not in requested]
+        rollback_class = max(
+            (
+                step.get(
+                    "recoveryClass",
+                    RECOVERY_CLASS_BY_OPERATION.get(
+                        step.get("operation", operation), "irreversible"
+                    ),
+                )
+                for step in resolved["steps"]
+            ),
+            key={
+                "reversible": 0,
+                "compensating-action": 1,
+                "restore-required": 2,
+                "irreversible": 3,
+            }.__getitem__,
+        )
         rollback = (
-            "Cancellation is best-effort; completed mutations are not automatically rolled back."
+            f"{rollback_class}; cancellation is best-effort and completed mutations "
+            "are retained as recovery evidence."
         )
         snapshot = {
             "id": approval["id"],
@@ -233,6 +256,7 @@ class RemoteActionService:
             "currentState": current,
             "timeoutSeconds": timeout,
             "rollbackBoundary": rollback,
+            "recoveryClass": rollback_class,
             "planDigest": policy_plan.digest,
             "expiresAt": approval["expiresAt"],
         }

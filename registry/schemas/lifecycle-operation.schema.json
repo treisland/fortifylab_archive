@@ -4,7 +4,7 @@
   "title": "Lifecycle operation status",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "kind", "id", "operation", "components", "requestedTargets", "actor", "state", "createdAt", "updatedAt", "currentStep", "completedSteps", "totalSteps", "retryOf", "error"],
+  "required": ["apiVersion", "kind", "id", "operation", "components", "requestedTargets", "actor", "state", "createdAt", "updatedAt", "currentStep", "completedSteps", "totalSteps", "retryOf", "error", "recovery"],
   "properties": {
     "apiVersion": {"const": "fortifylab.io/v1alpha1"},
     "kind": {"const": "LifecycleOperation"},
@@ -36,6 +36,16 @@
     "totalSteps": {"type": "integer", "minimum": 1},
     "retryOf": {"oneOf": [{"type": "null"}, {"type": "string", "format": "uuid"}]},
     "error": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 256}]},
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "boundary", "nextAction"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "boundary": {"enum": ["reversible", "compensating-action", "restore-required", "irreversible"]},
+        "nextAction": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 256}]}
+      }
+    },
     "workflow": {"enum": ["clean-install"]},
     "profileId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}
   }

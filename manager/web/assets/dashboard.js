@@ -349,7 +349,8 @@ byId("operation-form").addEventListener("submit", async event => {
     text(byId("plan-impact"), selectedPlan.dependencyImpact.length ? `Adds dependencies: ${selectedPlan.dependencyImpact.join(", ")}` : "No implicit dependency additions");
     const list = byId("plan-steps");
     list.replaceChildren();
-    selectedPlan.steps.forEach(step => list.append(documentNode("li", "", `${step.operation} ${step.component} · timeout ${step.timeoutSeconds}s · ${step.verificationChecks.length} health checks`)));
+    selectedPlan.steps.forEach(step => list.append(documentNode("li", "", `${step.operation} ${step.component} · ${step.recoveryClass} · timeout ${step.timeoutSeconds}s · ${step.verificationChecks.length} health checks`)));
+    text(byId("plan-impact"), `${byId("plan-impact").textContent} · recovery boundary: ${selectedPlan.recoveryBoundary}`);
     byId("operation-plan").hidden = false;
     byId("operation-message").hidden = true;
   } catch (error) { showOperationMessage(error.message, true); }
