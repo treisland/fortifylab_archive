@@ -171,12 +171,15 @@ function renderInventory(document) {
     document.generatedAt || document.observation?.observedAt
   );
   const choices = byId("operation-components");
-  const selected = new Set(Array.from(choices.selectedOptions).map(item => item.value));
+  const selected = choices.value;
   choices.replaceChildren();
+  const wholeLab = documentNode("option", "", "Complete tested profile");
+  wholeLab.value = "";
+  choices.append(wholeLab);
   for (const item of items) {
     const option = documentNode("option", "", item.identity?.displayName || item.identity?.id);
     option.value = item.identity?.id || "";
-    option.selected = selected.has(option.value);
+    option.selected = selected === option.value;
     choices.append(option);
   }
   const linked = new URLSearchParams(window.location.search).get("component");
@@ -685,31 +688,21 @@ async function mutate(path, body = {}) {
 
 function operationRequest() {
   return {
-    operation: byId("operation").value,
-    components: Array.from(byId("operation-components").selectedOptions).map(item => item.value)
+    action: byId("operation").value,
+    component: byId("operation-components").value || null
   };
 }
 
 byId("operation-form").addEventListener("submit", async event => {
   event.preventDefault();
   try {
-    const cleanInstall = byId("operation").value === "clean-install";
-    selectedPlan = await mutate(
-      cleanInstall ? "/api/v1alpha1/clean-install/plan" : "/api/v1alpha1/operations/plans",
-      cleanInstall ? {} : operationRequest()
-    );
-    if (cleanInstall && !selectedPlan.ready) {
-      const reason = selectedPlan.existingComponents.length
-        ? `Existing footprint detected: ${selectedPlan.existingComponents.join(", ")}`
-        : "Deployment preflight has blockers";
-      throw new Error(`${reason}. Review clean-install evidence before retrying.`);
-    }
+    selectedPlan = await mutate("/api/v1alpha1/lab/plans", operationRequest());
     text(byId("plan-risk"), `${selectedPlan.risk} risk`);
-    text(byId("plan-impact"), selectedPlan.dependencyImpact.length ? `Adds dependencies: ${selectedPlan.dependencyImpact.join(", ")}` : "No implicit dependency additions");
+    text(byId("plan-impact"), `${selectedPlan.impact} ${selectedPlan.dependencyImpact.length ? `Automatic expansion: ${selectedPlan.dependencyImpact.join(", ")}.` : "No automatic expansion."} Estimated duration: up to ${selectedPlan.estimatedDurationSeconds}s.`);
     const list = byId("plan-steps");
     list.replaceChildren();
     selectedPlan.steps.forEach(step => list.append(documentNode("li", "", `${step.operation} ${step.component} · ${step.recoveryClass} · timeout ${step.timeoutSeconds}s · ${step.verificationChecks.length} health checks`)));
-    text(byId("plan-impact"), `${byId("plan-impact").textContent} · recovery boundary: ${selectedPlan.recoveryBoundary}`);
+    text(byId("plan-impact"), `${byId("plan-impact").textContent} Data boundary: PVCs, databases, configuration, licenses, Kubernetes resources, MicroK8s, EC2, and Manager access are preserved. Cancellation boundary: ${selectedPlan.cancellationBoundary}`);
     byId("operation-plan").hidden = false;
     byId("operation-message").hidden = true;
   } catch (error) { showOperationMessage(error.message, true); }
@@ -738,15 +731,6 @@ byId("operation-confirmation").addEventListener("close", () => {
 
 async function startOperation() {
   try {
-    if (selectedPlan.workflow === "clean-install") {
-      const operation = await mutate("/api/v1alpha1/clean-install", {});
-      activeOperationId = operation.id;
-      sessionStorage.setItem("fortifylab.activeOperation", activeOperationId);
-      byId("operation-plan").hidden = true;
-      renderOperation(operation);
-      scheduleProgress();
-      return;
-    }
     const request = {operation: selectedPlan.operation, components: selectedPlan.requestedTargets};
     if (selectedPlan.approvalRequired) {
       const approval = await mutate("/api/v1alpha1/approvals", request);
@@ -755,7 +739,11 @@ async function startOperation() {
       });
       request.approvalId = approved.id;
     }
-    const operation = await mutate("/api/v1alpha1/operations", request);
+    const operation = await mutate("/api/v1alpha1/lab/operations", {
+      action: selectedPlan.action,
+      component: selectedPlan.selectedComponent || null,
+      approvalId: request.approvalId
+    });
     activeOperationId = operation.id;
     sessionStorage.setItem("fortifylab.activeOperation", activeOperationId);
     byId("operation-plan").hidden = true;

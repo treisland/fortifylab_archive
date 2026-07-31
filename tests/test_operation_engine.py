@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import tempfile
 import threading
+import time
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -135,6 +136,40 @@ class OperationEngineTests(unittest.TestCase):
             self.adapter.calls.index(("ssc", "stop")),
             self.adapter.calls.index(("mysql", "stop")),
         )
+
+    def test_lab_plans_expand_the_authoritative_graph_and_preserve_data(self) -> None:
+        start = self.engine.lab_plan("start", "scancentral-sast")
+        self.assertEqual(
+            start["executionOrder"], ["mysql", "ssc", "scancentral-sast"]
+        )
+        self.assertEqual(start["automaticExpansion"], ["mysql", "ssc"])
+        self.assertTrue(start["dataBoundary"]["preservesPersistentVolumes"])
+        self.assertFalse(start["dataBoundary"]["uninstallsResources"])
+        self.assertFalse(start["dataBoundary"]["deletesData"])
+        self.assertFalse(start["dataBoundary"]["stopsMicroK8s"])
+        self.assertFalse(start["dataBoundary"]["stopsEC2"])
+
+        suspend = self.engine.lab_plan("suspend", "mysql")
+        self.assertEqual(suspend["executionOrder"][-1], "mysql")
+        self.assertIn("ssc", suspend["automaticExpansion"])
+        order = suspend["executionOrder"]
+        self.assertLess(order.index("scancentral-sast"), order.index("ssc"))
+        self.assertLess(order.index("ssc"), order.index("mysql"))
+
+    def test_failed_lab_start_does_not_advance_downstream(self) -> None:
+        self.verifier.fail_component = "ssc"
+        result = self.engine.submit_lab_async(
+            "start", "scancentral-sast", actor="local:test"
+        )
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline:
+            result = self.store.get(result["id"])
+            if result["state"] in {"failed", "succeeded"}:
+                break
+            time.sleep(0.002)
+        self.assertEqual(result["state"], "failed")
+        self.assertNotIn(("scancentral-sast", "start"), self.adapter.calls)
+        self.assertEqual(result["workflow"], "start-lab")
 
     def test_timeout_is_bounded(self) -> None:
         class TimeoutAdapter:

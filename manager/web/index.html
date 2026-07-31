@@ -89,16 +89,16 @@
       </article>
     </section>
     <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">LIFECYCLE</p><h2>Component operations</h2></div><p class="muted">Plans are resolved and authorized by the shared manager service.</p></div>
+      <div class="section-heading"><div><p class="eyebrow">LIFECYCLE</p><h2>Lab lifecycle</h2></div><p class="muted">Choose the whole tested profile or one component. Dependencies and active dependents are expanded automatically.</p></div>
       <div id="operations-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading operation prerequisites…</div>
       <form id="operation-form" class="operation-form" aria-describedby="operations-panel-state">
         <label for="operation">Action</label>
         <select id="operation" name="operation">
-          <option value="clean-install">clean-install (complete profile)</option><option>start</option><option>stop</option><option>restart</option><option>install</option><option>configure</option><option>uninstall</option><option>delete-data</option>
+          <option value="deploy">Deploy Lab</option><option value="start">Start Lab</option><option value="suspend">Suspend Lab</option>
         </select>
-        <label for="operation-components">Components</label>
-        <select id="operation-components" name="components" multiple required aria-describedby="component-help"></select>
-        <small id="component-help">Select every affected dependent for stop or uninstall. Data deletion is always separate.</small>
+        <label for="operation-components">Focus</label>
+        <select id="operation-components" name="component" aria-describedby="component-help"><option value="">Complete tested profile</option></select>
+        <small id="component-help">A component focus automatically includes upstream dependencies for deploy/start and active dependents for suspend. Suspend never uninstalls or deletes data.</small>
         <button type="submit">Review plan</button>
       </form>
       <div id="operation-message" class="notice" role="status" aria-live="polite" hidden></div>

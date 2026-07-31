@@ -271,6 +271,46 @@ class WebOperationTests(unittest.TestCase):
         self.assertEqual(detail["state"], "succeeded")
         self.assertEqual(detail["completionHealth"], "verified")
 
+    def test_first_class_lab_plan_and_suspend_share_approval_state(self):
+        plan_response = self.post(
+            "/api/v1alpha1/lab/plans",
+            {"action": "suspend", "component": "mysql"},
+        )
+        self.assertEqual(plan_response["status"], "200 OK")
+        plan = json.loads(plan_response["body"])
+        self.assertEqual(plan["workflow"], "suspend-lab")
+        self.assertTrue(plan["approvalRequired"])
+        self.assertEqual(plan["approval"]["channels"], ["web", "telegram"])
+        self.assertTrue(plan["approval"]["sharedState"])
+        self.assertFalse(plan["destructive"])
+        self.assertFalse(plan["dataBoundary"]["deletesData"])
+        self.assertEqual(plan["executionOrder"][-1], "mysql")
+
+        request_body = {
+            "operation": plan["operation"],
+            "components": plan["components"],
+        }
+        approval = json.loads(
+            self.post("/api/v1alpha1/approvals", request_body)["body"]
+        )
+        approved = json.loads(
+            self.post(
+                f"/api/v1alpha1/approvals/{approval['id']}/approve", {}
+            )["body"]
+        )
+        created = self.post(
+            "/api/v1alpha1/lab/operations",
+            {
+                "action": "suspend",
+                "component": "mysql",
+                "approvalId": approved["id"],
+            },
+        )
+        self.assertEqual(created["status"], "202 Accepted")
+        detail = self.completed(json.loads(created["body"])["id"])
+        self.assertEqual(detail["workflow"], "suspend-lab")
+        self.assertEqual(detail["state"], "succeeded")
+
     def test_blocked_pending_approval_and_high_risk_confirmation(self):
         blocked = self.post(
             "/api/v1alpha1/operations/plans",
