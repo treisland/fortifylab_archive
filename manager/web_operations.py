@@ -34,6 +34,7 @@ APPROVALS = "/api/v1alpha1/approvals"
 CLEAN_INSTALL = "/api/v1alpha1/clean-install"
 RECOVERY = "/api/v1alpha1/recovery"
 PROFILE_UPGRADES = "/api/v1alpha1/profile-upgrades"
+LAB = "/api/v1alpha1/lab"
 
 
 class WebOperationAPI:
@@ -76,6 +77,23 @@ class WebOperationAPI:
             if path.startswith(RECOVERY):
                 return self._recovery_request(
                     path, method, environ, start_response, identity
+                )
+            if path == LAB + "/plans" and method == "POST":
+                request = self._body(environ)
+                return self._json(
+                    start_response, HTTPStatus.OK, self._lab_plan(request)
+                )
+            if path == LAB + "/operations" and method == "POST":
+                request = self._body(environ)
+                document = self._engine.submit_lab_async(
+                    request.get("action"),
+                    request.get("component"),
+                    actor=identity.actor,
+                    identity=identity,
+                    approval_id=request.get("approvalId"),
+                )
+                return self._json(
+                    start_response, HTTPStatus.ACCEPTED, self._detail(document)
                 )
             if path == CLEAN_INSTALL + "/plan" and method == "POST":
                 self._body(environ)
@@ -269,6 +287,32 @@ class WebOperationAPI:
                     "irreversible": 3,
                 }.__getitem__,
             ),
+        }
+
+    def _lab_plan(self, request: dict[str, Any]) -> dict[str, Any]:
+        if set(request) - {"action", "component"}:
+            raise ValueError("lab plan request is invalid")
+        plan = self._engine.lab_plan(
+            request.get("action"), request.get("component")
+        )
+        current = self._state_provider(tuple(plan["components"]))
+        authorization_plan = OperationPlan(
+            plan["operation"], tuple(plan["components"]), current
+        )
+        return {
+            **plan,
+            "risk": authorization_plan.risk,
+            "approvalRequired": authorization_plan.risk in APPROVAL_REQUIRED,
+            "approval": {
+                "required": authorization_plan.risk in APPROVAL_REQUIRED,
+                "risk": authorization_plan.risk,
+                "channels": ["web", "telegram"],
+                "sharedState": True,
+            },
+            "destructive": False,
+            "deletesData": False,
+            "dependencyImpact": plan["automaticExpansion"],
+            "recoveryBoundary": "reversible",
         }
 
     def _operation_plan(self, request: dict[str, Any]) -> OperationPlan:

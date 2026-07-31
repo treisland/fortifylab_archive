@@ -286,6 +286,18 @@ class RemoteActionService:
             f"plan:{approval['id']}",
         )
 
+    def lab_plan(
+        self,
+        action: str,
+        component: str | None,
+        identity: ActorIdentity,
+    ) -> Message:
+        """Create a Telegram-approvable view of the authoritative lab plan."""
+        plan = self._engine.lab_plan(action, component)
+        return self.lifecycle_plan(
+            plan["operation"], tuple(plan["components"]), identity
+        )
+
     def recovery_actions(
         self,
         *,

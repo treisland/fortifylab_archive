@@ -194,6 +194,7 @@ class DashboardApp:
                 or path.startswith("/api/v1alpha1/clean-install")
                 or path.startswith("/api/v1alpha1/recovery")
                 or path.startswith("/api/v1alpha1/profile-upgrades")
+                or path.startswith("/api/v1alpha1/lab")
             ):
                 if self._operation_api is None:
                     return self._json(

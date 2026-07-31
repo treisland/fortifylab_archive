@@ -46,7 +46,14 @@
         "nextAction": {"oneOf": [{"type": "null"}, {"type": "string", "minLength": 1, "maxLength": 256}]}
       }
     },
-    "workflow": {"enum": ["clean-install"]},
-    "profileId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}
+    "workflow": {"enum": ["clean-install", "deploy-lab", "start-lab", "suspend-lab"]},
+    "profileId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+    "labAction": {"enum": ["deploy", "start", "suspend"]},
+    "selectedComponent": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}
+      ]
+    }
   }
 }

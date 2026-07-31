@@ -21,6 +21,11 @@ from manager.record_store import sanitize_record
 START_OPERATIONS = frozenset({"install", "configure", "start", "upgrade"})
 STOP_OPERATIONS = frozenset({"stop", "uninstall", "delete-data"})
 REQUEST_OPERATIONS = START_OPERATIONS | STOP_OPERATIONS | {"restart"}
+LAB_ACTIONS = {
+    "deploy": "install",
+    "start": "start",
+    "suspend": "stop",
+}
 TERMINAL_STATES = frozenset(
     {"succeeded", "failed", "timed-out", "cancelled", "interrupted"}
 )
@@ -338,6 +343,111 @@ class OperationEngine:
         threading.Thread(target=self._run, args=(document, steps), daemon=True).start()
         return self._store.get(document["id"])
 
+    def lab_plan(
+        self, action: str, component_id: str | None = None
+    ) -> dict[str, Any]:
+        """Plan one profile or component-centered lab transition."""
+        operation, requested, steps = self._lab_steps(action, component_id)
+        plan = self._describe_plan(operation, requested, steps)
+        selected = set(requested)
+        expanded = [item for item in plan["components"] if item not in selected]
+        duration = sum(step.timeout_seconds for step in steps)
+        return {
+            "apiVersion": "fortifylab.io/v1alpha1",
+            "kind": "LabLifecyclePlan",
+            "workflow": f"{action}-lab",
+            "action": action,
+            "selectedComponent": component_id,
+            "profileId": self._registry.profile.id,
+            **plan,
+            "affectedComponents": plan["components"],
+            "automaticExpansion": expanded,
+            "executionOrder": plan["components"],
+            "impact": (
+                "Reconciles the tested profile without deleting retained state."
+                if action == "deploy"
+                else "Starts dependencies and verifies application readiness before consumers."
+                if action == "start"
+                else "Suspends consumers before dependencies while Manager remains available."
+            ),
+            "estimatedDurationSeconds": duration,
+            "dataBoundary": {
+                "preservesPersistentVolumes": True,
+                "preservesDatabases": True,
+                "preservesConfiguration": True,
+                "preservesLicenses": True,
+                "preservesKubernetesResources": True,
+                "stopsMicroK8s": False,
+                "stopsEC2": False,
+                "uninstallsResources": False,
+                "deletesData": False,
+                "managerRemainsAvailable": True,
+            },
+            "cancellationBoundary": (
+                "Cancellation is observed between and during bounded component steps; "
+                "completed steps are retained and reported."
+            ),
+            "verificationSteps": [
+                {
+                    "component": step.component_id,
+                    "checks": list(step.verify),
+                }
+                for step in steps
+            ],
+        }
+
+    def submit_lab_async(
+        self,
+        action: str,
+        component_id: str | None = None,
+        *,
+        actor: str,
+        identity: ActorIdentity | None = None,
+        approval_id: str | None = None,
+        retry_of: str | None = None,
+    ) -> dict[str, Any]:
+        operation, requested, steps = self._lab_steps(action, component_id)
+        document, prepared = self._prepare_steps(
+            operation,
+            requested,
+            steps,
+            actor=actor,
+            retry_of=retry_of,
+            identity=identity,
+            approval_id=approval_id,
+            workflow=f"{action}-lab",
+        )
+        document["labAction"] = action
+        document["selectedComponent"] = component_id
+        if retry_of is not None:
+            completed = {
+                (event.get("component"), event.get("operation"))
+                for event in self._store.events(retry_of)
+                if event.get("type") in {"step-succeeded", "step-resumed"}
+            }
+            remaining = tuple(
+                step for step in prepared
+                if (step.component_id, step.operation) not in completed
+            )
+            document["completedSteps"] = len(prepared) - len(remaining)
+            for step in prepared:
+                if (step.component_id, step.operation) in completed:
+                    self._store.event(
+                        document["id"],
+                        {
+                            "type": "step-resumed",
+                            "component": step.component_id,
+                            "operation": step.operation,
+                            "at": _timestamp(self._clock()),
+                        },
+                    )
+            prepared = remaining
+        self._store.update(document)
+        threading.Thread(
+            target=self._run, args=(document, prepared), daemon=True
+        ).start()
+        return self._store.get(document["id"])
+
     def _prepare(
         self,
         operation: str,
@@ -360,6 +470,23 @@ class OperationEngine:
         ):
             raise InvalidOperation("components and actor are required")
         steps = self._plan(operation, components)
+        return self._prepare_steps(
+            operation, components, steps, actor=actor, retry_of=retry_of,
+            identity=identity, approval_id=approval_id, workflow=workflow,
+        )
+
+    def _prepare_steps(
+        self,
+        operation: str,
+        components: tuple[str, ...],
+        steps: tuple[Step, ...],
+        *,
+        actor: str,
+        retry_of: str | None,
+        identity: ActorIdentity | None,
+        approval_id: str | None,
+        workflow: str | None = None,
+    ) -> tuple[dict[str, Any], tuple[Step, ...]]:
         affected = tuple(dict.fromkeys(step.component_id for step in steps))
         with self._lock:
             conflict = self._store.active_components().intersection(affected)
@@ -427,6 +554,12 @@ class OperationEngine:
         ):
             raise InvalidOperation("components are required")
         steps = self._plan(operation, components)
+        return self._describe_plan(operation, components, steps)
+
+    @staticmethod
+    def _describe_plan(
+        operation: str, components: tuple[str, ...], steps: tuple[Step, ...]
+    ) -> dict[str, Any]:
         affected = tuple(dict.fromkeys(step.component_id for step in steps))
         return {
             "operation": operation,
@@ -445,6 +578,39 @@ class OperationEngine:
                 for number, step in enumerate(steps, 1)
             ],
         }
+
+    def _lab_steps(
+        self, action: str, component_id: str | None
+    ) -> tuple[str, tuple[str, ...], tuple[Step, ...]]:
+        operation = LAB_ACTIONS.get(action)
+        if operation is None:
+            raise InvalidOperation("lab action is not supported")
+        if component_id is not None:
+            if not isinstance(component_id, str) or not IDENTIFIER.fullmatch(component_id):
+                raise InvalidOperation("selected component is invalid")
+            self._registry.component(component_id)
+            requested = (component_id,)
+        else:
+            requested = self._registry.dependency_order()
+        if action == "suspend":
+            selected = set(requested)
+            if component_id is not None:
+                selected.update(
+                    candidate
+                    for candidate in self._registry.component_ids
+                    if component_id in self._transitive_dependencies(candidate)
+                )
+            ordered = tuple(
+                item
+                for item in reversed(self._registry.dependency_order())
+                if item in selected
+            )
+            steps = tuple(self._step(item, operation) for item in ordered)
+        else:
+            steps = self._ordered_steps(
+                operation, requested, include_dependencies=True
+            )
+        return operation, requested, steps
 
     def retry(
         self,
@@ -477,6 +643,15 @@ class OperationEngine:
         previous = self._store.get(operation_id)
         if previous["state"] not in TERMINAL_STATES - {"succeeded", "cancelled"}:
             raise InvalidOperation("only a failed, timed-out, or interrupted operation can retry")
+        if previous.get("workflow", "").endswith("-lab"):
+            return self.submit_lab_async(
+                previous["labAction"],
+                previous.get("selectedComponent"),
+                actor=actor,
+                identity=identity,
+                approval_id=approval_id,
+                retry_of=operation_id,
+            )
         if previous.get("workflow") == "clean-install":
             if self._preflight_provider is None:
                 raise PreflightBlocked("clean-install preflight is unavailable")

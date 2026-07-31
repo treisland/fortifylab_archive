@@ -35,6 +35,38 @@ evidence, migrations, rollback limits, downtime, and timeout.
 `delete-data` remains distinct from `uninstall`. Persistent data is never
 deleted as an implicit uninstall or retry side effect.
 
+## Deploy, Start, and Suspend Lab
+
+The authenticated Manager exposes first-class `Deploy Lab`, `Start Lab`, and
+`Suspend Lab` workflows. An operator selects either the complete tested
+platform profile or one component; the Manager expands that focus from the
+authoritative component registry:
+
+- Deploy reconciles the selected profile scope with idempotent `install`
+  capabilities, dependencies first.
+- Start runs `start` capabilities in dependency order. Every declared
+  application-level verification check must pass before the next consumer can
+  start.
+- Suspend runs `stop` capabilities in reverse dependency order. Selecting an
+  upstream component automatically includes all of its consumers, so an active
+  consumer is never left above a suspended dependency.
+
+The review document shows affected components, expansion, execution order,
+worst-case duration, impact, approval state, cancellation boundary, and every
+verification check. The private Telegram action service can render the same
+expanded plan and uses the same durable authorization records, bound to the
+underlying typed operation, expanded targets, and observed state.
+
+Suspend is non-destructive. It cannot invoke `uninstall`, `delete-data`,
+MicroK8s shutdown, or EC2 shutdown. It preserves Kubernetes resources, PVCs,
+databases, configuration, licenses, and Manager access. Uninstall and data
+deletion remain separate APIs with their existing typed confirmations.
+
+Lab operations are queued in the same SQLite-backed operation store before
+execution. Browser refreshes do not affect them. A Manager restart marks an
+active operation `interrupted`; completed progress and sanitized events remain
+available, and retry creates a linked bounded operation.
+
 ## Planning and ordering
 
 Install, configure, start, and upgrade plans include the complete dependency

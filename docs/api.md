@@ -82,9 +82,18 @@ bypass authorization or approvals.
 | `POST /api/v1alpha1/operations/{id}/retry` | Retry failed, timed-out, or interrupted work |
 | `POST /api/v1alpha1/clean-install/plan` | Refresh preflight and detect allow-listed workloads/PVCs for the complete selected profile |
 | `POST /api/v1alpha1/clean-install` | Recheck all gates, then queue the complete dependency-ordered profile install |
+| `POST /api/v1alpha1/lab/plans` | Plan `deploy`, `start`, or `suspend` for the complete profile or one component focus, with automatic graph expansion |
+| `POST /api/v1alpha1/lab/operations` | Queue the reviewed lab action with `action`, optional `component`, and optional `approvalId` |
 
 For example, `{"operation":"start","components":["scancentral-sast"]}`
 resolves MySQL and SSC dependency steps without exposing adapter paths.
+The first-class lab equivalent is
+`{"action":"start","component":"scancentral-sast"}`. Use `null` or omit
+`component` for the complete tested profile. Suspend automatically adds all
+dependents and executes them before the selected dependency. Its plan reports
+that it preserves PVCs, databases, configuration, licenses, Kubernetes
+resources, MicroK8s, EC2, and Manager access; the endpoint cannot request
+uninstall or data deletion.
 Every lifecycle plan step includes `recoveryClass`: `reversible`,
 `compensating-action`, `restore-required`, or `irreversible`. The plan's
 `recoveryBoundary` is the strongest class across its steps. Terminal operation

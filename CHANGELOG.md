@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add first-class Deploy, Start, and Suspend Lab plans with component-centered
+  graph expansion, dependency-ordered health gates, reverse-order safe
+  suspension, durable progress/retry/restart recovery, shared approval state,
+  explicit impact and duration evidence, and a preservation-only data boundary.
 - Add registry-curated Manager, SSC, SAST, LIM, and DAST Core quick links with
   bounded Manager-host DNS/TLS/HTTP availability, latency, evidence time,
   jittered backoff, compact recovery history, strict redirect/SSRF boundaries,
