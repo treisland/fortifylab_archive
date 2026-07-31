@@ -89,6 +89,8 @@ class HealthEngineTests(unittest.TestCase):
         self.assertTrue(
             {
                 "database-query",
+                "database-pvc",
+                "native-readiness",
                 "application-initialized",
                 "license-pool-configured",
                 "worker-registration",
@@ -159,6 +161,17 @@ class HealthEngineTests(unittest.TestCase):
         serialized = json.dumps(self.engine().document())
         self.assertNotIn("Bearer abc", serialized)
         self.assertIn("could not be safely displayed", serialized)
+
+    def test_safe_license_configuration_summary_remains_observable(self):
+        self.probe.states["lim"] = (
+            "healthy",
+            "Required license pool is configured",
+            NOW,
+        )
+        evidence = by_id(self.engine().document())["lim"]["evidence"]
+        self.assertTrue(
+            any(item["summary"] == "Required license pool is configured" for item in evidence)
+        )
 
     def test_health_api_is_read_only_and_schema_valid(self):
         response = request(ManagerAPI(health_probe=self.probe))

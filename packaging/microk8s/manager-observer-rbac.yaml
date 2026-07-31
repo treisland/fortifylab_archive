@@ -20,7 +20,7 @@ metadata:
   namespace: fortify
 rules:
   - apiGroups: [""]
-    resources: [services]
+    resources: [services, persistentvolumeclaims]
     verbs: [get, list]
   - apiGroups: [apps]
     resources: [deployments, statefulsets]

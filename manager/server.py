@@ -19,6 +19,7 @@ from manager.history import StoreHistoryReader
 from manager.component_registry import ComponentRegistry
 from manager.component_inventory import ComponentInventory
 from manager.kubernetes_observer import KubernetesObserver
+from manager.functional_health import UnixFunctionalHealthProbe
 from manager.record_store import LoopRecordStore
 
 
@@ -93,6 +94,11 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     observer = None
     if cluster:
         try:
+            functional_probe = (
+                UnixFunctionalHealthProbe(Path(cluster["health_probe_socket"]))
+                if cluster.get("health_probe_socket")
+                else None
+            )
             observer = KubernetesObserver(
                 cluster["server"],
                 Path(cluster["token_file"]),
@@ -100,6 +106,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
                 registry,
                 namespace=cluster.get("namespace", "fortify"),
                 timeout_seconds=cluster.get("timeout_seconds", 5),
+                functional_probe=functional_probe,
             )
         except (KeyError, OSError, TypeError, ValueError):
             LOG.warning(
@@ -138,6 +145,11 @@ def check(config_path: Path, *, cluster: bool = False) -> None:
             registry,
             namespace=settings.get("namespace", "fortify"),
             timeout_seconds=settings.get("timeout_seconds", 5),
+            functional_probe=(
+                UnixFunctionalHealthProbe(Path(settings["health_probe_socket"]))
+                if settings.get("health_probe_socket")
+                else None
+            ),
         )
         resources = tuple(
             resource

@@ -20,6 +20,10 @@ platform profiles.
 
 ### Added
 
+- Layered functional health for databases, SSC, ScanCentral SAST/DAST, LIM,
+  DNS, ingress, TLS, and storage, with a protected credential-isolating probe
+  boundary, earliest-root blocking, bounded sanitized evidence, and recovery
+  coverage.
 - A versioned, machine-checked 0.3 controlled-operations milestone gate
   covering lifecycle ordering and recovery, approvals, Telegram failures,
   write-only secrets, destructive boundaries, completion health, interface

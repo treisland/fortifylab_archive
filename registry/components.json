@@ -29,6 +29,8 @@
         "aggregate": "all-required",
         "checks": [
           {"id": "database-ready", "type": "workload-ready", "target": "database", "required": true, "timeoutSeconds": 300},
+          {"id": "database-pvc", "type": "persistent-volume", "target": "database-data", "required": true, "timeoutSeconds": 10},
+          {"id": "native-readiness", "type": "native-readiness", "target": "mysql", "required": true, "timeoutSeconds": 10},
           {"id": "database-query", "type": "database-query", "target": "mysql", "required": true, "timeoutSeconds": 30},
           {"id": "database-stopped", "type": "workload-ready", "target": "database", "required": false, "timeoutSeconds": 300},
           {"id": "database-removed", "type": "workload-ready", "target": "database", "required": false, "timeoutSeconds": 300}
@@ -150,6 +152,8 @@
         "aggregate": "all-required",
         "checks": [
           {"id": "database-ready", "type": "workload-ready", "target": "database", "required": true, "timeoutSeconds": 300},
+          {"id": "database-pvc", "type": "persistent-volume", "target": "database-data", "required": true, "timeoutSeconds": 10},
+          {"id": "native-readiness", "type": "native-readiness", "target": "postgresql", "required": true, "timeoutSeconds": 10},
           {"id": "database-query", "type": "database-query", "target": "postgresql", "required": true, "timeoutSeconds": 30},
           {"id": "database-stopped", "type": "workload-ready", "target": "database", "required": false, "timeoutSeconds": 300},
           {"id": "database-removed", "type": "workload-ready", "target": "database", "required": false, "timeoutSeconds": 300}

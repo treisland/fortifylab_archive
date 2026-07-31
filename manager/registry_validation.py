@@ -110,6 +110,10 @@ def validate_registry(document: dict[str, Any], root: Path) -> list[str]:
         for check in checks:
             if check.get("type") == "workload-ready" and check.get("target") not in workload_ids:
                 errors.append(f"{prefix} health check {check.get('id')} targets an unknown workload")
+            if check.get("type") == "persistent-volume" and check.get("target") not in {
+                item.get("id") for item in component["persistence"]
+            }:
+                errors.append(f"{prefix} health check {check.get('id')} targets unknown persistence")
 
         operation_ids = _unique_ids(component["operations"], f"{prefix} operations", errors)
         for operation in component["operations"]:

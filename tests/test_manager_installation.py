@@ -183,6 +183,7 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertNotIn("secrets", resources)
         self.assertNotIn("pods/log", resources)
         self.assertNotIn("namespaces", resources)
+        self.assertIn("persistentvolumeclaims", resources)
         self.assertEqual(role["metadata"]["namespace"], "fortify")
         self.assertEqual(role_binding["metadata"]["namespace"], "fortify")
 
