@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a release-blocking 0.4 operational-console browser evaluation contract
+  with deterministic desktop and narrow journeys, exact-profile sanitized live
+  evidence, Telegram/audit correlation, and an explicit unavailable default.
 - Add first-class Deploy, Start, and Suspend Lab plans with component-centered
   graph expansion, dependency-ordered health gates, reverse-order safe
   suspension, durable progress/retry/restart recovery, shared approval state,

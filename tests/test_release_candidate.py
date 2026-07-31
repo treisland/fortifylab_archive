@@ -57,6 +57,21 @@ class ReleaseCandidateTests(unittest.TestCase):
             )
             self.assertEqual(evaluation["deterministicEvidence"]["status"], "passed")
             self.assertEqual(evaluation["liveEvidence"]["status"], "failed")
+            console_gate = next(
+                item for item in gates["gates"]
+                if item["id"] == "operational-console-browser-evaluation"
+            )
+            self.assertEqual(console_gate["status"], "failed")
+            console = json.loads(
+                (
+                    first.directory
+                    / "operational-console-browser-evaluation.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                console["deterministicBrowserEvidence"]["status"], "passed"
+            )
+            self.assertEqual(console["liveEvidence"]["status"], "unavailable")
 
     def test_sensitive_content_is_rejected_without_echoing_it(self):
         with tempfile.TemporaryDirectory() as directory_name:

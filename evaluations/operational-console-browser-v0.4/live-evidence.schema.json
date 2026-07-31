@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind", "status", "reason"],
+      "properties": {
+        "apiVersion": {"const": "fortifylab.io/evaluations/v1alpha1"},
+        "kind": {"const": "OperationalConsoleBrowserLiveEvidence"},
+        "status": {"const": "not-run"},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 300}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["apiVersion", "kind", "status", "profileId", "platform", "recordedAt", "expiresAt", "journeyChecks", "sanitizationCheck", "telegramAuditCorrelation", "commands", "limitations"],
+      "properties": {
+        "apiVersion": {"const": "fortifylab.io/evaluations/v1alpha1"},
+        "kind": {"const": "OperationalConsoleBrowserLiveEvidence"},
+        "status": {"const": "passed"},
+        "profileId": {"type": "string", "minLength": 1, "maxLength": 96},
+        "platform": {"const": "single-node MicroK8s"},
+        "recordedAt": {"type": "string", "format": "date-time"},
+        "expiresAt": {"type": "string", "format": "date-time"},
+        "journeyChecks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["progressive-partial-recovery", "capability-disabled-enabled", "component-inspector-desktop", "component-inspector-narrow", "quick-link-transitions", "lifecycle-plan-approval-progress", "lifecycle-cancel-fail-retry-restart", "telegram-audit-correlation", "protected-data-absence"],
+          "properties": {
+            "progressive-partial-recovery": {"const": "passed"},
+            "capability-disabled-enabled": {"const": "passed"},
+            "component-inspector-desktop": {"const": "passed"},
+            "component-inspector-narrow": {"const": "passed"},
+            "quick-link-transitions": {"const": "passed"},
+            "lifecycle-plan-approval-progress": {"const": "passed"},
+            "lifecycle-cancel-fail-retry-restart": {"const": "passed"},
+            "telegram-audit-correlation": {"const": "passed"},
+            "protected-data-absence": {"const": "passed"}
+          }
+        },
+        "sanitizationCheck": {"const": "passed"},
+        "telegramAuditCorrelation": {"const": "passed"},
+        "commands": {"type": "array", "minItems": 1, "maxItems": 30, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 300}},
+        "limitations": {"type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 300}}
+      }
+    }
+  ]
+}

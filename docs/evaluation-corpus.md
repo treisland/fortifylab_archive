@@ -177,3 +177,43 @@ dumps. Store only `passed` classifications, bounded command labels, UTC
 validity instants, and residual limitations. The suite cannot establish
 multi-node behavior, production hardening, vendor workload performance, or
 ASPM support.
+
+## 0.4 operational-console browser gate
+
+`evaluations/operational-console-browser-v0.4` adds a separate blocking gate
+for the expanded operational console. Its deterministic journeys pin desktop
+(`1440 × 1000`) and narrow (`390 × 844`) contracts for progressive and partial
+endpoint completion, eight-second loading deadlines and recovery,
+capability-disabled and capability-enabled controls, inspector focus and deep
+links, responsive behavior, curated DNS/TLS/HTTP transitions, and the complete
+Deploy/Start/Suspend plan, approval, progress, cancellation, failure, retry,
+and restart experience. The journeys also require the same immutable approval
+to correlate with Telegram presentation and sanitized Manager history.
+
+Run the local gate with:
+
+```bash
+python3 -m unittest tests.test_operational_console_evaluation
+```
+
+These are deterministic browser-facing contract journeys backed by the
+in-process dashboard, capability, availability, authorization, communication,
+and operation tests named in each scenario. They do not start a browser
+rendering engine, contact Telegram, or mutate MicroK8s. This limitation is
+intentional and remains visible in every expected outcome.
+
+The checked-in `live-evidence.json` is explicitly `not-run`. An authorized
+operator may replace it only after running every journey against the exact
+`fortify-24.4-eval.1` profile on the single-node MicroK8s target, at both
+declared viewports, and confirming DOM, history, diagnostics, fixtures, and
+any approved captures contain no Secret values or protected data. The
+schema accepts bounded classifications, command labels, validity instants,
+and limitations only; do not record page content, provider payloads, raw
+logs, screenshots, internal hostnames, or protected locations.
+
+The release-candidate builder writes
+`operational-console-browser-evaluation.json` and returns `no-go` when a
+deterministic journey changes or the authorized exact-profile live record is
+absent, stale, incomplete, unsanitized, or lacks Telegram/audit correlation.
+ASPM, multi-node Kubernetes, production hardening, and non-MicroK8s targets
+remain outside this gate.

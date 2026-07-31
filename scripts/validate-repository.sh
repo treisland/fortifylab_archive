@@ -43,6 +43,7 @@ python3 -m unittest tests.test_evaluation_corpus
 python3 -m unittest tests.test_observable_manager_evaluation
 python3 -m unittest tests.test_controlled_operations_evaluation
 python3 -m unittest tests.test_verified_lifecycle_evaluation
+python3 -m unittest tests.test_operational_console_evaluation
 
 printf 'Checking local Markdown links...\n'
 python3 scripts/check-local-links.py
