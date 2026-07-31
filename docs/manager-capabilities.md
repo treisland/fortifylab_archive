@@ -21,12 +21,22 @@ health, history, and operation progress remain available for inspection.
 | `unauthorized` | The authenticated identity may inspect the state but cannot use the capability. |
 | `degraded` | Partial inspection is useful, but the complete capability is not available. |
 | `temporarily-unavailable` | A configured transient prerequisite, such as protected observation, is unavailable. |
+The Web UI presents these technical states as the operator-facing labels
+`available`, `disabled-by-policy`, `setup-required`, `unauthorized`,
+`temporarily-unavailable`, and `unsupported`. `disabled-by-policy` and
+`unsupported` are informational states, setup and transient failures are
+warnings, and authorization failures are errors. These labels must not be
+interpreted as workload health.
 
 The fixed capability IDs are `observation`, `functional-health`,
 `lifecycle-execution`, `approvals`, `backup-restore`, `upgrades`,
 `secret-workflows`, and `notifications`. Each entry has a stable sanitized
 `code`, safe prerequisite codes, a matching remediation code and documentation
-link, and separate `canInspect` and `canMutate` booleans. No credentials,
+link and summary, and separate `canInspect` and `canMutate` booleans. Entries
+also identify their `observation` or `mutation` category, responsible boundary,
+and evidence timestamp. The dashboard renders those two categories separately:
+disabled lifecycle mutation never changes observed workload or functional
+health evidence. No credentials,
 Secret names, paths, adapter targets, raw exceptions, or authorization details
 are exposed.
 
@@ -55,10 +65,29 @@ permission, negative permission, restart, and service-state checks pass.
 `deactivate-lifecycle` revokes mutation without deleting operation history or
 lab data. Neither command exposes credential material through this API.
 
-Backup/restore, upgrade, write-only secret, and notification services report
-`not-configured` until their independently protected runtime services are
-composed. This is intentional while those features remain unavailable; the
+Approvals, backup/restore, upgrade, write-only secret, and notification
+services retain the compatible API state `not-configured` but are presented as
+`unsupported` until their independently protected runtime services are
+composed and successfully checked. This is intentional while those features
+remain unavailable; the
 browser does not infer support from registry metadata or connectivity.
+
+If the MicroK8s arguments request RBAC but the running API-server process
+predates that change, lifecycle reports `RBAC_RESTART_REQUIRED` with
+`desired=RBAC`, `effective=previous-authorization`, and
+`action=restart-required`. Mutation remains disabled. Follow the documented
+MicroK8s restart workflow, verify the observer and lifecycle least-privilege
+allow/deny probes, and refresh. The Manager never treats an arguments-file
+change alone as proof that RBAC is active. The privileged
+`install-cluster-access` workflow performs that comparison and atomically
+publishes a three-field sanitized activation document as `root:fortify-manager`
+mode `0640`; the unprivileged Web Manager never reads MicroK8s arguments or
+process metadata. Symlinked, oversized, malformed, incorrectly owned, or
+incorrectly permissioned evidence is ambiguous and never enables mutation.
+Explicit lifecycle-disabled and lifecycle-not-composed policy states take
+precedence over this infrastructure transition. Rolling back the arguments must be
+an explicit operator decision; disabling lifecycle is the safe application
+rollback and does not stop or uninstall deployed workloads.
 
 The lifecycle credential check reads file metadata and access state only; it
 does not read or return credential content. A bounded authorization probe must
@@ -84,13 +113,15 @@ service is live and the socket policy is valid.
 Use this decision order for a mutation failure:
 
 1. `disabled`: activate lifecycle through the protected operator workflow.
-2. `not-configured`: install or compose the named Manager service.
+2. `not-configured`: complete the named protected Manager setup.
 3. `unauthorized`: reauthenticate; do not widen Kubernetes RBAC.
 4. `temporarily-unavailable`: restore the named credential, socket, store, or
    observer and refresh. The next request rechecks it automatically.
 5. `degraded`: repair the packaged lifecycle adapter closure before planning.
 6. `available`: consult the selected action's preflight readiness; lifecycle
    capability alone does not make every action ready.
+7. `unsupported` presentation: install and verify the named independently
+   protected service; do not advertise it from registry metadata alone.
 
 If the Web client reports `CAPABILITY_CONTRACT_UNSUPPORTED_OR_STALE`, refresh
 once. If the state persists, update the Web client and Manager together or

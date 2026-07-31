@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +13,7 @@ from jsonschema import Draft202012Validator
 
 from manager.capabilities import CapabilityProvider
 from manager.dashboard import CAPABILITIES_PATH, DashboardApp, password_verifier
+from manager.server import read_rbac_activation_state
 from tests.test_dashboard import request
 
 
@@ -89,7 +92,94 @@ class CapabilityProviderTests(unittest.TestCase):
         self.assertEqual(capability["lifecycle-execution"]["code"], "OPERATIONS_DISABLED")
         self.assertFalse(capability["lifecycle-execution"]["canMutate"])
         self.assertEqual(capability["backup-restore"]["state"], "not-configured")
+        self.assertEqual(capability["backup-restore"]["presentationState"], "unsupported")
         self.assertEqual(capability["upgrades"]["state"], "not-configured")
+
+    def test_disabled_lifecycle_does_not_degrade_observation_or_health(self):
+        capability = states(self.provider(
+            observation_state=lambda: "available",
+            functional_health_configured=True,
+            functional_health_state=lambda: True,
+            lifecycle_enabled=False,
+        ).document())
+        self.assertEqual(capability["observation"]["state"], "available")
+        self.assertEqual(capability["functional-health"]["state"], "available")
+        self.assertEqual(capability["lifecycle-execution"]["state"], "disabled")
+        self.assertEqual(
+            capability["lifecycle-execution"]["presentationState"],
+            "disabled-by-policy",
+        )
+        self.assertEqual(capability["observation"]["category"], "observation")
+        self.assertEqual(capability["lifecycle-execution"]["category"], "mutation")
+
+    def test_rbac_restart_transition_fails_mutation_closed_and_recovers(self):
+        activation = ["restart-required"]
+        provider = self.provider(
+            observation_state=lambda: "available",
+            lifecycle_enabled=True,
+            lifecycle_configured=True,
+            lifecycle_credential_state=lambda: True,
+            lifecycle_authorization_state=lambda: True,
+            lifecycle_adapter_state=lambda: True,
+            lifecycle_activation_state=lambda: activation[0],
+        )
+        pending = states(provider.document())["lifecycle-execution"]
+        self.assertEqual(pending["code"], "RBAC_RESTART_REQUIRED")
+        self.assertEqual(pending["state"], "temporarily-unavailable")
+        self.assertFalse(pending["canMutate"])
+        self.assertEqual(pending["activation"], {
+            "desired": "RBAC",
+            "effective": "previous-authorization",
+            "action": "restart-required",
+        })
+        activation[0] = "active"
+        recovered = states(provider.document())["lifecycle-execution"]
+        self.assertEqual(recovered["state"], "available")
+        self.assertNotIn("activation", recovered)
+
+    def test_protected_activation_evidence_is_bounded_and_permission_checked(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary) / "rbac-activation.json"
+            evidence.write_text(json.dumps({
+                "apiVersion": "fortifylab.io/v1alpha1",
+                "kind": "RbacActivationEvidence",
+                "state": "restart-required",
+            }), encoding="utf-8")
+            evidence.chmod(0o640)
+            options = {"expected_uid": os.geteuid(), "expected_gid": os.getegid()}
+            self.assertEqual(
+                read_rbac_activation_state(evidence, **options), "restart-required"
+            )
+            evidence.chmod(0o644)
+            self.assertEqual(
+                read_rbac_activation_state(evidence, **options), "ambiguous"
+            )
+            evidence.unlink()
+            target = Path(temporary) / "target"
+            target.write_text("{}", encoding="utf-8")
+            evidence.symlink_to(target)
+            self.assertEqual(
+                read_rbac_activation_state(evidence, **options), "ambiguous"
+            )
+
+    def test_policy_and_composition_precede_restart_transition(self):
+        common = {
+            "observation_state": lambda: "available",
+            "lifecycle_activation_state": lambda: "restart-required",
+        }
+        disabled = states(self.provider(
+            lifecycle_enabled=False, lifecycle_configured=False, **common
+        ).document())["lifecycle-execution"]
+        self.assertEqual(disabled["state"], "disabled")
+        self.assertEqual(disabled["code"], "OPERATIONS_DISABLED")
+        self.assertNotIn("activation", disabled)
+
+        not_composed = states(self.provider(
+            lifecycle_enabled=True, lifecycle_configured=False, **common
+        ).document())["lifecycle-execution"]
+        self.assertEqual(not_composed["state"], "not-configured")
+        self.assertEqual(not_composed["code"], "OPERATIONS_UNAVAILABLE")
+        self.assertNotIn("activation", not_composed)
 
     def test_partial_observation_failure_temporarily_disables_mutation(self):
         document = self.provider(
@@ -158,6 +248,7 @@ class CapabilityProviderTests(unittest.TestCase):
         )
         first = states(provider.document())["lifecycle-execution"]
         self.assertEqual(first["code"], "LIFECYCLE_CREDENTIAL_UNAVAILABLE")
+        self.assertEqual(first["presentationState"], "setup-required")
         credential[0] = True
         adapter[0] = False
         self.assertEqual(

@@ -476,6 +476,21 @@ rbac_preflight() {
     esac
 }
 
+publish_rbac_activation_evidence() {
+    local runtime_state="$1" state="ambiguous" candidate
+    case "$runtime_state" in
+        restart-required) state="restart-required" ;;
+        active) state="active" ;;
+    esac
+    install -d -m 700 -o fortify-manager -g fortify-manager "$CLUSTER_ACCESS_ROOT"
+    candidate="$(mktemp "$CLUSTER_ACCESS_ROOT/.rbac-activation.XXXXXX")"
+    printf '{"apiVersion":"fortifylab.io/v1alpha1","kind":"RbacActivationEvidence","state":"%s"}\n' \
+        "$state" >"$candidate"
+    chown root:fortify-manager "$candidate"
+    chmod 640 "$candidate"
+    mv -f "$candidate" "$CLUSTER_ACCESS_ROOT/rbac-activation.json"
+}
+
 observer_can() {
     microk8s kubectl auth can-i "$@" \
         --as=system:serviceaccount:fortify:fortify-manager-observer 2>/dev/null
@@ -522,11 +537,13 @@ install_cluster_access() {
         mv -f "$CLUSTER_ACCESS_ROOT/token" "$CLUSTER_ACCESS_ROOT/token.disconnected"
     fi
     state="$(rbac_runtime_state)"
+    publish_rbac_activation_evidence "$state"
     if [ "$state" = desired-permissive ]; then
         [ "$approve_enable" -eq 1 ] ||
             fail "RBAC is not desired; review rbac-preflight and explicitly pass --approve-enable-rbac"
         microk8s enable rbac >/dev/null 2>&1 || true
         state="$(rbac_runtime_state)"
+        publish_rbac_activation_evidence "$state"
         [ "$state" != desired-permissive ] ||
             fail "RBAC addon did not configure API-server arguments; Manager remains disconnected"
     fi
@@ -538,6 +555,7 @@ install_cluster_access() {
             fail "MicroK8s restart failed; Manager remains disconnected"
         fi
         state="$(rbac_runtime_state)"
+        publish_rbac_activation_evidence "$state"
     fi
     [ "$state" = rbac-candidate ] ||
         fail "effective API-server authorization is ambiguous; Manager remains disconnected"
@@ -574,6 +592,7 @@ install_cluster_access() {
         mv -f "$CLUSTER_ACCESS_ROOT/token" "$CLUSTER_ACCESS_ROOT/token.disconnected"
         fail "observer files are protected but configuration migration failed; Manager remains disconnected"
     fi
+    publish_rbac_activation_evidence active
     printf 'Verified effective RBAC and activated namespace-scoped observer access; no application Secret was read.\n'
 }
 

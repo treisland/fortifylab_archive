@@ -123,10 +123,15 @@ const payloads = {
     capabilities: [{
       id: "lifecycle-execution",
       state: "available",
+      presentationState: "available",
+      severity: "info",
+      category: "mutation",
+      responsibleBoundary: "lifecycle-service-boundary",
+      evidenceAt: now,
       canMutate: true,
       code: "AVAILABLE",
       prerequisites: [],
-      remediation: {href: "/docs/operations/lifecycle-engine.html"}
+      remediation: {summary: "No action required; current evidence supports this capability.", href: "/docs/operations/lifecycle-engine.html"}
     }]
   }
 };
@@ -149,7 +154,9 @@ for (let index = 0; index < 10; index += 1) await new Promise(resolve => setImme
 assert.equal(elements.get("history-list").children.length, 1, "populated history must render a row");
 assert.equal(elements.get("history-list").children[0].children.length, 5, "history row must render five cells");
 assert.equal(elements.get("capability-list").children.length, 1, "capability must render");
-assert.equal(elements.get("capability-list").children[0].children.at(-1).href, "/docs/operations/lifecycle-engine.html");
+const capabilityCards = elements.get("capability-list").children[0].children.at(-1);
+assert.equal(capabilityCards.children[0].children.at(-1).href, "/docs/operations/lifecycle-engine.html");
+assert.match(capabilityCards.children[0].children[0].textContent, /lifecycle execution/i);
 const serviceLink = elements.get("availability-list").children[0].children.at(-1);
 assert.equal(serviceLink.href, "https://ssc.lab.example/");
 assert.equal(serviceLink.target, "_blank");

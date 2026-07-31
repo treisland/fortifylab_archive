@@ -7,6 +7,11 @@
 
 ## Unreleased
 
+- Separate observation and mutation capability presentation, distinguish
+  policy-disabled, setup-required, unauthorized, transient, and unsupported
+  states, and fail lifecycle mutation closed during an explicit MicroK8s RBAC
+  restart-required transition without changing deployed workload health.
+
 - Add an opt-in, bounded EC2 Manager upgrade acceptance gate with immutable
   release, migration, persistence, session, RBAC, legacy CA, observation,
   private ingress, rollback, earliest-layer, and sanitized evidence contracts.
