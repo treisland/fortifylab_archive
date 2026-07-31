@@ -14,6 +14,7 @@ from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer, make_server
 
 from manager.api import ManagerAPI
+from manager.capabilities import CapabilityProvider
 from manager.dashboard import DashboardApp
 from manager.history import StoreHistoryReader
 from manager.component_registry import ComponentRegistry
@@ -122,6 +123,8 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     observer = None
     operation_api = None
     operation_store = None
+    functional_health_configured = False
+    recovery_service = None
     if cluster:
         try:
             functional_probe = (
@@ -129,6 +132,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
                 if cluster.get("health_probe_socket")
                 else None
             )
+            functional_health_configured = functional_probe is not None
             observer = KubernetesObserver(
                 cluster["server"],
                 Path(cluster["token_file"]),
@@ -185,9 +189,10 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
             ).document(),
             footprint_provider=getattr(observer, "installation_footprint", None),
         )
+        recovery_service = _build_recovery(config, registry, database, store)
         operation_api = WebOperationAPI(
             engine, operation_store, authorization, component_states,
-            recovery=_build_recovery(config, registry, database, store),
+            recovery=recovery_service,
         )
         store._lifecycle_stores = (operation_store, approval_store)
     api = ManagerAPI(
@@ -197,10 +202,22 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         preflight_probe=observer,
         history_reader=StoreHistoryReader(store, operation_store),
     )
+    observation_state = (
+        lambda: ComponentInventory(registry, observer).document()
+        .get("observation", {}).get("state", "unavailable")
+    ) if observer is not None else None
     return DashboardApp(
         accounts=accounts,
         api=api,
         operation_api=operation_api,
+        capability_provider=CapabilityProvider(
+            observation_state=observation_state,
+            functional_health_configured=functional_health_configured,
+            lifecycle_enabled=config["lifecycle_enabled"],
+            lifecycle_configured=operation_api is not None,
+            approvals_configured=operation_api is not None,
+            recovery_configured=recovery_service is not None,
+        ),
         secure_cookies=True,
     ), store
 

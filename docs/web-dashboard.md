@@ -43,7 +43,7 @@ Policy.
 
 The page does not convert missing evidence into success:
 
-- components, health, preflight, recent history, tested-profile capabilities,
+- components, health, preflight, recent history, effective Manager capabilities,
   and lifecycle operations each
   own a live state region. A `503` or adapter failure in one read model leaves
   successful panels visible; previously successful evidence in the failed
@@ -54,6 +54,11 @@ The page does not convert missing evidence into success:
 - a disconnected cluster keeps desired inventory and versions visible while
   observed resources become unknown and disables lifecycle planning until
   safe observation recovers;
+- the versioned capability document, rather than component connectivity,
+  controls the header operation badge, plan form, execution, confirmation,
+  cancellation, and retry controls. Unknown, newer, expired, malformed, or
+  unavailable capability evidence fails closed while inspection remains
+  available;
 - loading, empty, stale, unavailable, unauthorized, and other API errors have
   distinct text and a safe next action;
 - downstream failures retain `blockedBy` and `rootCause`, so the page
@@ -83,6 +88,14 @@ reduced-motion handling.
 
 ## Controlled operations
 
+Before interaction, the browser reads
+[`GET /api/v1alpha1/capabilities`](manager-capabilities.md). The
+`lifecycle-execution` entry is authoritative for both the header badge and
+operation panel. `disabled`, `not-configured`, `unauthorized`, `degraded`, and
+`temporarily-unavailable` states explain why an action cannot succeed before
+submission and link to safe operator guidance. Component inventory never
+enables mutation controls.
+
 Select an action and components, then choose **Review plan**. The manager
 shows the registry-resolved ordered steps, dependency additions, bounded
 timeouts, verification count, risk, and destructive/data-deletion
@@ -105,10 +118,10 @@ Cancellation is cooperative and can remain `cancelling` until the adapter
 reaches a cancellation boundary. Retry creates a new operation and does not
 reuse an approval.
 
-The repository deliberately ships no live MicroK8s mutation adapter.
 `DashboardApp` returns `503 OPERATIONS_UNAVAILABLE` unless composition
 supplies the shared engine, authorization service, current-state provider,
-and an independently validated namespace-scoped adapter.
+and an independently validated namespace-scoped adapter. The capability
+contract reports this as `not-configured` before interaction.
 
 ## Disclosure boundary
 
@@ -132,6 +145,9 @@ by default at a bounded 30-second interval and pauses while the page is
 hidden; hiding the page also cancels unfinished reads. It can be disabled from the
 keyboard-accessible header control. A successful retry replaces stale panel
 evidence without reloading the page.
+Capability evidence refreshes on the same bounded cycle and does not require
+re-login. Its 45-second expiry is longer than the normal 30-second refresh
+interval; controls disable immediately if the document nevertheless expires.
 
 Only `401` or `403` responses show the session-expired action and pause
 refreshes; a `503`, network interruption, or disconnected observer does not
