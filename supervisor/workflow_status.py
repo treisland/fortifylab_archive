@@ -94,8 +94,20 @@ def render_card(
     pr_state: str,
     ci_state: str,
     approval_ready: bool,
+    autonomy_policy: dict[str, Any],
     now: float,
 ) -> str:
+    policy_lines = (
+        f"Autonomy: {autonomy_policy['profile']} · generation "
+        f"{autonomy_policy['generation']} · digest "
+        f"{str(autonomy_policy['digest'])[:12]}\n"
+        + "Policy: "
+        + ", ".join(
+            f"{action}={decision}"
+            for action, decision in autonomy_policy["decisions"].items()
+        )
+        + "\n"
+    )
     if not heartbeat:
         if not issue:
             workflow = "paused" if paused else "idle"
@@ -119,6 +131,7 @@ def render_card(
             "Runner: no heartbeat\n"
             f"PR / CI: {pr_state} / {ci_state}\n"
             f"Approval ready: {'yes' if approval_ready else 'no'}\n"
+            f"{policy_lines}"
             f"Next: {next_step}"
         )
     started = parse_time(str(heartbeat["started_at"]))
@@ -138,6 +151,7 @@ def render_card(
         f"Validation: {heartbeat['validation_state']}\n"
         f"PR / CI: {pr_state} / {ci_state}\n"
         f"Approval ready: {'yes' if approval_ready else 'no'}\n"
+        f"{policy_lines}"
         f"Next: {heartbeat['next_expected_transition'] or 'operator review'}"
     )
 

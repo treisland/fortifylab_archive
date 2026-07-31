@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a versioned external supervisor autonomy policy with manual, assisted,
+  and expiring autonomous profiles, protected action boundaries, canonical
+  effective-policy digests, durable change audit events, and compatible
+  approval-first migration defaults.
 - Add a release-blocking 0.4 operational-console browser evaluation contract
   with deterministic desktop and narrow journeys, exact-profile sanitized live
   evidence, Telegram/audit correlation, and an explicit unavailable default.

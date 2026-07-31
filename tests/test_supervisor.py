@@ -320,6 +320,22 @@ class SupervisorTest(unittest.TestCase):
         self.assertIn("Workflow: waiting", status)
         self.assertIn("Next: runner startup or operator action", status)
 
+    def test_status_exposes_sanitized_effective_autonomy_policy(self) -> None:
+        status = self.supervisor.status_text()
+        self.assertIn("Autonomy: assisted · generation 0 · digest ", status)
+        self.assertIn("merge_pull_request=approval", status)
+        self.assertNotIn(str(self.root), status)
+
+    def test_effective_policy_change_is_durably_audited(self) -> None:
+        row = self.store.connection.execute(
+            "SELECT payload FROM events WHERE kind = 'autonomy.policy_changed'"
+        ).fetchone()
+        self.assertIsNotNone(row)
+        payload = json.loads(row["payload"])
+        self.assertEqual(payload["profile"], "assisted")
+        self.assertEqual(payload["generation"], 0)
+        self.assertNotIn("path", payload)
+
     def test_workflow_actions_are_compact_and_contextual(self) -> None:
         self.assertEqual(
             [action.label for action in self.supervisor.workflow_actions()],

@@ -25,6 +25,11 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from autonomy_policy import (
+    AutonomyPolicyError,
+    EffectivePolicy,
+    load_policy,
+)
 from workflow_status import (
     heartbeat_interval,
     read_heartbeat,
@@ -136,6 +141,7 @@ class Config:
     runner_command: tuple[str, ...] = ()
     runner_stop_command: tuple[str, ...] = ()
     heartbeat_root: Path | None = None
+    autonomy_policy_file: Path | None = None
     notifications: NotificationPreferences = NotificationPreferences()
 
     @classmethod
@@ -196,6 +202,11 @@ class Config:
                     / "runner-heartbeats",
                 )
             ).expanduser(),
+            autonomy_policy_file=(
+                Path(str(values["autonomy_policy_file"])).expanduser()
+                if values.get("autonomy_policy_file")
+                else None
+            ),
             notifications=NotificationPreferences(
                 mode=str(notification_values.get("mode", "all")),
                 quiet_start=str(notification_values.get("quiet_start", "")),
@@ -1018,12 +1029,51 @@ class Supervisor:
         self.github = github
         self.telegram = telegram
         self.run = run
+        try:
+            self.policy = load_policy(config.autonomy_policy_file)
+        except AutonomyPolicyError as error:
+            raise SupervisorError(str(error)) from error
         self.allowed_user = read_protected(
             config.telegram_user_file, "Telegram user ID"
         )
         self.allowed_chat = read_protected(
             config.telegram_chat_file, "Telegram chat ID"
         )
+        self.audit_policy()
+
+    def audit_policy(self) -> None:
+        """Record each effective policy generation/digest transition once."""
+
+        previous_digest = self.store.get("autonomy_policy_digest")
+        previous_generation = self.store.get("autonomy_policy_generation")
+        if (
+            previous_digest == self.policy.digest
+            and previous_generation == str(self.policy.generation)
+        ):
+            return
+        self.store.event(
+            f"autonomy-policy:{self.policy.generation}:{self.policy.digest}",
+            "autonomy.policy_changed",
+            {
+                "profile": self.policy.profile,
+                "generation": self.policy.generation,
+                "digest": self.policy.digest,
+                "previous_digest": previous_digest or None,
+                "previous_generation": (
+                    int(previous_generation)
+                    if previous_generation.isdigit()
+                    else None
+                ),
+            },
+        )
+        self.store.set("autonomy_policy_digest", self.policy.digest)
+        self.store.set("autonomy_policy_generation", str(self.policy.generation))
+
+    def policy_decision(self, action: str) -> str:
+        try:
+            return self.policy.decision(action)
+        except AutonomyPolicyError as error:
+            raise SupervisorError(str(error)) from error
 
     def authorized_milestones(self) -> tuple[str, ...]:
         return self.config.milestones or (self.config.milestone,)
@@ -1059,6 +1109,7 @@ class Supervisor:
             pr_state=f"#{pr}" if pr and pr != "none" else "none",
             ci_state=self.store.get("ci_state", "not started"),
             approval_ready=bool(self.store.pending_approvals("merge_pr")),
+            autonomy_policy=self.policy.status(),
             now=self.store.now(),
         )
 
@@ -1346,14 +1397,49 @@ class Supervisor:
                 if watched
                 else "🔕 Routine status updates muted."
             )
+        if command == "/start-next":
+            if len(parts) != 1:
+                raise SupervisorError("Usage: /start-next")
+            if self.policy_decision("start_next_issue") != "approval":
+                raise SupervisorError(
+                    "Starting the next issue is not approval-bound by policy"
+                )
+            issue = self.queue_next_issue(operator_approved=True)
+            return (
+                f"Issue #{issue['number']} was started."
+                if issue
+                else "No eligible issue is available."
+            )
+        if command == "/close-completed":
+            if len(parts) != 1:
+                raise SupervisorError("Usage: /close-completed")
+            if self.policy_decision("close_completed_issue") != "approval":
+                raise SupervisorError(
+                    "Completed issue closure is not approval-bound by policy"
+                )
+            issue = self.store.get("pending_close_issue")
+            if not issue.isdigit():
+                raise SupervisorError("No completed issue is awaiting closure")
+            self.github.close_issue(int(issue))
+            self.store.set("pending_close_issue", "")
+            self.store.event(
+                f"issue:{issue}:close-approved",
+                "issue.close_approved",
+                {"actor": actor, "issue": int(issue)},
+            )
+            return f"Issue #{issue} was closed."
         if command == "/advance":
             if len(parts) != 1:
                 raise SupervisorError("Usage: /advance")
+            if self.policy_decision("advance_milestone") == "disabled":
+                raise SupervisorError("Milestone advance is disabled by autonomy policy")
             approval_id = self.current_approval_id("milestone_rollover")
             return self.approve_milestone_rollover(approval_id, actor)
         if command == "/approve":
             if len(parts) > 2:
                 raise SupervisorError("Usage: /approve [approval-id]")
+            if self.policy_decision("merge_pull_request") == "disabled":
+                raise SupervisorError("Pull request merge is disabled by autonomy policy")
             approval_id = (
                 parts[1]
                 if len(parts) == 2
@@ -1375,6 +1461,8 @@ class Supervisor:
             if len(parts) != 2:
                 raise SupervisorError("Usage: /retry <stage>")
             stage = parts[1]
+            if self.policy_decision("retry_idempotent_failure") == "disabled":
+                raise SupervisorError("Retry is disabled by autonomy policy")
             if stage not in self.config.notifications.retry_stages:
                 raise SupervisorError("Retry is not allowed for this stage")
             row = self.store.connection.execute(
@@ -1431,7 +1519,8 @@ class Supervisor:
             return (
                 "/status\n/pr\n/approve\n/reject <predefined-reason>\n"
                 "/retry <idempotent-stage>\n/issue <failure-fingerprint>\n"
-                "/pause\n/continue\n/watch\n/unwatch\n/advance\n/help"
+                "/start-next\n/close-completed\n/pause\n/continue\n"
+                "/watch\n/unwatch\n/advance\n/help"
             )
         raise SupervisorError("Unknown command. Use /help.")
 
@@ -1560,6 +1649,16 @@ class Supervisor:
             "to": following,
         }
         self.verify_milestone_rollover(payload)
+        decision = self.policy_decision("advance_milestone")
+        if decision == "disabled":
+            self.notify_once(
+                f"milestone:{current}:rollover-disabled:{following}",
+                "milestone.rollover_disabled",
+                f"Milestone advance from {current} is disabled by autonomy policy.",
+                {"from": current, "to": following},
+                meaningful=True,
+            )
+            return
         approval = self.store.pending_approval("milestone_rollover", payload)
         if approval is None:
             approval = self.store.create_approval(
@@ -1567,6 +1666,9 @@ class Supervisor:
                 payload,
                 self.config.approval_ttl_seconds,
             )
+        if decision == "auto":
+            self.approve_milestone_rollover(str(approval["id"]), "autonomy-policy")
+            return
         actions = tuple(
             InlineAction(
                 label,
@@ -1617,8 +1719,21 @@ class Supervisor:
         if self.store.has_event(fingerprint):
             return None
 
-        if issue_number is not None:
+        close_decision = self.policy_decision("close_completed_issue")
+        if issue_number is not None and close_decision == "auto":
             self.github.close_issue(issue_number)
+        elif issue_number is not None:
+            if close_decision == "approval":
+                self.store.set("pending_close_issue", str(issue_number))
+            self.notify_once(
+                f"issue:{issue_number}:close:{close_decision}",
+                "issue.close_policy",
+                f"Issue #{issue_number} requires operator closure."
+                if close_decision == "approval"
+                else f"Issue #{issue_number} closure is disabled by autonomy policy.",
+                {"issue": issue_number, "decision": close_decision},
+                meaningful=True,
+            )
 
         advances_queue = issue_number is not None
         self.notify_once(
@@ -1798,6 +1913,9 @@ class Supervisor:
             return
         if check_state != "passed" or pr.get("mergeable") != "MERGEABLE":
             return
+        merge_decision = self.policy_decision("merge_pull_request")
+        if merge_decision == "disabled":
+            return
         payload = {
             "repository": self.config.repository,
             "pull_request": int(number),
@@ -1809,6 +1927,9 @@ class Supervisor:
             approval = self.store.create_approval(
                 "merge_pr", payload, self.config.approval_ttl_seconds
             )
+        if merge_decision == "auto":
+            self.approve(str(approval["id"]), "autonomy-policy")
+            return
         fingerprint = f"pr:{number}:approval-ready:{sha}"
         notification = self.store.notification(fingerprint)
         if notification is None or notification["state"] == "pending":
@@ -2048,9 +2169,26 @@ class Supervisor:
             )
 
     def queue_next_issue(
-        self, completed_issue: int | None = None
+        self,
+        completed_issue: int | None = None,
+        *,
+        operator_approved: bool = False,
     ) -> dict[str, Any] | None:
         if self.store.get("paused", "false") == "true":
+            return None
+        decision = self.policy_decision("start_next_issue")
+        if decision != "auto" and not (
+            decision == "approval" and operator_approved
+        ):
+            self.notify_once(
+                f"issue:start-policy:{self.active_milestone()}:{decision}",
+                "issue.start_policy",
+                "Starting the next issue requires operator approval."
+                if decision == "approval"
+                else "Starting the next issue is disabled by autonomy policy.",
+                {"milestone": self.active_milestone(), "decision": decision},
+                meaningful=True,
+            )
             return None
         excluded = {completed_issue} if completed_issue is not None else None
         milestone = self.active_milestone()

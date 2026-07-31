@@ -238,6 +238,96 @@ The supervisor never edits `supervisor.toml`; expanding the authorized
 sequence remains a local operator action. The bounded issue runner reads the
 persisted active milestone and rejects issues outside it.
 
+## Autonomy policy
+
+The monitor, Telegram listener, issue runner, and workflow status renderer use
+one versioned policy loader. Policy is not accepted through Telegram and is
+not stored in Git. With no policy setting, generation `0` of the `assisted`
+profile preserves the historical behavior: eligible issue selection and
+post-merge issue closure are automatic, while merges, milestone rollover, and
+allowlisted retry requests remain operator-approved.
+
+To opt in, create an owner-only, non-symlink JSON file outside the checkout:
+
+```json
+{
+  "schema_version": "fortify.autonomy/v1alpha1",
+  "profile": "assisted",
+  "generation": 1,
+  "actions": {
+    "start_next_issue": "auto",
+    "merge_pull_request": "approval"
+  }
+}
+```
+
+Then reference it from the protected supervisor configuration:
+
+```toml
+[supervisor]
+autonomy_policy_file = "/home/ubuntu/.config/fortify-lab-manager/autonomy-policy.json"
+```
+
+Set its mode to `0600`, run `fortify-supervisor status`, and restart both
+supervisor services only after the status output shows the intended profile,
+generation, digest, and all eight effective action decisions. The digest is
+calculated from the canonical effective policy, not its path or JSON key
+order, so separate processes report the same value.
+
+The supported profiles are:
+
+- `manual`: every action requires approval;
+
+- `assisted`: safe issue start and closure are automatic; merge, rollover,
+  retry, destructive, secret, and scope actions require approval;
+
+- `autonomous`: ordinary workflow actions default to automatic until a
+  required future RFC 3339 `expires_at`; protected actions still require
+  approval.
+
+Every action can be `auto`, `approval`, or `disabled`, except
+`destructive_operations`, `secret_operations`, and `scope_changes`, which must
+remain `approval`. The other action names are `start_next_issue`,
+`close_completed_issue`, `advance_milestone`,
+`retry_idempotent_failure`, and `merge_pull_request`. Automatic decisions do
+not bypass the repository, issue, or milestone allowlists, idempotent-stage
+allowlist, CI and review gates, secret scan, dependency checks, branch binding,
+mergeability, or milestone eligibility.
+
+For a manual profile, `/start-next` performs one approved eligible-issue
+selection and `/close-completed` closes the one completed issue recorded after
+merge. The existing `/advance`, `/retry`, and `/approve` commands authorize
+their respective approval-bound actions. Commands still revalidate the
+underlying allowlists and operation gates; changing a decision to `disabled`
+removes that authorization path.
+
+An autonomous example must be explicitly time-bounded:
+
+```json
+{
+  "schema_version": "fortify.autonomy/v1alpha1",
+  "profile": "autonomous",
+  "generation": 2,
+  "expires_at": "2026-08-01T02:00:00Z",
+  "actions": {
+    "merge_pull_request": "approval"
+  }
+}
+```
+
+Unknown fields, profiles, actions, or decisions; an expired autonomous policy;
+unsafe protected-action overrides; malformed JSON; and insecure file
+ownership or permissions all fail closed with sanitized errors. Configuration
+changes produce `autonomy.policy_changed` events containing the old and new
+generation/digest but no policy path or raw values. Generation is an
+operator-managed non-negative revision; increment it for each intended change.
+
+To roll back, restore the last known valid external document and generation,
+then restart both services and compare the status digest. To restore exact
+pre-policy behavior, remove `autonomy_policy_file` from `supervisor.toml` and
+restart the services; the effective policy returns to assisted generation `0`.
+Do not delete the SQLite state database: its audit history is durable evidence.
+
 ## Optional runner
 
 `runner_command` is disabled by default. The installer provides an optional
