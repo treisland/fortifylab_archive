@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Package the Manager from an explicit, policy-mode runtime manifest; validate
+  its complete staged registry and file inventory before upgrade stops the
+  active service.
 - Make Assisted the verified-loop default for atomic next-issue selection,
   externally merged PR/issue reconciliation, exact allowlisted same-cycle
   milestone rollover, and verified-idempotent retry requests; retain approval

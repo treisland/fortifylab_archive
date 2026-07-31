@@ -165,8 +165,19 @@ def validate_registry(
             adapter = operation.get("adapter")
             if not isinstance(adapter, str) or not adapter.startswith("apps/") or not adapter.endswith(".sh"):
                 errors.append(f"{prefix} operation {operation_id} has an invalid adapter")
-            elif not (root / adapter).is_file():
-                errors.append(f"{prefix} operation {operation_id} adapter does not exist")
+            else:
+                adapter_path = root / adapter
+                try:
+                    adapter_path.resolve().relative_to(root.resolve())
+                except (OSError, ValueError):
+                    errors.append(
+                        f"{prefix} operation {operation_id} adapter escapes the runtime root"
+                    )
+                else:
+                    if adapter_path.is_symlink() or not adapter_path.is_file():
+                        errors.append(
+                            f"{prefix} operation {operation_id} adapter does not exist"
+                        )
             timeout = operation.get("timeoutSeconds")
             if not isinstance(timeout, int) or isinstance(timeout, bool) or not 1 <= timeout <= 7200:
                 errors.append(f"{prefix} operation {operation_id} needs a bounded timeout")

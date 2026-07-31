@@ -26,6 +26,15 @@ protected configuration, raw logs, external paths, `secrets/input`, and
 generated secrets are never release inputs. The archive is review material,
 not a backup.
 
+Manager installation has a narrower runtime artifact inside that review
+source. [`packaging/manager-runtime.json`](../../packaging/manager-runtime.json)
+declares its complete input closure and executable-mode policy.
+`scripts/package-manager-runtime.py` stages that closure, writes an exact file
+inventory, enforces path confinement and modes, and loads the authoritative
+component registry from the candidate. Missing adapters, schemas, Web assets,
+or MicroK8s templates therefore block activation. This local static check does
+not contact or constitute evidence from a live MicroK8s cluster.
+
 ## Objective gates
 
 `go-no-go.json` reports `GO` only when every gate is `passed`. `failed` and

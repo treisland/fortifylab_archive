@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "directories": [
+    "apps",
+    "contracts",
+    "manager",
+    "packaging/microk8s",
+    "profiles",
+    "registry"
+  ],
+  "files": [
+    "VERSION",
+    "config/manager.example.toml",
+    "packaging/manager-runtime.json",
+    "packaging/systemd/fortify-manager.service"
+  ],
+  "launchers": {
+    "bin/fortify-manager-cli": "manager.cli",
+    "bin/fortify-manager-server": "manager.server"
+  },
+  "modes": {
+    "directory": "0755",
+    "file": "0644",
+    "executable": "0755"
+  }
+}

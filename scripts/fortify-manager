@@ -115,40 +115,48 @@ configure_route() {
     printf 'Configured manager route; restart the service to activate port %s.\n' "$port"
 }
 
+prepare_runtime_candidate() {
+    require_root
+    install -d -m 755 "$INSTALL_ROOT/releases"
+    RUNTIME_CANDIDATE="$(mktemp -d "$INSTALL_ROOT/releases/.candidate-$VERSION.XXXXXX")"
+    rmdir "$RUNTIME_CANDIDATE"
+    if ! python3 "$REPOSITORY_ROOT/scripts/package-manager-runtime.py" stage \
+        --source "$REPOSITORY_ROOT" --target "$RUNTIME_CANDIDATE"; then
+        RUNTIME_CANDIDATE=""
+        fail "manager runtime candidate is incomplete; active release was preserved"
+    fi
+}
+
 install_runtime() {
     require_root
-    local release="$INSTALL_ROOT/releases/$VERSION"
+    local candidate="${1:-}" release="$INSTALL_ROOT/releases/$VERSION" replaced=""
+    if [ -z "$candidate" ]; then
+        prepare_runtime_candidate
+        candidate="$RUNTIME_CANDIDATE"
+    fi
     getent group fortify-manager >/dev/null ||
         groupadd --system fortify-manager
     id fortify-manager >/dev/null 2>&1 ||
         useradd --system --gid fortify-manager --home-dir "$STATE_ROOT" \
             --shell /usr/sbin/nologin fortify-manager
-    install -d -m 755 "$INSTALL_ROOT/releases" "$release" "$release/bin"
     install -d -m 700 -o fortify-manager -g fortify-manager "$STATE_ROOT"
     install -d -m 750 -o root -g fortify-manager "$CONFIG_ROOT"
-    cp -a "$REPOSITORY_ROOT/manager" "$REPOSITORY_ROOT/contracts" \
-        "$REPOSITORY_ROOT/registry" "$REPOSITORY_ROOT/profiles" \
-        "$REPOSITORY_ROOT/packaging" "$release/"
-    find "$release" -type d -exec chmod 755 {} +
-    find "$release" -type f -exec chmod 644 {} +
-    install -m 755 /dev/stdin "$release/bin/fortify-manager-server" <<EOF
-#!/bin/sh
-cd "$release"
-exec /usr/bin/python3 -m manager.server "\$@"
-EOF
-    install -m 755 /dev/stdin "$release/bin/fortify-manager-cli" <<EOF
-#!/bin/sh
-cd "$release"
-exec /usr/bin/python3 -m manager.cli "\$@"
-EOF
+    if [ -e "$release" ]; then
+        replaced="$INSTALL_ROOT/releases/$VERSION.replaced.$(date -u +%Y%m%dT%H%M%SZ).$$"
+        mv "$release" "$replaced"
+    fi
+    if ! mv "$candidate" "$release"; then
+        [ -z "$replaced" ] || mv "$replaced" "$release"
+        fail "validated manager runtime could not be activated"
+    fi
     ln -sfn "$release" "$INSTALL_ROOT/current"
     ln -sfn "$INSTALL_ROOT/current/bin/fortify-manager-cli" "$CLI_PATH"
     if [ ! -e "$CONFIG_ROOT/manager.toml" ]; then
         install -m 640 -o root -g fortify-manager \
-            "$REPOSITORY_ROOT/config/manager.example.toml" \
+            "$release/config/manager.example.toml" \
             "$CONFIG_ROOT/manager.toml"
     fi
-    install -m 644 "$REPOSITORY_ROOT/packaging/systemd/fortify-manager.service" \
+    install -m 644 "$release/packaging/systemd/fortify-manager.service" \
         "$UNIT_PATH"
     systemctl daemon-reload
     printf 'Installed manager %s; protected configuration and state were preserved.\n' \
@@ -286,6 +294,8 @@ case "$command" in
         ;;
     upgrade)
         require_root
+        prepare_runtime_candidate
+        candidate="$RUNTIME_CANDIDATE"
         stamp="$(date -u +%Y%m%dT%H%M%SZ)"
         backup_root="$STATE_ROOT/backups/$stamp"
         was_active=0
@@ -313,7 +323,7 @@ PY
                     "$STATE_ROOT/accounts.json" "$backup_root/accounts.json"
             install -m 600 -o fortify-manager -g fortify-manager \
                 "$CONFIG_ROOT/manager.toml" "$backup_root/manager.toml"
-            install_runtime
+            install_runtime "$candidate"
         ); then
             [ "$was_active" -eq 0 ] || systemctl start "$SERVICE_NAME" ||
                 printf 'ERROR: prior manager release could not be restarted\n' >&2

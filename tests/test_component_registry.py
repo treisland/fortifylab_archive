@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -90,6 +91,16 @@ class ComponentRegistryTests(unittest.TestCase):
         with self.assertRaises(RegistryError):
             ComponentRegistry(invalid).dependency_order()
         self.assertTrue(any("dependency cycle" in error for error in validate_registry(invalid, ROOT)))
+
+    def test_adapter_must_not_escape_runtime_root(self) -> None:
+        invalid = copy.deepcopy(self.document)
+        invalid["components"][0]["operations"][0]["adapter"] = "apps/../../outside.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "runtime"
+            (root / "apps").mkdir(parents=True)
+            (root.parent / "outside.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            errors = validate_registry(invalid, root)
+        self.assertTrue(any("escapes the runtime root" in error for error in errors))
 
     def test_destructive_data_deletion_is_not_exposed_as_uninstall(self) -> None:
         registry = ComponentRegistry(self.document)
