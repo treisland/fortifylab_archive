@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import socket
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -213,6 +214,193 @@ class ManagerInstallationTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, omission)
                 self.assertIn("differ from the packaging inventory", result.stderr)
 
+    def test_runtime_digest_is_repeatable_and_binds_content_and_modes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidates = [root / "first", root / "second"]
+            for candidate in candidates:
+                subprocess.run(
+                    [
+                        "python3", "scripts/package-manager-runtime.py", "stage",
+                        "--source", str(ROOT), "--target", str(candidate),
+                    ],
+                    cwd=ROOT,
+                    check=True,
+                    capture_output=True,
+                )
+
+            def digest(candidate: Path) -> subprocess.CompletedProcess:
+                return subprocess.run(
+                    [
+                        "python3", "scripts/package-manager-runtime.py", "digest",
+                        "--target", str(candidate),
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                )
+
+            first = digest(candidates[0])
+            second = digest(candidates[1])
+            self.assertEqual(first.returncode, 0)
+            self.assertEqual(first.stdout, second.stdout)
+            (candidates[1] / "manager/server.py").write_text("changed\n")
+            changed = digest(candidates[1])
+            self.assertEqual(changed.returncode, 0)
+            self.assertNotEqual(first.stdout, changed.stdout)
+
+            shutil.rmtree(candidates[1])
+            shutil.copytree(candidates[0], candidates[1])
+            (candidates[1] / "bin/fortify-manager-server").chmod(0o644)
+            wrong_mode = digest(candidates[1])
+            self.assertNotEqual(wrong_mode.returncode, 0)
+            self.assertIn("mode is invalid", wrong_mode.stderr)
+
+            shutil.rmtree(candidates[1])
+            shutil.copytree(candidates[0], candidates[1])
+            candidates[1].chmod(0o700)
+            wrong_root_mode = digest(candidates[1])
+            self.assertNotEqual(wrong_root_mode.returncode, 0)
+            self.assertIn("root mode is invalid", wrong_root_mode.stderr)
+
+    def test_runtime_staging_normalizes_root_mode_despite_umask(self):
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory) / "candidate"
+            staged = subprocess.run(
+                [
+                    "bash", "-c", "umask 077; exec python3 \"$@\"", "stage",
+                    "scripts/package-manager-runtime.py", "stage", "--source",
+                    str(ROOT), "--target", str(candidate),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(staged.returncode, 0, staged.stderr)
+            self.assertEqual(stat.S_IMODE(candidate.stat().st_mode), 0o755)
+
+    def test_immutable_release_reinstall_collision_and_atomic_rollback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_root = root / "install"
+            releases = install_root / "releases"
+            releases.mkdir(parents=True)
+            candidates = [releases / f"candidate-{index}" for index in range(3)]
+            for candidate in candidates:
+                subprocess.run(
+                    [
+                        "python3", "scripts/package-manager-runtime.py", "stage",
+                        "--source", str(ROOT), "--target", str(candidate),
+                    ],
+                    cwd=ROOT,
+                    check=True,
+                    capture_output=True,
+                )
+            digest = subprocess.run(
+                [
+                    "python3", "scripts/package-manager-runtime.py", "digest",
+                    "--target", str(candidates[0]),
+                ],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            release = releases / f"build-{digest}"
+            candidates[0].rename(release)
+            environment = os.environ | {
+                "FORTIFY_MANAGER_LIBRARY_ONLY": "1",
+                "FORTIFY_MANAGER_INSTALL_ROOT": str(install_root),
+            }
+
+            identical = subprocess.run(
+                [
+                    "bash", "-c",
+                    'source scripts/fortify-manager; '
+                    'publish_runtime_candidate "$1" "$2"',
+                    "publish", str(candidates[1]), digest,
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(identical.returncode, 0, identical.stderr)
+            self.assertFalse(candidates[1].exists())
+            self.assertTrue(release.is_dir())
+
+            (release / "manager/server.py").write_text("collision\n")
+            collision = subprocess.run(
+                [
+                    "bash", "-c",
+                    'source scripts/fortify-manager; '
+                    'publish_runtime_candidate "$1" "$2"',
+                    "publish", str(candidates[2]), digest,
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(collision.returncode, 0)
+            self.assertIn("collision", collision.stderr)
+            self.assertTrue(candidates[2].is_dir())
+            self.assertEqual((release / "manager/server.py").read_text(), "collision\n")
+
+            prior = releases / "prior"
+            candidate = releases / "candidate"
+            prior.mkdir()
+            candidate.mkdir()
+            (install_root / "current").symlink_to(prior)
+            rollback = subprocess.run(
+                [
+                    "bash", "-c",
+                    'source scripts/fortify-manager; prior=$(readlink "$INSTALL_ROOT/current"); '
+                    'atomic_current "$1"; restore_current "$prior"',
+                    "rollback", str(candidate),
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(rollback.returncode, 0, rollback.stderr)
+            self.assertEqual((install_root / "current").resolve(), prior.resolve())
+
+    def test_activation_rollback_restores_prior_service_states(self):
+        environment = os.environ | {"FORTIFY_MANAGER_LIBRARY_ONLY": "1"}
+        restored = subprocess.run(
+            [
+                "bash", "-c",
+                'source scripts/fortify-manager; '
+                'systemctl() { printf "%s\\n" "$*"; }; '
+                'restore_service_state manager.service 1; '
+                'restore_service_state probe.service 0',
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+        self.assertEqual(
+            restored.stdout.splitlines(),
+            ["restart manager.service", "stop probe.service"],
+        )
+
+        failed = subprocess.run(
+            [
+                "bash", "-c",
+                'source scripts/fortify-manager; systemctl() { return 1; }; '
+                'restore_service_state manager.service 1',
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(failed.returncode, 0)
+
     def test_rendered_ingress_has_host_tls_and_backend_symmetry(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "ingress.yaml"
@@ -401,10 +589,31 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertIn("kubectl diff", script)
         self.assertIn("FORTIFY_MANAGER_TLS_SECRET", script)
         self.assertIn("for _ in {1..15}", script)
-        self.assertIn("prior manager release could not be restarted", script)
+        self.assertIn("prior release and service were restored", script)
+        self.assertIn('RUNTIME_ID="build-$RUNTIME_DIGEST"', script)
+        self.assertIn('mv -Tf "$link" "$INSTALL_ROOT/current"', script)
+        self.assertIn("immutable Manager release identity collision", script)
+        upgrade = script[script.index("upgrade_runtime()") : script.index(
+            'command="${1:-}"'
+        )]
         self.assertLess(
-            script.index("prepare_runtime_candidate", script.index("upgrade)")),
-            script.index('systemctl stop "$SERVICE_NAME"', script.index("upgrade)")),
+            upgrade.index('"$CONFIG_ROOT/manager.toml" "$backup_root/manager.toml"'),
+            upgrade.index('manager_config migrate'),
+        )
+        self.assertLess(
+            upgrade.index('manager_config migrate'),
+            upgrade.index('validate_release_start "$RUNTIME_RELEASE" 1'),
+        )
+        self.assertLess(
+            upgrade.index('validate_release_start "$RUNTIME_RELEASE" 1'),
+            upgrade.index('systemctl stop "$SERVICE_NAME"'),
+        )
+        rollback = upgrade[upgrade.index('restore_current "$prior"') :]
+        self.assertLess(
+            rollback.index('restore_current "$prior"'),
+            rollback.index(
+                'restore_service_state "$SERVICE_NAME" "$was_active"'
+            ),
         )
         self.assertNotIn('find "$release" -type f -exec chmod', script)
         self.assertIn("fortify-manager-cli", script)

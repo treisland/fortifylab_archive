@@ -154,15 +154,12 @@ prepare_runtime_candidate() {
         RUNTIME_CANDIDATE=""
         fail "manager runtime candidate is incomplete; active release was preserved"
     fi
+    RUNTIME_DIGEST="$(python3 "$PACKAGE_VALIDATOR" digest --target "$RUNTIME_CANDIDATE")" ||
+        fail "manager runtime candidate digest could not be verified; active release was preserved"
+    RUNTIME_ID="build-$RUNTIME_DIGEST"
 }
 
-install_runtime() {
-    require_root
-    local candidate="${1:-}" release="$INSTALL_ROOT/releases/$VERSION" replaced=""
-    if [ -z "$candidate" ]; then
-        prepare_runtime_candidate
-        candidate="$RUNTIME_CANDIDATE"
-    fi
+provision_manager_host() {
     getent group fortify-manager >/dev/null ||
         groupadd --system fortify-manager
     id fortify-manager >/dev/null 2>&1 ||
@@ -175,18 +172,65 @@ install_runtime() {
             --home-dir /nonexistent --shell /usr/sbin/nologin fortify-health-probe
     install -d -m 700 -o fortify-manager -g fortify-manager "$STATE_ROOT"
     install -d -m 750 -o root -g fortify-manager "$CONFIG_ROOT"
-    if [ -e "$CONFIG_ROOT/manager.toml" ]; then
-        manager_config migrate
+}
+
+publish_runtime_candidate() {
+    local candidate="$1" digest="$2"
+    RUNTIME_RELEASE="$INSTALL_ROOT/releases/build-$digest"
+    if [ -e "$RUNTIME_RELEASE" ]; then
+        [ -d "$RUNTIME_RELEASE" ] && [ ! -L "$RUNTIME_RELEASE" ] ||
+            fail "immutable Manager release identity already exists with invalid content"
+        existing_digest="$(python3 "$PACKAGE_VALIDATOR" digest --target "$RUNTIME_RELEASE" 2>/dev/null || true)"
+        [ "$existing_digest" = "$digest" ] ||
+            fail "immutable Manager release identity collision; existing release was preserved"
+        rm -rf -- "$candidate"
+        return
     fi
-    if [ -e "$release" ]; then
-        replaced="$INSTALL_ROOT/releases/$VERSION.replaced.$(date -u +%Y%m%dT%H%M%SZ).$$"
-        mv "$release" "$replaced"
+    mv "$candidate" "$RUNTIME_RELEASE" ||
+        fail "validated Manager runtime could not be published"
+}
+
+atomic_current() {
+    local target="$1" link="$INSTALL_ROOT/.current.$$.new"
+    rm -f -- "$link"
+    ln -s "$target" "$link"
+    mv -Tf "$link" "$INSTALL_ROOT/current"
+}
+
+restore_current() {
+    local prior="$1"
+    if [ -n "$prior" ]; then
+        atomic_current "$prior"
+    else
+        rm -f -- "$INSTALL_ROOT/current"
     fi
-    if ! mv "$candidate" "$release"; then
-        [ -z "$replaced" ] || mv "$replaced" "$release"
-        fail "validated manager runtime could not be activated"
+}
+
+restore_service_state() {
+    local service="$1" was_active="$2"
+    if [ "$was_active" -eq 1 ]; then
+        systemctl restart "$service"
+    else
+        systemctl stop "$service"
     fi
-    ln -sfn "$release" "$INSTALL_ROOT/current"
+}
+
+validate_release_start() {
+    local release="$1" run_prestart="${2:-0}"
+    python3 "$PACKAGE_VALIDATOR" validate --target "$release" >/dev/null ||
+        fail "published Manager runtime failed validation"
+    [ -x "$release/bin/fortify-manager-server" ] &&
+        [ -x "$release/bin/fortify-manager-cli" ] &&
+        [ -x "$release/bin/fortify-health-probe" ] ||
+        fail "published Manager runtime has a missing or non-executable launcher"
+    if [ "$run_prestart" -eq 1 ]; then
+        "$release/bin/fortify-manager-server" check >/dev/null ||
+            fail "published Manager runtime failed its pre-start check"
+    fi
+}
+
+install_release_files() {
+    local release="$1"
     ln -sfn "$INSTALL_ROOT/current/bin/fortify-manager-cli" "$CLI_PATH"
     if [ ! -e "$CONFIG_ROOT/manager.toml" ]; then
         install -m 640 -o root -g fortify-manager \
@@ -198,9 +242,47 @@ install_runtime() {
     install -m 644 "$release/packaging/systemd/fortify-health-probe.service" \
         "$PROBE_UNIT_PATH"
     systemctl daemon-reload
-    systemctl enable --now "$PROBE_SERVICE_NAME"
-    printf 'Installed manager %s; protected configuration and state were preserved.\n' \
-        "$VERSION"
+}
+
+record_activation_failure() {
+    local evidence_root="$1" release_id="$2" stage="$3"
+    install -d -m 700 -o fortify-manager -g fortify-manager "$evidence_root"
+    install -m 600 -o fortify-manager -g fortify-manager /dev/null \
+        "$evidence_root/activation-failure.txt"
+    printf 'release=%s\nstage=%s\nrollback=attempted\nsecret_material=not-collected\n' \
+        "$release_id" "$stage" >"$evidence_root/activation-failure.txt"
+}
+
+install_runtime() {
+    require_root
+    local prior="" evidence_root
+    prepare_runtime_candidate
+    provision_manager_host
+    publish_runtime_candidate "$RUNTIME_CANDIDATE" "$RUNTIME_DIGEST"
+    if [ ! -e "$CONFIG_ROOT/manager.toml" ]; then
+        install -m 640 -o root -g fortify-manager \
+            "$RUNTIME_RELEASE/config/manager.example.toml" "$CONFIG_ROOT/manager.toml"
+    fi
+    manager_config migrate
+    validate_release_start "$RUNTIME_RELEASE" 0
+    install_release_files "$RUNTIME_RELEASE"
+    [ ! -e "$INSTALL_ROOT/current" ] || [ -L "$INSTALL_ROOT/current" ] ||
+        fail "active Manager path is not a symlink; it was preserved"
+    [ ! -L "$INSTALL_ROOT/current" ] || prior="$(readlink "$INSTALL_ROOT/current")"
+    if ! atomic_current "$RUNTIME_RELEASE"; then
+        evidence_root="$STATE_ROOT/backups/install-failure-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+        record_activation_failure "$evidence_root" "$RUNTIME_ID" "symlink-switch"
+        fail "Manager release link could not be activated; prior release was preserved"
+    fi
+    if ! systemctl enable --now "$PROBE_SERVICE_NAME"; then
+        restore_current "$prior"
+        systemctl try-restart "$PROBE_SERVICE_NAME" >/dev/null 2>&1 || true
+        evidence_root="$STATE_ROOT/backups/install-failure-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+        record_activation_failure "$evidence_root" "$RUNTIME_ID" "probe-start"
+        fail "Manager activation failed; prior release was restored and sanitized evidence retained"
+    fi
+    printf 'Installed Manager %s (%s); protected configuration and state were preserved.\n' \
+        "$VERSION" "$RUNTIME_ID"
 }
 
 desired_rbac() {
@@ -717,6 +799,87 @@ probe_diagnose() {
     printf 'Functional probe service and protected socket passed sanitized diagnostics.\n'
 }
 
+upgrade_runtime() {
+    require_root
+    local candidate stamp backup_root prior was_active=0 probe_was_active=0 rollback_failed=0
+    prepare_runtime_candidate
+    candidate="$RUNTIME_CANDIDATE"
+    provision_manager_host
+    [ -f "$CONFIG_ROOT/manager.toml" ] ||
+        fail "Manager configuration is missing; use install for a clean installation"
+    publish_runtime_candidate "$candidate" "$RUNTIME_DIGEST"
+    [ -L "$INSTALL_ROOT/current" ] ||
+        fail "active Manager release symlink is missing; upgrade did not stop the service"
+    prior="$(readlink "$INSTALL_ROOT/current")"
+    [ -d "$prior" ] ||
+        fail "active Manager release target is invalid; upgrade did not stop the service"
+    if [ "$(readlink -f "$prior")" = "$(readlink -f "$RUNTIME_RELEASE")" ]; then
+        printf 'Manager %s is already installed; active release and services were unchanged.\n' \
+            "$RUNTIME_ID"
+        return
+    fi
+
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    backup_root="$STATE_ROOT/backups/$stamp-$$"
+    install -d -m 700 -o fortify-manager -g fortify-manager "$backup_root"
+    if [ -f "$STATE_ROOT/history.sqlite3" ]; then
+        python3 - "$STATE_ROOT/history.sqlite3" "$backup_root/history.sqlite3" <<'PY'
+import sqlite3
+import sys
+source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+target = sqlite3.connect(sys.argv[2])
+with target:
+    source.backup(target)
+source.close()
+target.close()
+PY
+        chown fortify-manager:fortify-manager "$backup_root/history.sqlite3"
+        chmod 600 "$backup_root/history.sqlite3"
+    fi
+    [ ! -f "$STATE_ROOT/accounts.json" ] ||
+        install -m 600 -o fortify-manager -g fortify-manager \
+            "$STATE_ROOT/accounts.json" "$backup_root/accounts.json"
+    install -m 600 -o fortify-manager -g fortify-manager \
+        "$CONFIG_ROOT/manager.toml" "$backup_root/manager.toml"
+    manager_config migrate
+    validate_release_start "$RUNTIME_RELEASE" 1
+    install_release_files "$RUNTIME_RELEASE"
+
+    systemctl is-active --quiet "$SERVICE_NAME" && was_active=1
+    systemctl is-active --quiet "$PROBE_SERVICE_NAME" && probe_was_active=1
+    systemctl stop "$SERVICE_NAME"
+    if ! atomic_current "$RUNTIME_RELEASE"; then
+        if ! restore_service_state "$SERVICE_NAME" "$was_active" >/dev/null 2>&1; then
+            record_activation_failure "$backup_root" "$RUNTIME_ID" "symlink-switch-rollback"
+            fail "Manager release link activation and prior service recovery failed; protected evidence was retained"
+        fi
+        record_activation_failure "$backup_root" "$RUNTIME_ID" "symlink-switch"
+        fail "Manager release link could not be activated; prior release and service were restored"
+    fi
+    if ! systemctl restart "$PROBE_SERVICE_NAME" ||
+        ! systemctl restart "$SERVICE_NAME"; then
+        if ! restore_current "$prior"; then
+            rollback_failed=1
+        fi
+        if ! restore_service_state "$PROBE_SERVICE_NAME" "$probe_was_active" >/dev/null 2>&1; then
+            rollback_failed=1
+        fi
+        if ! restore_service_state "$SERVICE_NAME" "$was_active" >/dev/null 2>&1; then
+            rollback_failed=1
+        fi
+        record_activation_failure "$backup_root" "$RUNTIME_ID" "service-restart"
+        [ "$rollback_failed" -eq 0 ] ||
+            fail "Manager activation and prior service recovery failed; protected evidence was retained"
+        fail "Manager activation failed; prior release and service were restored and protected evidence retained"
+    fi
+    printf 'Upgraded Manager atomically to %s; protected backup retained at %s.\n' \
+        "$RUNTIME_ID" "$backup_root"
+}
+
+if [ "${FORTIFY_MANAGER_LIBRARY_ONLY:-0}" -eq 1 ]; then
+    return 0
+fi
+
 command="${1:-}"
 shift || true
 case "$command" in
@@ -769,45 +932,7 @@ case "$command" in
         systemctl try-restart "$SERVICE_NAME" >/dev/null 2>&1 || true
         printf 'Functional health disabled; observation and lab data were preserved.\n'
         ;;
-    upgrade)
-        require_root
-        prepare_runtime_candidate
-        candidate="$RUNTIME_CANDIDATE"
-        stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-        backup_root="$STATE_ROOT/backups/$stamp"
-        was_active=0
-        systemctl is-active --quiet "$SERVICE_NAME" && was_active=1
-        systemctl stop "$SERVICE_NAME"
-        if ! (
-            install -d -m 700 -o fortify-manager -g fortify-manager "$backup_root"
-            if [ -f "$STATE_ROOT/history.sqlite3" ]; then
-            python3 - "$STATE_ROOT/history.sqlite3" \
-                "$backup_root/history.sqlite3" <<'PY'
-import sqlite3
-import sys
-source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
-target = sqlite3.connect(sys.argv[2])
-with target:
-    source.backup(target)
-source.close()
-target.close()
-PY
-                chown fortify-manager:fortify-manager "$backup_root/history.sqlite3"
-                chmod 600 "$backup_root/history.sqlite3"
-            fi
-            [ ! -f "$STATE_ROOT/accounts.json" ] ||
-                install -m 600 -o fortify-manager -g fortify-manager \
-                    "$STATE_ROOT/accounts.json" "$backup_root/accounts.json"
-            install -m 600 -o fortify-manager -g fortify-manager \
-                "$CONFIG_ROOT/manager.toml" "$backup_root/manager.toml"
-            install_runtime "$candidate"
-        ); then
-            [ "$was_active" -eq 0 ] || systemctl start "$SERVICE_NAME" ||
-                printf 'ERROR: prior manager release could not be restarted\n' >&2
-            fail "upgrade failed; protected backup was retained and the active release was not changed unless installation completed"
-        fi
-        systemctl restart "$SERVICE_NAME"
-        ;;
+    upgrade) upgrade_runtime ;;
     diagnose) diagnose ;;
     uninstall)
         require_root

@@ -72,7 +72,7 @@ authorize direct browser access to 8080.
 | `/var/lib/fortify-lab-manager/cluster-access/lifecycle.kubeconfig` | Dedicated namespace lifecycle credential; mode `0600` | Created only by verified activation; never committed or returned to the browser |
 | `/etc/fortify-lab-manager/health-probe.env` | Optional probe-only external credential inputs; `root:fortify-health-probe`, mode `0640` | Operator managed; never read by the Manager or Web UI |
 | `/run/fortify-lab-manager/health-probe.sock` | Versioned functional-health socket; `fortify-health-probe:fortify-manager`, mode `0660` | Recreated by systemd/service startup |
-| `/opt/fortify-lab-manager/releases` | Immutable installed versions | New release added |
+| `/opt/fortify-lab-manager/releases` | Immutable content-addressed builds | Identical build reused; changed content added under a new identity |
 | `/opt/fortify-lab-manager/current` | Active release symlink | Updated atomically |
 
 `bootstrap-account` requires a TTY, never accepts a password on the command
@@ -143,6 +143,21 @@ mode `0755`; ordinary code, schemas, profiles, assets, and templates use mode
 `0644`. The authoritative component registry is loaded from the staged root
 before its release symlink can become active, so every declared adapter must
 resolve to a regular file inside that root.
+
+Every validated candidate receives the release identity
+`build-<sha256>`. The digest covers every path, file byte, file type, and
+policy mode; it is independent of the marketing version in `VERSION`. An
+existing directory at that exact identity is reused only when validation and
+the full digest are identical. Missing, modified, or mode-changed content is
+an immutable-release collision and is never repaired or overwritten in
+place. Thus rerunning the same checkout is idempotent while a changed checkout
+always publishes a distinct release.
+
+The `current` link is changed by creating a sibling link and renaming it over
+the active link in one filesystem operation. A regular file or directory at
+`current` is not overwritten. External configuration, accounts, history,
+observer and lifecycle material, and backup trees remain outside releases and
+are not part of activation.
 
 `rbac-preflight` is read-only. It compares the desired authorization mode in
 the MicroK8s API-server arguments with the running control-plane process. It
@@ -334,9 +349,12 @@ the [component-aware backup and restore workflow](backup-restore.md). Its
 profile gate and application verification are distinct from the
 manager-only safety copy described below.
 
-The supported upgrade first stages and validates the complete runtime while
-the current Manager remains active. Only a valid candidate permits the writer
-to stop. The upgrade then creates a timestamped, mode-0600 SQLite online backup
+The supported upgrade first stages, publishes, and validates the complete
+runtime while the current Manager remains active. It verifies all three
+launchers are executable and runs the candidate server's pre-start check.
+Only a valid candidate permits the writer to stop. If that candidate is
+already active, the command returns without stopping either service.
+Otherwise, the upgrade creates a timestamped, mode-0600 SQLite online backup
 plus copies of the verifier/configuration files below
 `/var/lib/fortify-lab-manager/backups`. The protected `manager.toml` migration
 runs before the runtime is replaced and also creates its own configuration
@@ -350,13 +368,19 @@ sudo ./scripts/fortify-manager diagnose
 ```
 
 Copy that backup to separate protected storage before a high-risk upgrade.
-If backup or installation fails, the command retains any completed backup and
-attempts to restart the previously active release. Diagnose that service
-before retrying; the command never deletes a failed-upgrade backup.
+If activation or either service restart fails, the command atomically restores
+the prior `current` target and restarts the services that were previously
+active. The protected backup is retained with a mode-`0600`, sanitized
+`activation-failure.txt` containing only the build identity, failed stage,
+rollback attempt, and an explicit statement that no secret material was
+collected. Diagnose the restored service before retrying; the command never
+deletes a failed-upgrade backup or failure evidence.
 An incomplete candidate fails before the stop or backup boundary and leaves
 the active service and release symlink unchanged.
-Program rollback means repointing `/opt/fortify-lab-manager/current` to the
-prior release and restarting. Database rollback is **not** implied. If an
+Automatic program rollback covers failed activation only; database rollback
+is **not** implied. For a later operator-directed rollback, atomically repoint
+`/opt/fortify-lab-manager/current` to the prior release and restart the probe
+and Manager together. If an
 upgrade advanced the schema, stop the service and restore the matching
 pre-upgrade database, verifier/configuration files, and program together.
 Manager history backup does not back up SSC or component data.
