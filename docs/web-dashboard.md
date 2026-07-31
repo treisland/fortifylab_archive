@@ -127,6 +127,11 @@ The quick-link panel distinguishes reachable, degraded, TLS warning, DNS
 mismatch, unreachable, not configured, and unknown. A login response is
 reachable but is not application-health evidence. Manager-host reachability
 does not prove operator, VPN, browser, or AWS network reachability.
+For EC2, Quick Links compare public DNS with the configured operator-facing
+Elastic IP. The private EndpointSlice address remains separate ingress
+evidence and is never used as the public DNS expectation. Consequently a
+public DNS mismatch changes only reachability evidence; it does not turn a
+Kubernetes workload observation into a workload failure.
 
 Color is never the only health cue: every badge includes visible state text.
 The page provides landmarks, a skip link, labelled controls, table headers,

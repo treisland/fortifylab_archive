@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import grp
+import ipaddress
 import os
 import pwd
 import re
@@ -62,6 +63,7 @@ def validate_document(document: dict) -> int:
     storage = _section(document, "storage")
     authentication = _section(document, "authentication")
     cluster = _section(document, "cluster")
+    network = _section(document, "network")
     lifecycle = _section(document, "lifecycle")
     recovery = _section(document, "recovery")
     if not server or not storage or not authentication:
@@ -83,6 +85,33 @@ def validate_document(document: dict) -> int:
         authentication["accounts"], str
     ):
         raise MigrationError("manager configuration authentication.accounts is invalid")
+    for key in ("domain", "private_backend_address", "public_address"):
+        if key in network and not isinstance(network[key], str):
+            raise MigrationError(f"manager configuration network.{key} is invalid")
+    if network:
+        required = {"domain", "private_backend_address", "public_address"}
+        if set(network).intersection(required) and not required.issubset(network):
+            raise MigrationError(
+                "manager configuration network address model is incomplete"
+            )
+        domain = network.get("domain", "")
+        if not re.fullmatch(
+            r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", domain
+        ):
+            raise MigrationError("manager configuration network.domain is invalid")
+        try:
+            private_address = ipaddress.ip_address(network["private_backend_address"])
+            public_address = ipaddress.ip_address(network["public_address"])
+        except ValueError as error:
+            raise MigrationError("manager configuration network address is invalid") from error
+        if not private_address.is_private:
+            raise MigrationError(
+                "manager configuration network.private_backend_address must be private"
+            )
+        if public_address.is_unspecified or public_address.is_multicast:
+            raise MigrationError(
+                "manager configuration network.public_address is not routable"
+            )
     for key in ("server", "namespace", "token_file", "ca_file", "health_probe_socket"):
         if key in cluster and not isinstance(cluster[key], str):
             raise MigrationError(f"manager configuration cluster.{key} is invalid")

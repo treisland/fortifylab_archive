@@ -40,8 +40,9 @@ Commands:
   activate-lifecycle              Verify and activate bounded lifecycle execution
   deactivate-lifecycle            Revoke lifecycle mutation; preserve all lab data
   bootstrap-account [USERNAME]    Prompt for and persist the first/local account verifier
-  configure DOMAIN ADDRESS [PORT] Render and apply the MicroK8s ingress route
-  render-ingress DOMAIN ADDRESS [PORT] [OUTPUT]
+  configure DOMAIN PRIVATE_ADDRESS [PORT] [PUBLIC_ADDRESS]
+                                  Configure private ingress and public DNS expectation
+  render-ingress DOMAIN PRIVATE_ADDRESS [PORT] [OUTPUT]
                                   Render only; does not contact MicroK8s
   start | stop | restart | status Manage the host service
   probe-status | probe-diagnose | probe-restart | probe-disable
@@ -87,6 +88,63 @@ try:
 except ValueError:
     print("ERROR: backend address must be a private IP address", file=sys.stderr)
     raise SystemExit(1)
+PY
+}
+
+validate_public_address() {
+    python3 - "$1" <<'PY' || exit 1
+import ipaddress
+import sys
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+    if address.is_unspecified or address.is_multicast:
+        raise ValueError
+except ValueError:
+    print("ERROR: public address must be a routable IP address", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+write_network_config() {
+    local source="$1" target="$2" domain="$3" private_address="$4" public_address="$5"
+    python3 - "$source" "$target" "$domain" "$private_address" "$public_address" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+source, target, domain, private_address, public_address = sys.argv[1:]
+lines = Path(source).read_text(encoding="utf-8").splitlines(keepends=True)
+result = []
+in_network = False
+for line in lines:
+    section = re.match(r"^\s*\[([^]]+)]\s*(?:#.*)?$", line)
+    if section:
+        in_network = section.group(1) == "network"
+    if in_network and re.match(
+        r"^\s*(domain|private_backend_address|public_address)\s*=", line
+    ):
+        continue
+    result.append(line)
+if result and not result[-1].endswith("\n"):
+    result[-1] += "\n"
+if not any(re.match(r"^\s*\[network]\s*(?:#.*)?$", line) for line in result):
+    if result and result[-1].strip():
+        result.append("\n")
+    result.append("[network]\n")
+    insert_at = len(result)
+else:
+    start = next(i for i, line in enumerate(result) if re.match(r"^\s*\[network]", line))
+    insert_at = next(
+        (i for i in range(start + 1, len(result)) if re.match(r"^\s*\[", result[i])),
+        len(result),
+    )
+values = (
+    f'domain = "{domain}"\n',
+    f'private_backend_address = "{private_address}"\n',
+    f'public_address = "{public_address}"\n',
+)
+result[insert_at:insert_at] = values
+Path(target).write_text("".join(result), encoding="utf-8")
 PY
 }
 
@@ -141,17 +199,22 @@ remove_obsolete_backend() {
 
 configure_route() {
     require_root
-    local domain="$1" address="$2" port="${3:-8080}" config_candidate manifest_candidate endpoint_api endpoint_resources
+    local domain="$1" address="$2" port="${3:-8080}" public_address="${4:-$2}" config_candidate port_candidate manifest_candidate endpoint_api endpoint_resources
     [ -f "$CONFIG_ROOT/manager.toml" ] ||
         fail "install the manager before configuring ingress"
     validate_domain "$domain"
     validate_address "$address"
     validate_port "$port"
+    validate_public_address "$public_address"
     config_candidate="$(mktemp "$CONFIG_ROOT/.manager.toml.XXXXXX")"
+    port_candidate="$(mktemp "$CONFIG_ROOT/.manager-port.toml.XXXXXX")"
     manifest_candidate="$(mktemp "$(dirname "$MANIFEST_PATH")/.manager-ingress.XXXXXX")"
-    trap 'rm -f "$config_candidate" "$manifest_candidate"' RETURN
+    trap 'rm -f "$config_candidate" "$port_candidate" "$manifest_candidate"' RETURN
     sed "s/^port = [0-9][0-9]*$/port = $port/" \
-        "$CONFIG_ROOT/manager.toml" >"$config_candidate"
+        "$CONFIG_ROOT/manager.toml" >"$port_candidate"
+    write_network_config "$port_candidate" "$config_candidate" \
+        "$domain" "$address" "$public_address"
+    rm -f "$port_candidate"
     grep -q "^port = $port$" "$config_candidate" ||
         fail "manager configuration has no server port"
     endpoint_resources="$(microk8s kubectl api-resources --api-group=discovery.k8s.io -o name 2>/dev/null)" ||
@@ -810,13 +873,15 @@ PY
 
 diagnose_manager_route() {
     local expected discovery address port host ingress_class tls_secret backend_name ingress_port service_name
-    local failed=0 actual route_json resolved private_code external_code
+    local failed=0 actual route_json resolved private_code external_code public_address
     expected="$(manager_route_expectations)" || {
         route_result configuration failed protected-manifest-invalid
         return 1
     }
     IFS=$'\t' read -r discovery address port host ingress_class tls_secret \
         backend_name ingress_port service_name <<<"$expected"
+    public_address="$(sed -n 's/^public_address = "\([^"]*\)"$/\1/p' "$CONFIG_ROOT/manager.toml" | head -1)"
+    [ -n "$public_address" ] || public_address="$address"
 
     if [ "$discovery" = endpointslice ]; then
         route_json="$(microk8s kubectl -n fortify get endpointslices.discovery.k8s.io \
@@ -871,8 +936,8 @@ except Exception: print("no")' "$tls_secret" "$host" <<<"$route_json")"
     fi
 
     resolved="$(getent ahostsv4 "$host" 2>/dev/null | awk '{print $1}' | sort -u)" || resolved=""
-    if [ -n "$resolved" ] && [ "$resolved" = "$address" ]; then
-        route_result dns-resolution healthy resolves-to-configured-private-address
+    if [ -n "$resolved" ] && [ "$resolved" = "$public_address" ]; then
+        route_result public-dns healthy resolves-to-configured-public-address
         external_code="$(curl --silent --output /dev/null --max-time 5 --write-out '%{http_code}' \
             "https://$host/ready" 2>/dev/null)" || external_code="000"
         if [[ "$external_code" =~ ^(200|302|303|401|403)$ ]]; then
@@ -882,7 +947,7 @@ except Exception: print("no")' "$tls_secret" "$host" <<<"$route_json")"
             failed=1
         fi
     else
-        route_result dns-resolution failed does-not-resolve-exclusively-to-configured-private-address
+        route_result public-dns failed does-not-resolve-exclusively-to-configured-public-address
         route_result external-reachability blocked dns-mismatch
         failed=1
     fi

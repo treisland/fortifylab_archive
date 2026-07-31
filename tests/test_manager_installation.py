@@ -9,6 +9,7 @@ import socket
 import stat
 import subprocess
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -491,7 +492,9 @@ remove_obsolete_backend "$ENDPOINT_API"
             script,
         )
 
-    def run_route_diagnostic(self, dns_address="10.0.0.10", external_code="200"):
+    def run_route_diagnostic(
+        self, dns_address="184.33.159.224", external_code="200"
+    ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manifest = root / "manager-ingress.yaml"
@@ -501,6 +504,12 @@ remove_obsolete_backend "$ENDPOINT_API"
                     "fortifydemo.com", "10.0.0.10", "8080", str(manifest),
                 ],
                 cwd=ROOT, check=True, capture_output=True, text=True,
+            )
+            config_root = root / "config"
+            config_root.mkdir()
+            (config_root / "manager.toml").write_text(
+                '[network]\npublic_address = "184.33.159.224"\n',
+                encoding="utf-8",
             )
             command = r'''
 export FORTIFY_MANAGER_LIBRARY_ONLY=1
@@ -526,6 +535,7 @@ diagnose_manager_route
                 ["bash", "-c", command], cwd=ROOT,
                 env=os.environ | {
                     "FORTIFY_MANAGER_MANIFEST_PATH": str(manifest),
+                    "FORTIFY_MANAGER_CONFIG_ROOT": str(config_root),
                     "FAKE_DNS_ADDRESS": dns_address,
                     "FAKE_EXTERNAL_CODE": external_code,
                 }, capture_output=True, text=True,
@@ -535,7 +545,7 @@ diagnose_manager_route
         result = self.run_route_diagnostic()
         self.assertEqual(result.returncode, 0, result.stderr)
         for layer in (
-            "private-backend", "ingress-routing", "tls", "dns-resolution",
+            "private-backend", "ingress-routing", "tls", "public-dns",
             "external-reachability",
         ):
             self.assertIn(f"layer={layer} state=healthy", result.stdout)
@@ -544,7 +554,7 @@ diagnose_manager_route
         result = self.run_route_diagnostic(dns_address="203.0.113.44")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("layer=tls state=healthy", result.stdout)
-        self.assertIn("layer=dns-resolution state=failed", result.stdout)
+        self.assertIn("layer=public-dns state=failed", result.stdout)
         self.assertIn(
             "layer=external-reachability state=blocked detail=dns-mismatch",
             result.stdout,
@@ -555,7 +565,7 @@ diagnose_manager_route
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("layer=private-backend state=healthy", result.stdout)
         self.assertIn("layer=tls state=healthy", result.stdout)
-        self.assertIn("layer=dns-resolution state=healthy", result.stdout)
+        self.assertIn("layer=public-dns state=healthy", result.stdout)
         self.assertIn(
             "layer=external-reachability state=unreachable",
             result.stdout,
@@ -633,6 +643,38 @@ diagnose_manager_route
             self.assertIn("existing configuration was preserved", result.stderr)
             self.assertEqual(config.read_text(), original)
             self.assertFalse((state_root / "route.yaml").exists())
+
+    def test_network_config_records_distinct_addresses_idempotently(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.toml"
+            first = root / "first.toml"
+            second = root / "second.toml"
+            source.write_text(
+                '[server]\nhost = "0.0.0.0"\nport = 8080\n', encoding="utf-8"
+            )
+            command = r'''
+export FORTIFY_MANAGER_LIBRARY_ONLY=1
+source scripts/fortify-manager
+write_network_config "$SOURCE" "$FIRST" fortifydemo.com 172.31.30.41 184.33.159.224
+write_network_config "$FIRST" "$SECOND" fortifydemo.com 172.31.30.41 184.33.159.224
+'''
+            result = subprocess.run(
+                ["bash", "-c", command],
+                cwd=ROOT,
+                env=os.environ
+                | {"SOURCE": str(source), "FIRST": str(first), "SECOND": str(second)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(first.read_text(), second.read_text())
+            document = tomllib.loads(second.read_text())
+            self.assertEqual(document["network"]["domain"], "fortifydemo.com")
+            self.assertEqual(
+                document["network"]["private_backend_address"], "172.31.30.41"
+            )
+            self.assertEqual(document["network"]["public_address"], "184.33.159.224")
 
     def test_external_config_and_account_verifier_build_secure_app(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -26,6 +26,11 @@ from treating this as application health. Use `GET /api/v1alpha1/health` for
 that separate evidence.
 
 Probes run from the Manager host with a fixed worker cap and per-layer timeout.
+When `[network].public_address` is configured, DNS is compared with that
+operator-facing address rather than the private EndpointSlice address. This
+preserves independent workload/cluster observations when public DNS is wrong.
+Configuration without `[network]` remains compatible and uses observed
+ingress addresses as the legacy expectation.
 Successful routes use a jittered 30-second cadence. Failures use exponential
 backoff capped at five minutes. At most 12 compact transitions are retained in
 memory per route. Probes send no authentication, cookies, or forms, do not read

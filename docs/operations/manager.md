@@ -21,10 +21,19 @@ mkcert wildcard certificate for `*.$DOMAIN`. Installation neither invokes
 encrypted transport with private lab trust; it is not a publicly trusted
 certificate or an Internet-hardening control.
 
-Add the manager hostname to operator DNS or `/etc/hosts`:
+The supported EC2 model has two addresses which must not be conflated:
+
+- the **private backend address** is the EC2 private IPv4 address used by the
+  host-backed EndpointSlice (`172.31.30.41` in the current lab);
+- the **public operator address** is the Elastic IP used by browser-facing DNS
+  (`184.33.159.224` in the current lab).
+
+Public DNS (or an operator workstation's temporary `/etc/hosts` entries) must
+map every browser hostname to the Elastic IP:
 
 ```text
-<ec2-address>  lab.fortifydemo.com
+184.33.159.224  lab.fortifydemo.com ssc.fortifydemo.com
+184.33.159.224  lim.fortifydemo.com sast.fortifydemo.com dast.fortifydemo.com
 ```
 
 The browser must already trust this lab's existing mkcert root CA.
@@ -38,18 +47,22 @@ sudo ./scripts/fortify-manager install
 sudo ./scripts/fortify-manager rbac-preflight
 sudo ./scripts/fortify-manager install-cluster-access
 sudo ./scripts/fortify-manager bootstrap-account operator
-sudo ./scripts/fortify-manager configure fortifydemo.com <private-node-ip> 8080
+sudo ./scripts/fortify-manager configure \
+  fortifydemo.com 172.31.30.41 8080 184.33.159.224
 sudo ./scripts/fortify-manager start
 sudo ./scripts/fortify-manager diagnose
 sudo ./scripts/fortify-manager activate-lifecycle
 ```
 
 Use the lab domain and an address reachable from ingress pods, normally the
-EC2 instance's private IPv4 address. The renderer rejects public backend
-addresses. `configure` applies only the manager Service, EndpointSlice, and
-Ingress in namespace `fortify` and atomically aligns `server.port` in the
-external manager configuration; it does not alter the TLS Secret. Restart the
-service after changing an existing route. It validates and server-side
+EC2 instance's private IPv4 address. The fourth argument is the public DNS
+expectation. Omitting it retains the legacy behavior of using the backend
+address as the DNS expectation, so existing private-only labs remain
+compatible. The renderer rejects public backend addresses. `configure`
+applies only the manager Service, EndpointSlice, and Ingress in namespace
+`fortify` and atomically aligns `server.port` plus the `[network]` address
+model in the external manager configuration; it does not alter the TLS
+Secret. Restart the service after changing an existing route. It validates and server-side
 dry-runs the candidate route before replacing the protected configuration; a
 rejected or failed apply leaves the prior configuration and recorded manifest
 intact. Render without contacting MicroK8s using:
@@ -318,7 +331,7 @@ permissions and workload allow-list, configuration/account permissions,
 systemd state, bounded backend readiness, server-side manifest
 acceptance and live route drift. It then reports five bounded route layers:
 private backend EndpointSlice address/port, ingress hostname/class/backend,
-TLS Secret reference and private handshake, operator DNS, and external HTTPS
+TLS Secret reference and private handshake, public operator DNS, and external HTTPS
 reachability. A legacy Endpoints manifest is queried only on the documented
 compatibility path. Override the TLS Secret name with
 `FORTIFY_MANAGER_TLS_SECRET` when a lab
@@ -348,13 +361,36 @@ For failures, check in this order:
    legacy manifest.
 4. `microk8s kubectl -n fortify describe ingress fortify-manager` for host,
    backend, ingress class, and the configured TLS Secret.
-5. Check operator DNS separately. DNS must resolve exclusively to the
-   configured private lab address; a successful private HTTPS probe does not
-   make a different DNS target healthy.
+5. Check operator DNS separately. All browser hostnames must resolve
+   exclusively to the configured public operator address. A successful
+   private HTTPS probe does not make a different public DNS target healthy.
 6. Check Security Group reachability separately. Keep TCP 443 restricted to
    an operator-controlled IP address or VPN CIDR, never `0.0.0.0/0`, and never
    expose backend port 8080. Diagnostics do not recommend broadening sources.
 7. Check the browser certificate hostname and existing lab CA.
+
+Verify the layers without changing AWS or DNS:
+
+```bash
+# Public/operator view: all five results must be 184.33.159.224.
+for host in lab ssc lim sast dast; do
+  getent ahostsv4 "$host.fortifydemo.com" | awk '{print $1}' | sort -u
+done
+
+# Private backend and ingress metadata remain 172.31.30.41.
+microk8s kubectl -n fortify get endpointslices,ingresses -o wide
+
+# TLS/SNI and browser path (install the existing mkcert CA on the client).
+curl --max-time 5 --resolve \
+  lab.fortifydemo.com:443:172.31.30.41 https://lab.fortifydemo.com/ready
+```
+
+For in-cluster DNS, use a pre-approved diagnostics pod or the existing
+operator troubleshooting environment to resolve each hostname. Do not grant
+the Manager pod execution permission merely to perform this check. The AWS
+Security Group must permit TCP 443 from the operator-controlled source to the
+Elastic IP; it must not expose TCP 8080. These commands observe configuration
+only and never modify Route 53, EC2, Security Groups, TLS Secrets, or the CA.
 
 Do not include account files, cookies, private keys, or unredacted journal
 output in support material.

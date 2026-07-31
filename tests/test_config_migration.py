@@ -165,6 +165,10 @@ class ConfigMigrationTests(unittest.TestCase):
             LEGACY.replace('host = "0.0.0.0"', 'host = "127.0.0.1"'),
             LEGACY + "\n[recovery]\nenabled = true\n",
             LEGACY + "\n[recovery]\ntimeout_seconds = 7201\n",
+            LEGACY + '\n[network]\ndomain = "fortifydemo.com"\n',
+            LEGACY + '\n[network]\ndomain = "fortifydemo.com"\n'
+            'private_backend_address = "184.33.159.224"\n'
+            'public_address = "184.33.159.224"\n',
         )
         for text in cases:
             with self.subTest(text=text[-48:]):
@@ -173,6 +177,18 @@ class ConfigMigrationTests(unittest.TestCase):
                 with self.assertRaises(MigrationError):
                     self.run_migration()
                 self.assertEqual(self.config.read_bytes(), original)
+
+    def test_dual_address_network_model_is_optional_and_loaded(self) -> None:
+        self.write_config(
+            LEGACY
+            + '\n[network]\ndomain = "fortifydemo.com"\n'
+            + 'private_backend_address = "172.31.30.41"\n'
+            + 'public_address = "184.33.159.224"\n'
+        )
+        self.run_migration()
+        config = load_config(self.config)
+        self.assertEqual(config["network"]["private_backend_address"], "172.31.30.41")
+        self.assertEqual(config["network"]["public_address"], "184.33.159.224")
 
     def test_failed_atomic_replacement_leaves_original_active(self) -> None:
         self.write_config()
