@@ -96,6 +96,7 @@ def render_card(
     approval_ready: bool,
     autonomy_policy: dict[str, Any],
     now: float,
+    queue_state: str = "idle",
 ) -> str:
     policy_lines = (
         f"Autonomy: {autonomy_policy['profile']} · generation "
@@ -123,9 +124,12 @@ def render_card(
                 if paused
                 else "runner startup or operator action"
             )
+        progress = (
+            f"issue #{issue}" if issue else queue_state
+        )
         return (
             f"Fortify SDLC Workflow — {milestone}\n"
-            f"Milestone progress: issue #{issue or 'none'}\n"
+            f"Milestone progress: {progress}\n"
             f"Current: {title or 'none'}\n"
             f"Workflow: {workflow}\n"
             "Runner: no heartbeat\n"

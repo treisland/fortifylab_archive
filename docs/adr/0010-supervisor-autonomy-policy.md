@@ -1,6 +1,6 @@
 # ADR 0010: Externalize the supervisor autonomy policy
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-31
 
 ## Context
@@ -32,9 +32,11 @@ secret, and scope-changing operations can only resolve to `approval`.
 The policy file and durable runtime state remain outside the repository.
 Telegram renders and requests policy-governed actions but is never the policy
 store. All supervisor processes use the same shared loader. Missing policy
-configuration resolves to generation `0` of the assisted profile, matching
-the previous automatic issue start/closure and approval-first merge,
-milestone, and retry behavior.
+configuration resolves to generation `0` of the assisted profile. Assisted is
+the recommended steady-state after initial Manual verification: issue
+start/closure, exact allowlisted milestone rollover, and verified-idempotent
+retry requests are automatic. Merge, destructive, secret, and scope decisions
+remain approval-bound.
 
 ## Considered alternatives
 
@@ -75,11 +77,13 @@ generation, and digests; they exclude policy paths and raw configuration.
 
 ## Compatibility and migration
 
-Omitting `autonomy_policy_file` exactly preserves existing behavior. Operators
-can opt in by installing a protected policy and restarting the user services.
-Rollback consists of restoring the previous valid generation or removing the
-setting to return to the migration-compatible assisted default. Runtime state
-and Telegram messages are not authoritative and need no data migration.
+Issue #94 intentionally changes the omitted-policy Assisted default from
+approval-first rollover/retry to deterministic automatic rollover/retry.
+Operators requiring the earlier posture must install a `manual` policy before
+upgrading. Migration to Assisted and rollback to Manual each require a new
+protected policy generation, status/digest verification, and restart of both
+user services. Runtime state and Telegram messages are not authoritative and
+need no data migration.
 
 ## Related decisions
 

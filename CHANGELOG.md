@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make Assisted the verified-loop default for atomic next-issue selection,
+  externally merged PR/issue reconciliation, exact allowlisted same-cycle
+  milestone rollover, and verified-idempotent retry requests; retain approval
+  for merges and sensitive actions, add explicit empty-queue states, and
+  document migration and rollback to Manual.
 - Add a versioned external supervisor autonomy policy with manual, assisted,
   and expiring autonomous profiles, protected action boundaries, canonical
   effective-policy digests, durable change audit events, and compatible

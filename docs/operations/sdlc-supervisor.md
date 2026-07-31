@@ -223,14 +223,16 @@ milestones = [
 ]
 ```
 
-The sequence is an allowlist, not a request to start every milestone silently.
+The sequence is an exact, ordered allowlist. Assisted mode may advance only to
+the immediately following entry; it never discovers or skips milestones.
 When the active milestone has no eligible issues, the supervisor verifies that
-its GitHub milestone is closed with zero open issues. It then sends the linked
-private chat an **Advance** or **Stay** decision. **Advance** (or `/advance`)
-revalidates the exact repository, current milestone, next configured
-milestone, closed state, and issue count before persisting the transition and
-immediately queuing the next issue. **Stay** rejects that approval and pauses
-new work; `/continue` permits a fresh rollover proposal.
+its GitHub milestone is closed with zero open issues and that the exact next
+milestone is open. In Assisted mode it atomically records the validated policy
+decision and transition, then claims and starts the next eligible issue in the
+same monitor cycle. A pending conflicting approval, pause, failure, changed
+GitHub state, or concurrent transition prevents the automatic change. Manual
+mode instead sends **Advance** or **Stay**; `/advance` revalidates every
+precondition, while **Stay** pauses new work.
 
 An open milestone produces guidance to close it but no approval. An unlisted,
 reordered, removed, ambiguous, or externally changed milestone fails closed.
@@ -243,9 +245,11 @@ persisted active milestone and rejects issues outside it.
 The monitor, Telegram listener, issue runner, and workflow status renderer use
 one versioned policy loader. Policy is not accepted through Telegram and is
 not stored in Git. With no policy setting, generation `0` of the `assisted`
-profile preserves the historical behavior: eligible issue selection and
-post-merge issue closure are automatic, while merges, milestone rollover, and
-allowlisted retry requests remain operator-approved.
+profile is the recommended default after the Manual loop has been verified:
+eligible issue selection, post-merge issue closure, exact allowlisted
+milestone rollover, and requests for explicitly verified idempotent retry
+stages are automatic. PR merges and destructive, secret, and scope-changing
+operations always retain human approval.
 
 To opt in, create an owner-only, non-symlink JSON file outside the checkout:
 
@@ -278,8 +282,9 @@ The supported profiles are:
 
 - `manual`: every action requires approval;
 
-- `assisted`: safe issue start and closure are automatic; merge, rollover,
-  retry, destructive, secret, and scope actions require approval;
+- `assisted`: safe issue start and closure, exact allowlisted rollover, and
+  verified-idempotent retry requests are automatic; merge, destructive,
+  secret, and scope actions require approval;
 
 - `autonomous`: ordinary workflow actions default to automatic until a
   required future RFC 3339 `expires_at`; protected actions still require
@@ -293,6 +298,13 @@ remain `approval`. The other action names are `start_next_issue`,
 not bypass the repository, issue, or milestone allowlists, idempotent-stage
 allowlist, CI and review gates, secret scan, dependency checks, branch binding,
 mergeability, or milestone eligibility.
+
+Start in `manual` while verifying a new installation. After one complete
+issue/PR/closure cycle, install an `assisted` policy with an incremented
+generation, verify its status digest and decisions, and restart both services.
+To roll back, install a new `manual` generation and restart; do not edit or
+delete the SQLite state. Manual and paused modes never auto-start or
+auto-advance.
 
 For a manual profile, `/start-next` performs one approved eligible-issue
 selection and `/close-completed` closes the one completed issue recorded after
@@ -358,8 +370,10 @@ state, and the eventual PR reference without parsing Codex output or runner
 logs. See the [runner heartbeat contract](../runner-heartbeats.md) for phases,
 freshness classifications, restart behavior, bounded retention, and the
 security boundary. Heartbeats never authorize or advance the workflow.
-With no current issue, the card reports `idle` or `paused` and points to queue
-selection or operator resume. A selected issue without heartbeat evidence is
+With no current issue, the card reports `idle`, `complete`,
+`rollover-pending`, `held`, or `blocked`; it never renders `issue #none`.
+These distinguish an exhausted final allowlist entry, a rollover opportunity,
+an operator pause, and a failed precondition. A selected issue without heartbeat evidence is
 `waiting`, never `running`; `running` is reserved for an issue with active
 runner evidence.
 On an enabled idle monitor cycle, the supervisor first reconciles any open
@@ -405,7 +419,9 @@ SQLite state is stored outside the checkout at:
 ```
 
 Existing databases are upgraded in place by creating the callback-token table
-and durable notification table on startup. No Telegram credential, protected
+and durable notification table on startup. Atomic issue claims and milestone
+compare-and-set transitions use the existing settings/events tables, so no
+state migration is required. No Telegram credential, protected
 configuration value, diagnostic log, or identity value is migrated into it.
 
 Recovery is deliberately limited: retry requests apply only to configured

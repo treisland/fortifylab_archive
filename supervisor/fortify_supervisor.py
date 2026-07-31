@@ -357,6 +357,93 @@ class Store:
         )
         self.connection.commit()
 
+    def claim_issue(self, issue: int, title: str, milestone: str) -> bool:
+        """Atomically claim one idle queue slot across monitor processes."""
+
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            current = self.connection.execute(
+                "SELECT value FROM settings WHERE key = 'current_issue'"
+            ).fetchone()
+            if current and str(current["value"]):
+                self.connection.rollback()
+                return False
+            for key, value in (
+                ("current_issue", str(issue)),
+                ("current_issue_title", title[:200]),
+            ):
+                self.connection.execute(
+                    """
+                    INSERT INTO settings(key, value) VALUES(?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    """,
+                    (key, value),
+                )
+            self.connection.execute(
+                """
+                INSERT INTO events(fingerprint, kind, payload, created_at)
+                VALUES(?, 'issue.selected', ?, ?)
+                """,
+                (
+                    f"issue:{issue}:selected:{milestone}",
+                    json.dumps(
+                        {"issue": issue, "milestone": milestone},
+                        sort_keys=True,
+                    ),
+                    int(self.now()),
+                ),
+            )
+            self.connection.commit()
+            return True
+        except sqlite3.IntegrityError:
+            self.connection.rollback()
+            return False
+
+    def advance_milestone(
+        self,
+        expected: str,
+        following: str,
+        initial: str,
+        payload: dict[str, Any],
+    ) -> bool:
+        """Compare-and-set the active milestone and its audit event."""
+
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+            row = self.connection.execute(
+                "SELECT value FROM settings WHERE key = 'active_milestone'"
+            ).fetchone()
+            active = str(row["value"]) if row else initial
+            paused = self.connection.execute(
+                "SELECT value FROM settings WHERE key = 'paused'"
+            ).fetchone()
+            if active != expected or (paused and paused["value"] == "true"):
+                self.connection.rollback()
+                return False
+            self.connection.execute(
+                """
+                INSERT INTO settings(key, value) VALUES('active_milestone', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
+                (following,),
+            )
+            self.connection.execute(
+                """
+                INSERT INTO events(fingerprint, kind, payload, created_at)
+                VALUES(?, 'milestone.rollover', ?, ?)
+                """,
+                (
+                    f"milestone:{expected}:advanced:{following}",
+                    json.dumps(payload, sort_keys=True),
+                    int(self.now()),
+                ),
+            )
+            self.connection.commit()
+            return True
+        except sqlite3.IntegrityError:
+            self.connection.rollback()
+            return False
+
     def event(self, fingerprint: str, kind: str, payload: dict[str, Any]) -> bool:
         try:
             self.connection.execute(
@@ -1110,8 +1197,21 @@ class Supervisor:
             ci_state=self.store.get("ci_state", "not started"),
             approval_ready=bool(self.store.pending_approvals("merge_pr")),
             autonomy_policy=self.policy.status(),
+            queue_state=self.queue_state(),
             now=self.store.now(),
         )
+
+    def queue_state(self) -> str:
+        if self.store.get("current_issue"):
+            return "active"
+        if self.store.get("paused", "false") == "true":
+            return "held"
+        if self.store.get("last_error"):
+            return "blocked"
+        current = self.active_milestone()
+        if self.store.has_event(f"milestone:{current}:complete"):
+            return "rollover-pending" if self.next_milestone() else "complete"
+        return "idle"
 
     def authorized_message(
         self, update: dict[str, Any], callback: bool = False
@@ -1607,6 +1707,36 @@ class Supervisor:
         if following.get("state") != "open":
             raise SupervisorError("Next authorized milestone must be open")
 
+    def transition_milestone(
+        self, payload: dict[str, Any], actor: str
+    ) -> dict[str, Any] | None:
+        self.verify_milestone_rollover(payload)
+        decision = self.policy_decision("advance_milestone")
+        audit = {
+            "actor": actor,
+            "decision": decision,
+            "from": payload["from"],
+            "to": payload["to"],
+            "preconditions": {
+                "current_closed": True,
+                "current_open_issues": 0,
+                "current_eligible_work": False,
+                "next_open": True,
+                "sequence_match": True,
+                "paused": False,
+                "conflicting_approval": False,
+            },
+        }
+        if not self.store.advance_milestone(
+            str(payload["from"]),
+            str(payload["to"]),
+            self.config.milestone,
+            audit,
+        ):
+            return None
+        self.store.set("last_error", "")
+        return self.queue_next_issue()
+
     def approve_milestone_rollover(self, approval_id: str, actor: str) -> str:
         row = self.store.approval(approval_id)
         if row["action"] != "milestone_rollover":
@@ -1614,13 +1744,12 @@ class Supervisor:
         payload = json.loads(row["payload"])
         self.verify_milestone_rollover(payload)
         self.store.decide(approval_id, "approved", actor)
-        self.store.set("active_milestone", str(payload["to"]))
+        issue = self.transition_milestone(payload, actor)
         self.store.event(
             f"approval:{approval_id}:rollover",
             "milestone.rollover_approved",
             {"actor": actor, "from": payload["from"], "to": payload["to"]},
         )
-        issue = self.queue_next_issue()
         if issue is None:
             return f"Advanced to {payload['to']}; no eligible issue is available"
         return f"Advanced to {payload['to']}; issue #{issue['number']} was started"
@@ -1630,7 +1759,19 @@ class Supervisor:
         following = self.next_milestone()
         if following is None:
             return
-        milestone = self.github.milestone(current)
+        try:
+            milestone = self.github.milestone(current)
+        except SupervisorError as error:
+            self.store.set("last_error", "milestone rollover blocked")
+            self.notify_once(
+                f"milestone:{current}:rollover-state-error",
+                "milestone.rollover_blocked",
+                f"Milestone rollover blocked: {error}",
+                {"from": current, "reason": "github-state"},
+                severity="failure",
+                meaningful=True,
+            )
+            return
         if (
             milestone.get("state") != "closed"
             or int(milestone.get("open_issues", 0)) != 0
@@ -1648,7 +1789,19 @@ class Supervisor:
             "from": current,
             "to": following,
         }
-        self.verify_milestone_rollover(payload)
+        try:
+            self.verify_milestone_rollover(payload)
+        except SupervisorError as error:
+            self.store.set("last_error", "milestone rollover blocked")
+            self.notify_once(
+                f"milestone:{current}:rollover-invalid:{following}",
+                "milestone.rollover_blocked",
+                f"Milestone rollover blocked: {error}",
+                {"from": current, "to": following, "reason": "precondition"},
+                severity="failure",
+                meaningful=True,
+            )
+            return
         decision = self.policy_decision("advance_milestone")
         if decision == "disabled":
             self.notify_once(
@@ -1667,7 +1820,20 @@ class Supervisor:
                 self.config.approval_ttl_seconds,
             )
         if decision == "auto":
-            self.approve_milestone_rollover(str(approval["id"]), "autonomy-policy")
+            if self.store.pending_approvals("merge_pr"):
+                self.notify_once(
+                    f"milestone:{current}:rollover-conflicting-approval",
+                    "milestone.rollover_blocked",
+                    "Milestone rollover is blocked by a pending merge approval.",
+                    {"from": current, "to": following},
+                    severity="failure",
+                    meaningful=True,
+                )
+                return
+            self.store.decide(
+                str(approval["id"]), "approved", "autonomy-policy"
+            )
+            self.transition_milestone(payload, "autonomy-policy")
             return
         actions = tuple(
             InlineAction(
@@ -1910,6 +2076,20 @@ class Supervisor:
                 },
                 severity="failure",
             )
+            if (
+                "checks" in self.config.notifications.retry_stages
+                and self.policy_decision("retry_idempotent_failure") == "auto"
+            ):
+                self.store.event(
+                    f"retry:pr:{number}:checks:{sha}",
+                    "recovery.retry_requested",
+                    {
+                        "actor": "autonomy-policy",
+                        "pull_request": int(number),
+                        "stage": "checks",
+                        "verified_idempotent": True,
+                    },
+                )
             return
         if check_state != "passed" or pr.get("mergeable") != "MERGEABLE":
             return
@@ -2194,17 +2374,25 @@ class Supervisor:
         milestone = self.active_milestone()
         issue = self.github.next_issue(milestone, excluded)
         if not issue:
-            self.notify_once(
+            completed = self.store.event(
                 f"milestone:{milestone}:complete",
                 "milestone.complete",
-                f"🎉 No eligible issues remain in {milestone}.",
                 {"milestone": milestone},
             )
+            if completed:
+                self.notify_once(
+                    f"milestone:{milestone}:complete-notice",
+                    "milestone.complete",
+                    f"🎉 No eligible issues remain in {milestone}.",
+                    {"milestone": milestone},
+                )
             self.offer_milestone_rollover()
             return None
         number = str(issue["number"])
-        self.store.set("current_issue", number)
-        self.store.set("current_issue_title", str(issue["title"])[:200])
+        if not self.store.claim_issue(
+            int(number), str(issue["title"]), milestone
+        ):
+            return None
         self.notify_once(
             f"issue:{number}:queued",
             "issue.queued",

@@ -44,6 +44,8 @@ class AutonomyPolicyTests(unittest.TestCase):
         self.assertEqual(policy.generation, 0)
         self.assertEqual(policy.decision("start_next_issue"), "auto")
         self.assertEqual(policy.decision("close_completed_issue"), "auto")
+        self.assertEqual(policy.decision("advance_milestone"), "auto")
+        self.assertEqual(policy.decision("retry_idempotent_failure"), "auto")
         self.assertEqual(policy.decision("merge_pull_request"), "approval")
 
     def test_manual_profile_and_safe_override(self) -> None:
