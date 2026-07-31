@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Prevent dashboard API payloads from shadowing the browser DOM, and execute
+  populated panel documents against both source and staged release assets.
+
 - Preserve independent workload presence and replica-readiness evidence beside
   dependency blockers, with multidimensional health summaries and ranked local
   root causes in the API, dashboard cards, and component inspector.
