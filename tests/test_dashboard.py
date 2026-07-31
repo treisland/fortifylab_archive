@@ -258,6 +258,13 @@ class DashboardTests(unittest.TestCase):
     def test_deploy_control_uses_deployment_readiness_contract(self):
         script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
         self.assertIn('action === "deploy" ? "deployment" : action', script)
+        failure_handler = script.split(
+            "function markPanelFailure", 1
+        )[1].split("function renderInventory", 1)[0]
+        self.assertIn('if (name === "preflight")', failure_handler)
+        self.assertIn("preflightReadiness = null", failure_handler)
+        self.assertIn("preflightGeneratedAt = 0", failure_handler)
+        self.assertIn("updateSelectedActionControls()", failure_handler)
 
     def test_each_dashboard_panel_has_an_independent_live_state_region(self):
         html = (WEB / "index.html").read_text(encoding="utf-8")

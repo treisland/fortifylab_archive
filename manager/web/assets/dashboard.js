@@ -106,6 +106,11 @@ function markPanelFailure(name, failure) {
     failureMessage(name, failure, retained),
     observedAt
   );
+  if (name === "preflight") {
+    preflightReadiness = null;
+    preflightGeneratedAt = 0;
+    updateSelectedActionControls();
+  }
   if (name === "components" && !retained) {
     text(byId("cluster-state"), "Unavailable");
     byId("cluster-state").className = "status unavailable";
