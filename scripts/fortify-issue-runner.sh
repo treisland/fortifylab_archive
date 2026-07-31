@@ -109,7 +109,31 @@ heartbeat_update() {
     --generation "$HEARTBEAT_GENERATION" "$@" >/dev/null
 }
 
+policy_identity_matches() {
+  python3 - "$SUPERVISOR_CONFIG" "$HEARTBEAT_TOOL" \
+    "$POLICY_GENERATION" "$POLICY_DIGEST" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
+from autonomy_policy import AutonomyPolicyError, load_policy
+
+with open(sys.argv[1], "rb") as stream:
+    supervisor = tomllib.load(stream)["supervisor"]
+policy_path = supervisor.get("autonomy_policy_file")
+try:
+    policy = load_policy(Path(policy_path) if policy_path else None)
+except AutonomyPolicyError:
+    raise SystemExit(1)
+if policy.generation != int(sys.argv[3]) or policy.digest != sys.argv[4]:
+    raise SystemExit(1)
+PY
+}
+
 heartbeat_phase() {
+  policy_identity_matches \
+    || fail "configuration mismatch; stale runner actions are blocked"
   heartbeat_update --phase "$1"
 }
 

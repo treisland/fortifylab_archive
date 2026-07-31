@@ -197,6 +197,17 @@ class RunnerHeartbeatTests(unittest.TestCase):
             runner,
         )
 
+    def test_runner_revalidates_policy_before_each_phase(self) -> None:
+        runner = (
+            Path(__file__).resolve().parents[1] / "scripts/fortify-issue-runner.sh"
+        ).read_text(encoding="utf-8")
+        phase_function = runner.split("heartbeat_phase() {", 1)[1].split("}", 1)[0]
+        self.assertIn("policy_identity_matches", phase_function)
+        self.assertIn(
+            'fail "configuration mismatch; stale runner actions are blocked"',
+            phase_function,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
