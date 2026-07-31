@@ -1,0 +1,16 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "OperationalConsoleBrowserFixtureObservations",
+  "suiteVersion": "0.4.0",
+  "observedOutcomeDigests": {
+    "progressive-partial-recovery": "15942185ab41af4ad7ddc5f318c0c17e480b02474321b7bc8b3e6e17fe1f7683",
+    "capability-disabled-enabled": "da56a7e56afcb05aef838b01418195ab60ce1985be1cf0184bf9743525fd0203",
+    "component-inspector-desktop": "3ec76215b48c38830365888fd9552abd9b8e653f87cbb2a356c061f4d7de1408",
+    "component-inspector-narrow": "56a264909fb273a805b0fc40a4b0721272f38022fb836881930d684f4ea9cdd0",
+    "quick-link-transitions": "f77461a8ce6021947e1de0cdb0237e80b28727bde9b1a3ccd9debde73c48bc77",
+    "lifecycle-plan-approval-progress": "bd4bc74aaf69e0c099c5796a16e51d52aaf80f8ba9a1c72017d30d1107b24b11",
+    "lifecycle-cancel-fail-retry-restart": "eb5004118269cd83e87b18e90518726a0c875e87d18cc5063ceba27883fb2cae",
+    "telegram-audit-correlation": "ed3c54a531107dd265ebaa8b3a38444c3cd0e9792d18977be6356a48a6cc4a92",
+    "protected-data-absence": "9488d5e6c3f03749658b63782c674479293c0169f2ed67b6a78656daa91917f9"
+  }
+}

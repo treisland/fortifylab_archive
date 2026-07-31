@@ -1,0 +1,68 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "OperationalConsoleBrowserEvaluationSuite",
+  "suiteVersion": "0.4.0",
+  "milestoneGate": "0.4-operational-console-browser",
+  "requiredProfileId": "fortify-24.4-eval.1",
+  "scope": {"platform": "single-node MicroK8s", "aspm": "excluded"},
+  "viewports": {
+    "desktop": {"width": 1440, "height": 1000},
+    "narrow": {"width": 390, "height": 844}
+  },
+  "journeys": [
+    {
+      "id": "progressive-partial-recovery",
+      "command": "python3 -m unittest tests.test_dashboard.DashboardTests.test_browser_partial_503_retains_successful_panels_and_sanitizes_errors tests.test_dashboard.DashboardTests.test_browser_refresh_recovery_and_session_expiry_are_bounded",
+      "viewport": "desktop",
+      "expected": {"endpointCompletion": "independent", "loadingDeadlineSeconds": 8, "partialFailure": "successful panels retained", "recovery": "bounded refresh succeeds", "accessibility": "panel status announced", "residualLimitation": "Synthetic responses do not measure a live network."}
+    },
+    {
+      "id": "capability-disabled-enabled",
+      "command": "python3 -m unittest tests.test_capabilities tests.test_web_operations",
+      "viewport": "desktop",
+      "expected": {"disabled": "controls fail closed", "enabled": "typed controls available", "stale": "controls disabled", "accessibility": "capability state announced", "residualLimitation": "Fixtures do not grant live mutation authority."}
+    },
+    {
+      "id": "component-inspector-desktop",
+      "command": "python3 -m unittest tests.test_dashboard.DashboardTests.test_component_explorer_is_filterable_deep_linked_and_accessible tests.test_dashboard.DashboardTests.test_component_inspector_labels_desired_observed_and_safe_metadata",
+      "viewport": "desktop",
+      "expected": {"focus": "close control receives focus and opener regains focus", "deepLink": "allowlisted component identifier only", "layout": "side inspector", "metadata": "allowlisted desired and observed projection", "residualLimitation": "Static contract does not capture pixels."}
+    },
+    {
+      "id": "component-inspector-narrow",
+      "command": "python3 -m unittest tests.test_dashboard.DashboardTests.test_component_explorer_is_filterable_deep_linked_and_accessible",
+      "viewport": "narrow",
+      "expected": {"focus": "keyboard focus remains explicit", "deepLink": "selection survives narrow layout", "layout": "full viewport inspector", "accessibility": "reduced motion supported", "residualLimitation": "Static contract does not emulate a mobile browser."}
+    },
+    {
+      "id": "quick-link-transitions",
+      "command": "python3 -m unittest tests.test_availability tests.test_dashboard.DashboardTests.test_curated_availability_is_independent_and_links_are_hardened",
+      "viewport": "desktop",
+      "expected": {"dns": "mismatch and recovery visible", "tls": "warning and recovery visible", "http": "unreachable and reachable visible", "links": "approved HTTPS routes only", "residualLimitation": "Synthetic probes do not prove operator network reachability."}
+    },
+    {
+      "id": "lifecycle-plan-approval-progress",
+      "command": "python3 -m unittest tests.test_web_operations tests.test_operation_engine",
+      "viewport": "desktop",
+      "expected": {"actions": "deploy start suspend", "plan": "dependency and risk bounded", "approval": "exact plan single use", "progress": "step health and terminal state visible", "residualLimitation": "No live component is mutated."}
+    },
+    {
+      "id": "lifecycle-cancel-fail-retry-restart",
+      "command": "python3 -m unittest tests.test_web_operations tests.test_operation_engine tests.test_manager_installation",
+      "viewport": "narrow",
+      "expected": {"cancellation": "safe boundary retained", "failure": "sanitized and actionable", "retry": "fresh attempt preserves history", "restart": "incomplete work marked interrupted", "residualLimitation": "No system service is restarted."}
+    },
+    {
+      "id": "telegram-audit-correlation",
+      "command": "python3 -m unittest tests.test_authorization tests.test_manager_communications tests.test_dashboard",
+      "viewport": "desktop",
+      "expected": {"approval": "same immutable plan authorization", "telegram": "delivery cannot advance authority", "history": "sanitized manager record correlated by opaque identifiers", "residualLimitation": "No Telegram provider is contacted."}
+    },
+    {
+      "id": "protected-data-absence",
+      "command": "python3 -m unittest tests.test_secret_workflow tests.test_dashboard tests.test_web_operations",
+      "viewport": "narrow",
+      "expected": {"dom": "protected values absent", "history": "protected values absent", "diagnostics": "bounded classifications only", "fixtures": "synthetic metadata only", "screenshots": "capture prohibited until sanitized live run", "residualLimitation": "Authorized operators remain responsible for external capture handling."}
+    }
+  ]
+}

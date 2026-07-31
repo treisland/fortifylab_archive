@@ -223,3 +223,9 @@ live-cluster failure projection, plans, dependency blocks,
 approval, timeout, cancellation, retry, reconnect, completion health, and
 sanitized failures. They are static and in-process tests: no live MicroK8s
 validation was performed.
+
+The release-blocking operational-console contract is documented in the
+[evaluation corpus](evaluation-corpus.md#04-operational-console-browser-gate).
+It combines these browser-facing tests into versioned desktop and narrow
+journeys and keeps authorized exact-profile live evidence explicitly
+unavailable until it is separately recorded.

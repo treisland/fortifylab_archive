@@ -15,6 +15,7 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 from manager.observable_evaluation import load
+from manager.operational_console_evaluation import evaluate as evaluate_console
 from manager.verified_lifecycle_evaluation import evaluate as evaluate_lifecycle
 
 
@@ -187,6 +188,16 @@ def _lifecycle_gate(root: Path, evaluated_at: str) -> dict[str, object]:
     )
 
 
+def _operational_console_gate(root: Path, evaluated_at: str) -> dict[str, object]:
+    evaluation_root = root / "evaluations" / "operational-console-browser-v0.4"
+    return evaluate_console(
+        load(evaluation_root / "scenarios.json"),
+        load(evaluation_root / "observations.json"),
+        load(evaluation_root / "live-evidence.json"),
+        evaluated_at=evaluated_at,
+    )
+
+
 def _write_tar(archive: Path, root: Path, paths: Iterable[str], epoch: int) -> None:
     with archive.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=epoch) as compressed:
@@ -220,6 +231,7 @@ def build_candidate(
     files = _scan_files(root, paths)
     profile_matrix = _profile_matrix(root)
     lifecycle_evaluation = _lifecycle_gate(root, recorded_at)
+    console_evaluation = _operational_console_gate(root, recorded_at)
     directory = output_root.resolve() / version
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -283,12 +295,23 @@ def build_candidate(
                 else "Deterministic and fresh exact-profile live evaluation evidence is incomplete."
             ),
         },
+        {
+            "id": "operational-console-browser-evaluation",
+            "status": console_evaluation["status"],
+            "evidence": "operational-console-browser-evaluation.json",
+            "reason": (
+                None
+                if console_evaluation["status"] == "passed"
+                else "Deterministic browser journeys or authorized fresh exact-profile live browser evidence is incomplete."
+            ),
+        },
         {"id": "installation-docs", "status": "passed", "evidence": "documentation-verification.json"},
         {"id": "upgrade-docs", "status": "passed", "evidence": "documentation-verification.json"},
     ]
     verdict = "go" if all(gate["status"] == "passed" for gate in gates) else "no-go"
     documents = {
         "profile-matrix.json": profile_matrix,
+        "operational-console-browser-evaluation.json": console_evaluation,
         "vulnerability-results.json": {
             "status": "not-run",
             "scanner": None,

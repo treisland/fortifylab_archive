@@ -1,0 +1,6 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "OperationalConsoleBrowserLiveEvidence",
+  "status": "not-run",
+  "reason": "Authorized exact-profile single-node MicroK8s browser evidence has not been recorded."
+}
