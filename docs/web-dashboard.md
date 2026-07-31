@@ -1,11 +1,11 @@
-# Read-only Web dashboard
+# Authenticated Web dashboard
 
 The Fortify Lab Manager dashboard presents the complete single-node MicroK8s
 lab on one same-origin browser page. It shows the desired component graph and
 versions, current dependency-aware health evidence, primary root cause and
 safe remediation, latest deployment preflight, cluster-observation state, and
-recent sanitized manager operations. ASPM and browser-triggered lifecycle
-actions are outside this release.
+recent sanitized manager operations and controlled typed lifecycle actions.
+ASPM remains outside project scope.
 
 ![Dashboard showing a healthy lab summary, dependency cards, health evidence, preflight, and operation history](images/web-dashboard.svg)
 
@@ -28,7 +28,7 @@ The login creates a random server-side session. Cookies are `HttpOnly` and
 `SameSite=Strict`, have bounded idle and absolute lifetimes, and must be
 configured with `secure_cookies=True` behind TLS. Only the coarse `/ready`
 response is unauthenticated. Static assets contain no lab data; all
-`/api/v1alpha1/*` read models require the session. Cross-origin API access is
+`/api/v1alpha1/*` reads and mutations require the session. Cross-origin API access is
 not enabled and browser responses carry a restrictive Content Security
 Policy.
 
@@ -53,6 +53,35 @@ The page provides landmarks, a skip link, labelled controls, table headers,
 alert/status live regions, keyboard focus styles, responsive layouts, and
 reduced-motion handling.
 
+## Controlled operations
+
+Select an action and components, then choose **Review plan**. The manager
+shows the registry-resolved ordered steps, dependency additions, bounded
+timeouts, verification count, risk, and destructive/data-deletion
+classification. Requests contain only operation and component identifiers,
+never commands, paths, adapter names, environment values, or secrets.
+
+Routine supported actions can start after review. Disruptive actions require
+a single-use approval bound to the actor, browser session, exact plan, current
+target state, and expiry. High-risk actions additionally require
+`AUTHORIZE HIGH-RISK OPERATION` and a recently authenticated session.
+Uninstall and persistent-data deletion remain separate plan types; uninstall
+never implicitly deletes persistent data.
+
+The progress panel renders durable state, completed and total steps, sanitized
+events, cancellation, retry eligibility, and completion health. The active
+opaque operation ID is retained in browser session storage. Refresh or a
+same-session reconnect retrieves authoritative state from
+`GET /api/v1alpha1/operations/{id}`; leaving the page does not cancel work.
+Cancellation is cooperative and can remain `cancelling` until the adapter
+reaches a cancellation boundary. Retry creates a new operation and does not
+reuse an approval.
+
+The repository deliberately ships no live MicroK8s mutation adapter.
+`DashboardApp` returns `503 OPERATIONS_UNAVAILABLE` unless composition
+supplies the shared engine, authorization service, current-state provider,
+and an independently validated namespace-scoped adapter.
+
 ## Disclosure boundary
 
 The browser receives the safe projections already defined by the inventory,
@@ -69,7 +98,9 @@ submitted secret values. Secret status remains metadata-only under
 
 ## Failure recovery
 
-Use **Refresh** after a transient manager or adapter failure. If the session
+Use **Refresh** after a transient manager or adapter failure. Failed,
+timed-out, and manager-interrupted operations offer **Retry** after the
+operator reviews sanitized events and current health. If the session
 expires, the next API request returns `401` and the page returns to sign-in.
 If only cluster observation is unavailable, investigate the manager's
 allow-listed observer; do not broaden RBAC or grant access to Secrets. Health
@@ -77,7 +108,9 @@ and preflight remediation remain in
 [health-checks.md](health-checks.md) and
 [deployment-preflight.md](deployment-preflight.md).
 
-Tests in `tests/test_dashboard.py` cover authentication, expiry, logout,
+Tests in `tests/test_dashboard.py` and `tests/test_web_operations.py` cover authentication, expiry, logout,
 method rejection, headers, disclosure, API history, accessibility structure,
-and the loading/empty/failure/disconnected presentations. They are static and
-in-process tests: no live MicroK8s validation was performed.
+loading/empty/failure/disconnected presentations, plans, dependency blocks,
+approval, timeout, cancellation, retry, reconnect, completion health, and
+sanitized failures. They are static and in-process tests: no live MicroK8s
+validation was performed.

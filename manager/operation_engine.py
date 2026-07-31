@@ -207,6 +207,41 @@ class OperationEngine:
         identity: ActorIdentity | None = None,
         approval_id: str | None = None,
     ) -> dict[str, Any]:
+        document, steps = self._prepare(
+            operation, component_ids, actor=actor, retry_of=retry_of,
+            identity=identity, approval_id=approval_id,
+        )
+        self._run(document, steps)
+        return self._store.get(document["id"])
+
+    def submit_async(
+        self,
+        operation: str,
+        component_ids: list[str] | tuple[str, ...],
+        *,
+        actor: str,
+        retry_of: str | None = None,
+        identity: ActorIdentity | None = None,
+        approval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Durably queue an exact operation before background execution."""
+        document, steps = self._prepare(
+            operation, component_ids, actor=actor, retry_of=retry_of,
+            identity=identity, approval_id=approval_id,
+        )
+        threading.Thread(target=self._run, args=(document, steps), daemon=True).start()
+        return self._store.get(document["id"])
+
+    def _prepare(
+        self,
+        operation: str,
+        component_ids: list[str] | tuple[str, ...],
+        *,
+        actor: str,
+        retry_of: str | None,
+        identity: ActorIdentity | None,
+        approval_id: str | None,
+    ) -> tuple[dict[str, Any], tuple[Step, ...]]:
         if operation not in REQUEST_OPERATIONS:
             raise InvalidOperation("operation is not an allowed lifecycle action")
         components = tuple(dict.fromkeys(component_ids))
@@ -260,8 +295,40 @@ class OperationEngine:
                 "error": None,
             }
             self._store.create(document)
-        self._run(document, steps)
-        return self._store.get(document["id"])
+        return document, steps
+
+    def plan(
+        self,
+        operation: str,
+        component_ids: list[str] | tuple[str, ...],
+    ) -> dict[str, Any]:
+        """Return the same registry-resolved plan used by execution."""
+        if operation not in REQUEST_OPERATIONS:
+            raise InvalidOperation("operation is not an allowed lifecycle action")
+        components = tuple(dict.fromkeys(component_ids))
+        if not components or any(
+            not isinstance(item, str) or not IDENTIFIER.fullmatch(item)
+            for item in components
+        ):
+            raise InvalidOperation("components are required")
+        steps = self._plan(operation, components)
+        affected = tuple(dict.fromkeys(step.component_id for step in steps))
+        return {
+            "operation": operation,
+            "requestedTargets": list(components),
+            "components": list(affected),
+            "steps": [
+                {
+                    "number": number,
+                    "component": step.component_id,
+                    "operation": step.operation,
+                    "timeoutSeconds": step.timeout_seconds,
+                    "maxAttempts": step.max_attempts,
+                    "verificationChecks": list(step.verify),
+                }
+                for number, step in enumerate(steps, 1)
+            ],
+        }
 
     def retry(
         self,
@@ -275,6 +342,26 @@ class OperationEngine:
         if previous["state"] not in TERMINAL_STATES - {"succeeded", "cancelled"}:
             raise InvalidOperation("only a failed, timed-out, or interrupted operation can retry")
         return self.submit(
+            previous["operation"],
+            previous["requestedTargets"],
+            actor=actor,
+            retry_of=operation_id,
+            identity=identity,
+            approval_id=approval_id,
+        )
+
+    def retry_async(
+        self,
+        operation_id: str,
+        *,
+        actor: str,
+        identity: ActorIdentity | None = None,
+        approval_id: str | None = None,
+    ) -> dict[str, Any]:
+        previous = self._store.get(operation_id)
+        if previous["state"] not in TERMINAL_STATES - {"succeeded", "cancelled"}:
+            raise InvalidOperation("only a failed, timed-out, or interrupted operation can retry")
+        return self.submit_async(
             previous["operation"],
             previous["requestedTargets"],
             actor=actor,

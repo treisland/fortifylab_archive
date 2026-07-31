@@ -5,8 +5,9 @@ authenticated Web UI, CLI, and private Telegram controls. It is MicroK8s-first,
 operates only on components in
 [`registry/components.json`](../../registry/components.json), and excludes
 ASPM. The shared [local authorization service](authorization.md) is enforced
-before a configured engine calls its adapter. The repository does not expose
-an unauthenticated mutation route or include a live-cluster adapter.
+before a configured engine calls its adapter. The authenticated Web transport
+is documented in the [manager API reference](../api.md). The repository does
+not expose an unauthenticated mutation route or include a live-cluster adapter.
 
 ## Request contract
 
@@ -73,8 +74,10 @@ cancellation, and must stop at the monotonic deadline. A health adapter must
 evaluate only the supplied component/check IDs without returning secret-bearing
 evidence.
 
-The repository does not yet wire this engine to a live adapter or expose
-mutation routes. Before doing so, add narrowly scoped MicroK8s permissions and
+The repository wires this engine to an adapter-neutral authenticated Web
+transport, but not to a live adapter. `DashboardApp` fails closed when no
+operation service is supplied. Before enabling live execution, add narrowly
+scoped MicroK8s permissions and
 integration evidence against a disposable lab. Production composition must
 supply the authorization service and an authoritative current-state provider;
 omission is reserved for isolated engine unit tests without a mutation adapter.

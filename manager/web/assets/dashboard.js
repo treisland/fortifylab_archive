@@ -15,6 +15,9 @@ const safeDate = value => {
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? "Unknown time" : date.toLocaleString();
 };
+let selectedPlan = null;
+let activeOperationId = sessionStorage.getItem("fortifylab.activeOperation");
+let progressTimer = null;
 
 async function readModel(name) {
   const response = await fetch(`/api/v1alpha1/${name}`, {headers: {"Accept": "application/json"}});
@@ -46,6 +49,15 @@ function renderInventory(document) {
     graph.append(card);
   }
   byId("inventory-empty").hidden = items.length !== 0;
+  const choices = byId("operation-components");
+  const selected = new Set(Array.from(choices.selectedOptions).map(item => item.value));
+  choices.replaceChildren();
+  for (const item of items) {
+    const option = documentNode("option", "", item.identity?.displayName || item.identity?.id);
+    option.value = item.identity?.id || "";
+    option.selected = selected.has(option.value);
+    choices.append(option);
+  }
 }
 
 function renderHealth(document) {
@@ -141,6 +153,132 @@ async function load() {
   });
   byId("loading").hidden = true;
   byId("api-error").hidden = results.some(result => result.status === "rejected");
+  if (activeOperationId) await refreshOperation();
+}
+
+async function mutate(path, body = {}) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: {"Accept": "application/json", "Content-Type": "application/json"},
+    body: JSON.stringify(body)
+  });
+  if (response.status === 401) { window.location.assign("/"); throw new Error("session expired"); }
+  const document = await response.json();
+  if (!response.ok) throw new Error(document.message || "operation request failed");
+  return document;
+}
+
+function operationRequest() {
+  return {
+    operation: byId("operation").value,
+    components: Array.from(byId("operation-components").selectedOptions).map(item => item.value)
+  };
+}
+
+byId("operation-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    selectedPlan = await mutate("/api/v1alpha1/operations/plans", operationRequest());
+    text(byId("plan-risk"), `${selectedPlan.risk} risk`);
+    text(byId("plan-impact"), selectedPlan.dependencyImpact.length ? `Adds dependencies: ${selectedPlan.dependencyImpact.join(", ")}` : "No implicit dependency additions");
+    const list = byId("plan-steps");
+    list.replaceChildren();
+    selectedPlan.steps.forEach(step => list.append(documentNode("li", "", `${step.operation} ${step.component} · timeout ${step.timeoutSeconds}s · ${step.verificationChecks.length} health checks`)));
+    byId("operation-plan").hidden = false;
+    byId("operation-message").hidden = true;
+  } catch (error) { showOperationMessage(error.message, true); }
+});
+
+byId("cancel-plan").addEventListener("click", () => {
+  selectedPlan = null;
+  byId("operation-plan").hidden = true;
+});
+
+byId("execute-operation").addEventListener("click", () => {
+  if (!selectedPlan) return;
+  if (selectedPlan.approvalRequired || selectedPlan.destructive) {
+    const deletion = selectedPlan.deletesData ? " This permanently deletes persistent data and is separate from uninstall." : "";
+    text(byId("confirmation-detail"), `Confirm ${selectedPlan.operation} for ${selectedPlan.requestedTargets.join(", ")}.${deletion}`);
+    const high = selectedPlan.risk === "high";
+    byId("high-risk-label").hidden = !high;
+    byId("high-risk-confirmation").hidden = !high;
+    byId("operation-confirmation").showModal();
+  } else startOperation();
+});
+
+byId("operation-confirmation").addEventListener("close", () => {
+  if (byId("operation-confirmation").returnValue === "confirm") startOperation();
+});
+
+async function startOperation() {
+  try {
+    const request = {operation: selectedPlan.operation, components: selectedPlan.requestedTargets};
+    if (selectedPlan.approvalRequired) {
+      const approval = await mutate("/api/v1alpha1/approvals", request);
+      const approved = await mutate(`/api/v1alpha1/approvals/${approval.id}/approve`, {
+        confirmation: selectedPlan.risk === "high" ? byId("high-risk-confirmation").value : null
+      });
+      request.approvalId = approved.id;
+    }
+    const operation = await mutate("/api/v1alpha1/operations", request);
+    activeOperationId = operation.id;
+    sessionStorage.setItem("fortifylab.activeOperation", activeOperationId);
+    byId("operation-plan").hidden = true;
+    renderOperation(operation);
+    scheduleProgress();
+  } catch (error) { showOperationMessage(error.message, true); }
+}
+
+function renderOperation(operation) {
+  byId("operation-progress").hidden = false;
+  text(byId("progress-summary"), `${operation.operation} · ${operation.state} · ${operation.completedSteps}/${operation.totalSteps} steps · completion health: ${operation.completionHealth}`);
+  byId("progress-bar").max = operation.totalSteps;
+  byId("progress-bar").value = operation.completedSteps;
+  const events = byId("progress-events");
+  events.replaceChildren();
+  (operation.events || []).forEach(event => events.append(documentNode("li", "", `${event.type} · ${event.component || "operation"} · attempt ${event.attempt || "—"}`)));
+  byId("cancel-operation").hidden = operation.terminal;
+  byId("retry-operation").hidden = !["failed", "timed-out", "interrupted"].includes(operation.state);
+  if (operation.terminal) {
+    clearTimeout(progressTimer);
+    sessionStorage.removeItem("fortifylab.activeOperation");
+  }
+}
+
+async function refreshOperation() {
+  try {
+    const response = await fetch(`/api/v1alpha1/operations/${activeOperationId}`, {headers: {"Accept": "application/json"}});
+    if (!response.ok) throw new Error("operation state unavailable");
+    const operation = await response.json();
+    renderOperation(operation);
+    if (!operation.terminal) scheduleProgress();
+  } catch (error) { showOperationMessage(error.message, true); }
+}
+
+function scheduleProgress() {
+  clearTimeout(progressTimer);
+  progressTimer = setTimeout(refreshOperation, 1000);
+}
+
+byId("cancel-operation").addEventListener("click", async () => {
+  try { renderOperation(await mutate(`/api/v1alpha1/operations/${activeOperationId}/cancel`)); }
+  catch (error) { showOperationMessage(error.message, true); }
+});
+byId("retry-operation").addEventListener("click", async () => {
+  try {
+    const operation = await mutate(`/api/v1alpha1/operations/${activeOperationId}/retry`);
+    activeOperationId = operation.id;
+    sessionStorage.setItem("fortifylab.activeOperation", activeOperationId);
+    renderOperation(operation);
+    scheduleProgress();
+  } catch (error) { showOperationMessage(error.message, true); }
+});
+
+function showOperationMessage(message, danger) {
+  const element = byId("operation-message");
+  text(element, message);
+  element.className = danger ? "notice danger" : "notice";
+  element.hidden = false;
 }
 
 byId("refresh").addEventListener("click", load);
