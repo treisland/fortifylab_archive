@@ -1323,6 +1323,10 @@ class Supervisor:
         if not text.startswith("/"):
             return
         actor = str((message.get("from") or {}).get("id"))
+        if text.split(maxsplit=1)[0].split("@", 1)[0].lower() == "/confirm":
+            # Prove that the private control channel is writable before consuming
+            # the single-use capability or applying its requested mutation.
+            self.telegram.send("Confirmation received; applying the requested change.")
         try:
             response = self.handle_command(text, actor)
         except SupervisorError as error:

@@ -413,6 +413,26 @@ class SupervisorTest(unittest.TestCase):
                 f"/confirm {self.confirmation_token(expiring)}", "101"
             )
 
+    def test_telegram_outage_does_not_apply_or_consume_confirmation(self) -> None:
+        self.configure_policy_file()
+        pending = self.supervisor.handle_command("/hold", "101")
+        token = self.confirmation_token(pending)
+        update = {
+            "message": {
+                "text": f"/confirm {token}",
+                "from": {"id": 101},
+                "chat": {"id": 202, "type": "private"},
+            }
+        }
+        self.telegram.fail_sends = True
+        with self.assertRaisesRegex(SupervisorError, "Telegram send failed"):
+            self.supervisor.handle_update(update)
+        self.assertEqual(self.store.get("paused", "false"), "false")
+
+        self.telegram.fail_sends = False
+        self.supervisor.handle_update(update)
+        self.assertEqual(self.store.get("paused"), "true")
+
     def test_autonomous_duration_is_bounded_and_malformed_duration_fails(self) -> None:
         self.configure_policy_file()
         with self.assertRaisesRegex(SupervisorError, "positive"):
