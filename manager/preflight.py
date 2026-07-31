@@ -150,7 +150,7 @@ class PreflightEngine:
                     capability_states = {
                         item["id"]: item for item in document.get("capabilities", [])
                     }
-            except (RuntimeError, OSError, ValueError, TypeError):
+            except Exception:
                 capability_states = {}
 
         readiness: dict[str, dict[str, Any]] = {}

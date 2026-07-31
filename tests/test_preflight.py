@@ -214,6 +214,20 @@ class PreflightTests(unittest.TestCase):
         for action in ("deployment", "start", "suspend"):
             self.assertFalse(document["readiness"][action]["ready"])
 
+    def test_unexpected_capability_failure_is_sanitized_and_fails_closed(self):
+        def unavailable():
+            raise Exception("sensitive capability detail")
+
+        document = self.engine(capability_provider=unavailable).document()
+        self.assertTrue(document["readiness"]["observation"]["ready"])
+        for action in ("deployment", "start", "suspend"):
+            self.assertFalse(document["readiness"][action]["ready"])
+            self.assertEqual(
+                document["readiness"][action]["blockers"],
+                ["LIFECYCLE_EVIDENCE_UNAVAILABLE"],
+            )
+        self.assertNotIn("sensitive", str(document))
+
     def test_adapter_exception_details_never_enter_report(self):
         class UnsafeProbe:
             def probe(self, check):
