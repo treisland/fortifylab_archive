@@ -73,6 +73,7 @@ def load_config(path: Path) -> dict:
             "accounts", "/var/lib/fortify-lab-manager/accounts.json"
         ),
         "cluster": document.get("cluster", {}),
+        "network": document.get("network", {}),
         "lifecycle_enabled": document.get("lifecycle", {}).get("enabled", False),
         "recovery": document.get("recovery", {}),
     }
@@ -152,6 +153,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
                 namespace=cluster.get("namespace", "fortify"),
                 timeout_seconds=cluster.get("timeout_seconds", 5),
                 functional_probe=functional_probe,
+                public_address=config.get("network", {}).get("public_address"),
             )
         except (KeyError, OSError, TypeError, ValueError):
             LOG.warning(
@@ -319,6 +321,7 @@ def check(config_path: Path, *, cluster: bool = False) -> None:
                 if settings.get("health_probe_socket")
                 else None
             ),
+            public_address=config.get("network", {}).get("public_address"),
         )
         resources = tuple(
             resource

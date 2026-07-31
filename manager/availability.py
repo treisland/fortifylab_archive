@@ -41,6 +41,9 @@ class ObservedRoute:
     host: str
     tls: bool
     addresses: tuple[str, ...] = ()
+    # Private ingress addresses are retained as distinct evidence. They are
+    # never used as the public DNS expectation when addresses is configured.
+    ingress_addresses: tuple[str, ...] = ()
 
 
 class RouteObserver(Protocol):
@@ -107,10 +110,10 @@ class HostAvailabilityProbe:
                 started, "unreachable", "failed", "not-attempted",
                 "not-attempted", "DNS resolution failed",
             )
-        if route.addresses and resolved.isdisjoint(route.addresses):
+        if route.addresses and resolved != set(route.addresses):
             return self._result(
                 started, "dns-mismatch", "mismatch", "not-attempted",
-                "not-attempted", "DNS does not resolve to an observed ingress address",
+                "not-attempted", "DNS does not resolve to the configured public address",
             )
 
         url = f"{'https' if route.tls else 'http'}://{route.host}/"

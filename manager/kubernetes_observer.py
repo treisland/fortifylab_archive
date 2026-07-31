@@ -53,6 +53,7 @@ class KubernetesObserver:
         namespace: str = NAMESPACE,
         timeout_seconds: float = 5.0,
         functional_probe: HealthProbe | None = None,
+        public_address: str | None = None,
     ) -> None:
         if namespace != NAMESPACE:
             raise ValueError("only the managed fortify namespace is supported")
@@ -72,6 +73,7 @@ class KubernetesObserver:
         self._namespace = namespace
         self._timeout = min(max(float(timeout_seconds), 0.1), 10.0)
         self._functional_probe = functional_probe
+        self._public_address = public_address
         self._workloads = {
             (component["id"], workload["id"]): workload
             for component in (
@@ -189,7 +191,7 @@ class KubernetesObserver:
                 for host in entry.get("hosts", [])
                 if isinstance(host, str)
             }
-            addresses = tuple(
+            ingress_addresses = tuple(
                 sorted(
                     {
                         address["ip"]
@@ -207,7 +209,15 @@ class KubernetesObserver:
                 endpoint_id = labels.get(host.split(".", 1)[0])
                 if endpoint_id is not None:
                     routes.append(
-                        ObservedRoute(endpoint_id, host, host in tls_hosts, addresses)
+                        ObservedRoute(
+                            endpoint_id,
+                            host,
+                            host in tls_hosts,
+                            (getattr(self, "_public_address", None),)
+                            if getattr(self, "_public_address", None)
+                            else ingress_addresses,
+                            ingress_addresses=ingress_addresses,
+                        )
                     )
         return tuple(routes)
 

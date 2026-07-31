@@ -138,6 +138,24 @@ class AvailabilityTests(unittest.TestCase):
         self.assertEqual(routes[0].addresses, ("192.0.2.10",))
         self.assertNotIn("service", json.dumps([route.__dict__ for route in routes]))
 
+    def test_public_address_is_dns_expectation_not_private_ingress_address(self):
+        observer = object.__new__(KubernetesObserver)
+        observer._registry = self.registry
+        observer._namespace = "fortify"
+        observer._public_address = "184.33.159.224"
+        observer._get = lambda path: {
+            "items": [{
+                "spec": {
+                    "tls": [{"hosts": ["lab.fortifydemo.com"]}],
+                    "rules": [{"host": "lab.fortifydemo.com"}],
+                },
+                "status": {"loadBalancer": {"ingress": [{"ip": "172.31.30.41"}]}},
+            }]
+        }
+        route = observer.observed_routes()[0]
+        self.assertEqual(route.addresses, ("184.33.159.224",))
+        self.assertEqual(route.ingress_addresses, ("172.31.30.41",))
+
     def test_failure_backoff_history_and_recovery_are_bounded(self):
         now = [0.0]
         probe = SequenceProbe(["unreachable", "reachable"])
@@ -180,6 +198,17 @@ class AvailabilityTests(unittest.TestCase):
         mismatch = probe.probe(self.routes[0])
         self.assertEqual(mismatch.state, "dns-mismatch")
         self.assertEqual(mismatch.http, "not-attempted")
+
+    @patch("manager.availability.socket.getaddrinfo")
+    def test_dns_mixed_with_unapproved_answer_is_mismatch(self, getaddrinfo):
+        getaddrinfo.return_value = [
+            (2, 1, 6, "", ("192.0.2.10", 443)),
+            (2, 1, 6, "", ("192.0.2.99", 443)),
+        ]
+        evidence = HostAvailabilityProbe().probe(self.routes[0])
+        self.assertEqual(evidence.state, "dns-mismatch")
+        self.assertEqual(evidence.dns, "mismatch")
+        self.assertEqual(evidence.http, "not-attempted")
 
     @patch("manager.availability.socket.getaddrinfo")
     def test_tls_http_success_server_error_and_redirect_are_distinct(self, getaddrinfo):
