@@ -1,10 +1,11 @@
 # Install and operate the 0.2 manager
 
 This is the supported remote-lab installation for one EC2 host running
-single-node MicroK8s. It exposes the authenticated, read-only manager at
+single-node MicroK8s. It exposes the authenticated manager at
 `https://lab.$DOMAIN`; the default evaluation URL is
 `https://lab.fortifydemo.com`. ASPM, public production hosting, multi-node
-deployment, and browser-triggered component changes are excluded.
+deployment are excluded. Browser-triggered component changes are available
+only after the protected lifecycle activation described below.
 
 ## Network and trust boundary
 
@@ -40,6 +41,8 @@ sudo ./scripts/fortify-manager bootstrap-account operator
 sudo ./scripts/fortify-manager configure fortifydemo.com <private-node-ip> 8080
 sudo ./scripts/fortify-manager start
 sudo ./scripts/fortify-manager diagnose
+# After the protected functional-health probe is installed and reachable:
+sudo ./scripts/fortify-manager activate-lifecycle
 ```
 
 Use the lab domain and an address reachable from ingress pods, normally the
@@ -67,6 +70,7 @@ authorize direct browser access to 8080.
 | `/etc/fortify-lab-manager/manager.toml` | Protected listener and state references | Created once, then preserved |
 | `/var/lib/fortify-lab-manager/accounts.json` | PBKDF2 password verifiers only | Preserved |
 | `/var/lib/fortify-lab-manager/history.sqlite3` | Schema-versioned manager history | Migrated in place and preserved |
+| `/var/lib/fortify-lab-manager/cluster-access/lifecycle.kubeconfig` | Dedicated namespace lifecycle credential; mode `0600` | Created only by verified activation; never committed or returned to the browser |
 | `/opt/fortify-lab-manager/releases` | Immutable installed versions | New release added |
 | `/opt/fortify-lab-manager/current` | Active release symlink | Updated atomically |
 
@@ -118,6 +122,44 @@ Neither role grants Secrets, pod logs, exec, mutation, or workload access in
 another namespace. Re-running the command refreshes only the observer
 credential and CA; it does not read application Secrets.
 
+### Protected lifecycle activation
+
+`activate-lifecycle` is the only supported transition from
+`lifecycle.enabled = false` to `true`. It is idempotent on the supported
+single-node MicroK8s profile and starts every attempt disabled. Before
+activation it verifies the installed runtime inventory, protected observer,
+and readable/writable functional-health Unix socket. It then reapplies only
+the `fortify-manager-lifecycle` ServiceAccount, token Secret, namespace Role,
+and RoleBinding.
+
+The command atomically renders
+`/var/lib/fortify-lab-manager/cluster-access/lifecycle.kubeconfig`, owned by
+`fortify-manager:fortify-manager` with mode `0600`. It uses that
+credential—not administrator impersonation—to prove every declared namespace
+permission. Mandatory negative checks prove denial of Secrets, logs, exec,
+attach, port-forward, RBAC, namespaces, persistent volumes, and resources in
+`default`. Helm execution remains fixed to `HELM_DRIVER=configmap`.
+
+Only after all checks pass does the command enable configuration and restart
+the Manager. Success reports `lifecycle-execution: available`. Any failed
+prerequisite leaves the flag false; post-configuration failures also remove
+the kubeconfig and restart in disabled mode. The kubeconfig is never printed,
+logged, placed in Git, sent through an API response, or stored in browser
+state.
+
+To remove mutation capability without uninstalling components or deleting
+data:
+
+```bash
+sudo ./scripts/fortify-manager deactivate-lifecycle
+```
+
+Deactivation first disables configuration and removes the local kubeconfig,
+then deletes only the lifecycle RoleBinding and token Secret. The
+ServiceAccount and Role may remain harmlessly installed for an idempotent
+retry. Fortify workloads, PVCs, application Secrets, Manager configuration,
+accounts, history databases, and operation history are preserved.
+
 Enabling RBAC and restarting MicroK8s are separate disruptive decisions.
 Neither occurs implicitly. If preflight reports `enable-rbac`, review the
 impact and run:
@@ -157,6 +199,16 @@ identity whose effective authorization has not been proven. The workflow
 reapplies only the dedicated ServiceAccount, namespace Role/binding, and
 discovery ClusterRole/binding; it never rolls back or edits component
 workloads, application Secrets, PVCs, or databases.
+
+For lifecycle failures, keep `lifecycle.enabled = false` and run `diagnose`
+first. Restore the installed runtime, observer access, or protected
+functional-health probe named by the sanitized error, then rerun
+`activate-lifecycle`; do not copy an administrator kubeconfig or manually
+restore a failed candidate. If activation failed after a restart attempt, run
+`deactivate-lifecycle`, confirm the Manager is active in inspection-only mode,
+and retry. Support material may include the failing prerequisite category and
+`systemctl is-active` result, but never the kubeconfig, token, CA contents,
+application Secrets, environment dump, or unredacted journal.
 
 MicroK8s clusters upgraded from older releases can retain a trusted cluster CA
 without the RFC 5280 `keyUsage` extension. The Manager accepts that documented
