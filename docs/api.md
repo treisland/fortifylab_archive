@@ -257,6 +257,13 @@ compatibility alias for deployment readiness. Mutation readiness additionally
 requires unexpired effective capability evidence; observation can remain ready
 while lifecycle mutation is disabled or unavailable.
 
+`platformReadiness` reports host and MicroK8s prerequisite blockers without
+mixing in lifecycle authorization or current application health.
+`mutationAuthorization` reports only the independent lifecycle authorization
+boundary. Sanitized `capacity` and `host` objects contain bounded numeric and
+enumerated discovery facts; they never contain hostnames, addresses, paths, or
+command output.
+
 Profile transition planning uses
 `POST /api/v1alpha1/profile-upgrades/plans`; submission and status use
 `POST /api/v1alpha1/profile-upgrades` and

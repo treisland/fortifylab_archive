@@ -1,13 +1,17 @@
 # Deployment preflight
 
-The authenticated Manager runs the Kubernetes-observable subset through its
-protected read-only observer. MicroK8s version, StorageClasses, Services, and
-Ingresses use live evidence. Checks requiring host capacity, addon discovery,
-license or registry credentials, image pulls, TLS contents, or external
-configuration remain warnings because the observer is intentionally unable to
-read Secrets, arbitrary files, or execute commands. Loss of Kubernetes access
-is a sanitized blocker for observable checks and is retried on the next
-request.
+The authenticated Manager consumes protected, sanitized host discovery. Refresh
+it with `sudo ./scripts/fortify-manager collect-host-preflight`. The collector
+uses only fixed, bounded read commands and metadata checks. It records CPU,
+available memory/disk, OS/kernel/architecture, MicroK8s version/state/addons,
+storage/ingress presence, local ingress ports, DNS agreement, and protected
+input presence. It never records hostnames, addresses, paths, command output,
+certificate or license contents, registry credentials, or authorization
+material. Evidence is atomically installed as `root:fortify-manager` mode
+`0640`; invalid type, ownership, permissions, size, keys, values, or evidence
+older than 15 minutes fails closed. TLS checks decode only the public
+certificate metadata, require the managed names and more than seven days of
+remaining validity, and never inspect the private key.
 
 `GET /api/v1alpha1/preflight` tells an authenticated user whether the
 single-node MicroK8s lab is ready for observation, deployment, start, and
@@ -65,6 +69,16 @@ is unavailable, times out, or cannot produce safe evidence creates an
 actionable blocker; it is never treated as a pass.
 
 ## Interpretation
+
+`platformReadiness` contains only prerequisite blockers. It does not consume
+lifecycle authorization and is not health evidence for an existing lab.
+`mutationAuthorization` separately reports whether the Manager can mutate.
+The legacy `readiness` entries and top-level `ready` retain their combined
+fail-closed behavior. `capacity` reports total and estimated remaining CPU,
+memory, and disk after subtracting the selected profile minimum; it is guidance,
+not a reservation. `host.ec2=true` enables guidance only: the collector never
+calls AWS APIs or changes IAM, DNS, security groups, volumes, instances, or
+network interfaces.
 
 The top-level `ready` value remains a backward-compatible alias for
 `readiness.deployment.ready`. New consumers use the selected readiness entry:
@@ -169,6 +183,11 @@ Confirm every pinned image in the component registry is reachable and has a
 compatible manifest for the lab host. Restore network/registry access or
 correct the pinned bundle. A read-only manifest check is sufficient;
 preflight must not pull images as proof.
+
+The current profile lacks some complete repository origins. With protected
+registry-authentication metadata present, this is a specific warning rather
+than a fabricated pass. Missing protected authentication is a blocker. No
+authorization header or registry response body enters evidence.
 
 ### configuration
 

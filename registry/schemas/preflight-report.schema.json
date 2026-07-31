@@ -4,12 +4,14 @@
   "title": "Read-only deployment preflight report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "kind", "generatedAt", "ready", "readiness", "profile", "summary", "evidence", "items"],
+  "required": ["apiVersion", "kind", "generatedAt", "ready", "platformReadiness", "mutationAuthorization", "readiness", "profile", "summary", "evidence", "items", "capacity", "host"],
   "properties": {
     "apiVersion": {"const": "fortifylab.io/v1alpha1"},
     "kind": {"const": "DeploymentPreflight"},
     "generatedAt": {"type": "string", "format": "date-time"},
     "ready": {"type": "boolean"},
+    "platformReadiness": {"$ref": "#/$defs/readiness"},
+    "mutationAuthorization": {"$ref": "#/$defs/readiness"},
     "readiness": {
       "type": "object",
       "additionalProperties": false,
@@ -64,6 +66,12 @@
           "status": {"enum": ["pass", "warning", "fail"]},
           "summary": {"type": "string", "minLength": 1, "maxLength": 256},
           "latencyMs": {"type": "integer", "minimum": 0},
+          "facts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": ["string", "integer", "boolean"]
+            }
+          },
           "remediation": {
             "type": "object",
             "additionalProperties": false,
@@ -82,6 +90,30 @@
             "else": {"not": {"required": ["remediation"]}}
           }
         ]
+      }
+    },
+    "capacity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cpuCores": {"type": "integer", "minimum": 0},
+        "memoryGiB": {"type": "integer", "minimum": 0},
+        "storageGiB": {"type": "integer", "minimum": 0},
+        "remainingCpuCores": {"type": "integer", "minimum": 0},
+        "remainingMemoryGiB": {"type": "integer", "minimum": 0},
+        "remainingStorageGiB": {"type": "integer", "minimum": 0}
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "osFamily": {"type": "string", "maxLength": 80},
+        "osVersion": {"type": "string", "maxLength": 80},
+        "kernel": {"type": "string", "maxLength": 80},
+        "architecture": {"type": "string", "maxLength": 80},
+        "microk8sVersion": {"type": "string", "maxLength": 80},
+        "ec2": {"type": "boolean"}
       }
     }
   },

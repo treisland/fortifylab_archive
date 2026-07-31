@@ -37,6 +37,7 @@ Commands:
   config-rollback BACKUP          Validate and atomically restore a protected backup
   config-diagnose                 Run sanitized configuration diagnostics
   rbac-preflight                  Report desired/effective MicroK8s RBAC state
+  collect-host-preflight          Refresh protected read-only host evidence
   install-cluster-access [--approve-enable-rbac] [--approve-restart]
                                   Verify RBAC and activate protected observer access
   activate-lifecycle              Verify and activate bounded lifecycle execution
@@ -73,6 +74,14 @@ manager_config() {
         --config "$CONFIG_ROOT/manager.toml" \
         --backup-root "$CONFIG_BACKUP_ROOT" \
         --access-root "$CLUSTER_ACCESS_ROOT"
+}
+
+collect_host_preflight() {
+    require_root
+    manager_config inspect >/dev/null
+    PYTHONPATH="$REPOSITORY_ROOT" python3 -m manager.host_preflight \
+        --output "$STATE_ROOT/host-preflight.json"
+    printf 'Collected sanitized host preflight evidence; no host or cluster settings were changed.\n'
 }
 
 validate_domain() {
@@ -1177,6 +1186,7 @@ case "$command" in
         manager_config diagnose
         ;;
     rbac-preflight) rbac_preflight ;;
+    collect-host-preflight) collect_host_preflight ;;
     install-cluster-access) install_cluster_access "$@" ;;
     activate-lifecycle) activate_lifecycle "$@" ;;
     deactivate-lifecycle) deactivate_lifecycle "$@" ;;

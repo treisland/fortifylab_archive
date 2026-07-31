@@ -34,6 +34,7 @@ from manager.microk8s_lifecycle import (
 )
 from manager.operation_engine import OperationEngine, OperationStore
 from manager.preflight import PreflightEngine
+from manager.host_preflight import HostPreflightEvidence, HostPreflightProbe
 from manager.web_operations import WebOperationAPI
 from manager.backup_restore import (
     Destination, RecoveryService, RecoveryStore, UnixRecoveryAdapter,
@@ -169,6 +170,9 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     accounts = load_accounts(Path(config["accounts"]))
     store = LoopRecordStore(Path(config["state_database"]))
     registry = ComponentRegistry.load()
+    host_preflight_probe = HostPreflightProbe(HostPreflightEvidence(
+        Path(config["state_database"]).parent / "host-preflight.json"
+    ))
     cluster = config.get("cluster", {})
     activation_evidence = (
         Path(cluster["token_file"]).parent / RBAC_ACTIVATION_EVIDENCE
@@ -246,7 +250,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
             state_provider=component_states,
             preflight_provider=lambda: PreflightEngine(
                 registry,
-                observer,
+                host_preflight_probe,
                 capability_provider=capability_provider_ref["provider"].document,
             ).document(),
             footprint_provider=getattr(observer, "installation_footprint", None),
@@ -297,7 +301,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         registry_loader=lambda: registry,
         observer=observer,
         health_probe=observer,
-        preflight_probe=observer,
+        preflight_probe=host_preflight_probe,
         preflight_capability_provider=capability_provider.document,
         history_reader=StoreHistoryReader(store, operation_store),
         availability_monitor=AvailabilityMonitor(registry, observer),
