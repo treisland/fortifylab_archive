@@ -21,6 +21,11 @@ telegram_chat_file = "/home/ubuntu/.config/fortify-lab-manager/telegram/private-
 # Verify a new loop in Manual before adopting this recommended steady state.
 # autonomy_policy_file = "/home/ubuntu/.config/fortify-lab-manager/autonomy-policy.json"
 
+# Autonomous merge fails closed unless every unique named check exists and
+# succeeds for the fetched PR head. The secret scan must be one of them.
+required_merge_checks = ["repository", "secrets"]
+secret_scan_check = "secrets"
+
 # Optional bounded Codex runner. The selected issue number is appended as the
 # final argument. Keep commented until the supervisor-only loop is verified.
 # runner_command = ["/home/ubuntu/.local/bin/fortify-issue-dispatch"]

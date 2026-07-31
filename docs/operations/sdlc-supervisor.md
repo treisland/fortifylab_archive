@@ -289,13 +289,18 @@ infrequent controls remain slash commands:
 - `/autonomy assisted`
 - `/autonomy autonomous <duration>`, using a positive number plus `m`, `h`, or
   `d`, capped at seven days
-- `/hold`, `/resume`, and `/approve-once`
+- `/resume` and `/approve-once`
 
 Every mutation first returns a `/confirm <token>` command. The token expires
 after at most five minutes, is bound to the linked private user, identifies
 exactly one requested action, and is consumed once. Requests and confirmations
 from any other user, chat, or non-private conversation are ignored. A Telegram
 delivery outage does not apply or consume a change.
+
+`/hold` is the exception: it is an emergency command and takes effect
+immediately, even when the autonomy lease or process attestations are invalid.
+It is idempotent and prevents new automatic work and merges. Resume still
+requires the second confirmation.
 
 `/approve-once` arms one merge approval under an approval-bound policy. It is
 consumed by the next eligible merge plan and does not weaken destructive,
@@ -304,8 +309,9 @@ secret, or scope-change policy.
 Each monitor, listener, status renderer, and runner records the effective
 generation and digest in sanitized state or heartbeat evidence. If fresh
 process evidence disagrees, status shows `Configuration: mismatch` and actions
-fail closed. An expired autonomous lease is reported separately and also
-blocks actions. Malformed external reloads report `configuration restart
+fail closed. At its absolute expiry, the first restarted or active process
+atomically writes a new Assisted generation before evaluating another action;
+restart never recalculates or extends the lease. Malformed external reloads report `configuration restart
 required`; they never expose a path, document content, or raw exception.
 
 The supported profiles are:
@@ -328,6 +334,18 @@ remain `approval`. The other action names are `start_next_issue`,
 not bypass the repository, issue, or milestone allowlists, idempotent-stage
 allowlist, CI and review gates, secret scan, dependency checks, branch binding,
 mergeability, or milestone eligibility.
+
+Automatic PR merge additionally requires every unique check named by
+`required_merge_checks` to exist and conclude successfully for the fetched
+head SHA; `secret_scan_check` must be in that list. The `agent/issue-N` branch,
+durable active issue, open GitHub issue, and exact active authorized milestone
+must agree. Drafts, conflicts, requested changes, missing or ambiguous checks,
+secret findings, an unresolved supervisor failure, a hold/pause, configuration
+mismatch, sensitive-operation labels, or changes beneath `secrets/input/` all
+fail closed. A changed head supersedes the old plan and repeats every gate.
+Activation, automatic merge, blocked exceptions, expiry, and Assisted
+reversion are durable immediate notifications; a Telegram outage leaves them
+pending and cannot change authority.
 
 Start in `manual` while verifying a new installation. After one complete
 issue/PR/closure cycle, install an `assisted` policy with an incremented
@@ -357,14 +375,17 @@ An autonomous example must be explicitly time-bounded:
 }
 ```
 
-Unknown fields, profiles, actions, or decisions; an expired autonomous policy;
-unsafe protected-action overrides; malformed JSON; and insecure file
+Unknown fields, profiles, actions, or decisions; unsafe protected-action
+overrides; malformed JSON; and insecure file
 ownership or permissions all fail closed with sanitized errors. Configuration
 changes produce `autonomy.policy_changed` events containing the old and new
 generation/digest but no policy path or raw values. Generation is an
 operator-managed non-negative revision; increment it for each intended change.
 
-To roll back, restore the last known valid external document and generation,
+To disable Autonomous immediately, confirm `/autonomy assisted` (or install a
+new Assisted/Manual generation), then compare the status digest. This does not
+rewrite workflow history, approvals, or pending GitHub state. To roll back the
+implementation, restore the last known valid external document and generation,
 then restart both services and compare the status digest. To restore exact
 pre-policy behavior, remove `autonomy_policy_file` from `supervisor.toml` and
 restart the services; the effective policy returns to assisted generation `0`.

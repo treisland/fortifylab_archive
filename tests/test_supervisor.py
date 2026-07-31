@@ -166,6 +166,8 @@ def passing_pr(number: int = 12, sha: str = "abc123") -> dict[str, Any]:
             {"name": "repository", "status": "COMPLETED", "conclusion": "SUCCESS"},
             {"name": "secrets", "status": "COMPLETED", "conclusion": "SUCCESS"},
         ],
+        "files": [{"path": "supervisor/fortify_supervisor.py"}],
+        "labels": [],
         "url": f"https://github.test/pull/{number}",
         "mergedAt": None,
     }
@@ -177,6 +179,7 @@ class FakeGitHub:
         self.discovered: list[dict[str, Any]] = [self.pr]
         self.merges: list[tuple[int, str]] = []
         self.readied: list[int] = []
+        self.ready_hook: Callable[[], None] | None = None
         self.closed_issues: list[int] = []
         self.created_issues: list[tuple[str, str]] = []
         self.issue: dict[str, Any] | None = {
@@ -186,6 +189,12 @@ class FakeGitHub:
         }
         self.issues: dict[str, dict[str, Any] | None] = {}
         self.milestones: dict[str, dict[str, Any]] = {}
+        self.issue_detail: dict[str, Any] = {
+            "number": 12,
+            "state": "OPEN",
+            "milestone": {"title": "0.1 — Evaluation Foundation"},
+            "labels": [],
+        }
 
     def pull_request(self, number: int) -> dict[str, Any]:
         assert number == int(self.pr["number"])
@@ -201,6 +210,8 @@ class FakeGitHub:
         self.readied.append(number)
         self.pr["isDraft"] = False
         self.pr["mergeStateStatus"] = "CLEAN"
+        if self.ready_hook is not None:
+            self.ready_hook()
 
     def close_issue(self, number: int) -> None:
         self.closed_issues.append(number)
@@ -221,6 +232,10 @@ class FakeGitHub:
         return self.milestones.get(
             title, {"title": title, "state": "open", "open_issues": 0}
         )
+
+    def issue_details(self, number: int) -> dict[str, Any]:
+        assert number == int(self.issue_detail["number"])
+        return dict(self.issue_detail)
 
 
 class FakeTelegram:
@@ -399,14 +414,14 @@ class SupervisorTest(unittest.TestCase):
 
     def test_autonomy_confirmation_is_identity_bound_single_use_and_expiring(self) -> None:
         self.configure_policy_file()
-        pending = self.supervisor.handle_command("/hold", "101")
+        pending = self.supervisor.handle_command("/resume", "101")
         token = self.confirmation_token(pending)
         with self.assertRaisesRegex(SupervisorError, "another identity"):
             self.supervisor.handle_command(f"/confirm {token}", "999")
-        self.assertIn("Held", self.supervisor.handle_command(f"/confirm {token}", "101"))
+        self.assertIn("Resumed", self.supervisor.handle_command(f"/confirm {token}", "101"))
         with self.assertRaisesRegex(SupervisorError, "already used"):
             self.supervisor.handle_command(f"/confirm {token}", "101")
-        expiring = self.supervisor.handle_command("/resume", "101")
+        expiring = self.supervisor.handle_command("/approve-once", "101")
         self.clock[0] += 301
         with self.assertRaisesRegex(SupervisorError, "expired"):
             self.supervisor.handle_command(
@@ -415,7 +430,7 @@ class SupervisorTest(unittest.TestCase):
 
     def test_telegram_outage_does_not_apply_or_consume_confirmation(self) -> None:
         self.configure_policy_file()
-        pending = self.supervisor.handle_command("/hold", "101")
+        pending = self.supervisor.handle_command("/resume", "101")
         token = self.confirmation_token(pending)
         update = {
             "message": {
@@ -431,7 +446,14 @@ class SupervisorTest(unittest.TestCase):
 
         self.telegram.fail_sends = False
         self.supervisor.handle_update(update)
+        self.assertEqual(self.store.get("paused", "false"), "false")
+
+    def test_emergency_hold_is_immediate_and_idempotently_blocks_work(self) -> None:
+        self.assertEqual(self.supervisor.handle_command("/hold", "101"), "Emergency hold active")
         self.assertEqual(self.store.get("paused"), "true")
+        self.supervisor.handle_command("/hold", "101")
+        self.supervisor.monitor_once()
+        self.assertEqual(self.github.merges, [])
 
     def test_autonomous_duration_is_bounded_and_malformed_duration_fails(self) -> None:
         self.configure_policy_file()
@@ -447,7 +469,110 @@ class SupervisorTest(unittest.TestCase):
         )
         self.assertIn("Lease expiry:", result)
 
-    def test_expired_lease_survives_restart_and_allows_policy_recovery(self) -> None:
+    def activate_autonomous(self) -> None:
+        self.configure_policy_file()
+        pending = self.supervisor.handle_command("/autonomy autonomous 30m", "101")
+        self.supervisor.handle_command(
+            f"/confirm {self.confirmation_token(pending)}", "101"
+        )
+        self.store.set("current_issue", "12")
+        self.store.set("current_pr", "12")
+
+    def test_autonomous_merge_requires_every_gate_and_notifies(self) -> None:
+        self.activate_autonomous()
+        self.supervisor.monitor_once()
+        self.assertEqual(self.github.readied, [12])
+        self.assertEqual(self.github.merges, [(12, "abc123")])
+        kinds = {
+            row["kind"]
+            for row in self.store.connection.execute(
+                "SELECT kind FROM events"
+            )
+        }
+        self.assertIn("autonomy.activated", kinds)
+        self.assertIn("pull_request.automatic_merge", kinds)
+
+    def test_autonomous_merge_retains_notification_during_telegram_outage(self) -> None:
+        self.activate_autonomous()
+        self.telegram.fail_sends = True
+        self.supervisor.monitor_once()
+        self.assertEqual(self.github.merges, [(12, "abc123")])
+        notification = self.store.notification("pr:12:automatic-merge:abc123")
+        self.assertIsNotNone(notification)
+        self.assertEqual(notification["state"], "pending")
+
+    def test_autonomous_merge_fails_closed_for_ineligible_fixtures(self) -> None:
+        self.activate_autonomous()
+        payload = {
+            "repository": self.config.repository,
+            "pull_request": 12,
+            "head_sha": "abc123",
+        }
+        fixtures = (
+            ("missing checks", lambda: self.github.pr.update(statusCheckRollup=[]), "checks are not passing"),
+            ("conflict", lambda: self.github.pr.update(mergeable="CONFLICTING"), "not mergeable"),
+            ("requested changes", lambda: self.github.pr.update(reviewDecision="CHANGES_REQUESTED"), "Changes are requested"),
+            ("secret finding", lambda: self.github.pr["statusCheckRollup"][1].update(conclusion="FAILURE"), "checks are not passing"),
+            ("sensitive scope", lambda: self.github.issue_detail.update(labels=[{"name": "sensitive-operation"}]), "requires approval"),
+            ("wrong milestone", lambda: self.github.issue_detail.update(milestone={"title": "other"}), "active authorized milestone"),
+            ("unresolved failure", lambda: self.store.set("last_error", "failed"), "unresolved workflow failure"),
+        )
+        for name, mutate, message in fixtures:
+            with self.subTest(name=name):
+                self.github.pr = passing_pr()
+                self.github.pr["isDraft"] = False
+                self.github.issue_detail["labels"] = []
+                self.github.issue_detail["milestone"] = {"title": self.config.milestone}
+                self.store.set("last_error", "")
+                mutate()
+                with self.assertRaisesRegex(SupervisorError, message):
+                    self.supervisor.verify_autonomous_merge(self.github.pr, payload)
+
+    def test_changed_head_forces_new_autonomous_evaluation(self) -> None:
+        self.activate_autonomous()
+        payload = {
+            "repository": self.config.repository,
+            "pull_request": 12,
+            "head_sha": "old-sha",
+        }
+        approval = self.store.create_approval("merge_pr", payload, 60)
+        with self.assertRaisesRegex(SupervisorError, "head changed"):
+            self.supervisor.approve(str(approval["id"]), "autonomy-policy")
+        self.assertEqual(self.github.merges, [])
+
+    def test_lease_expiring_during_monitor_blocks_merge_and_reverts(self) -> None:
+        self.activate_autonomous()
+        self.github.pr["isDraft"] = False
+        expiry = datetime.datetime.fromisoformat(
+            self.supervisor.policy.expires_at.replace("Z", "+00:00")
+        )
+        self.clock[0] = expiry.timestamp()
+        self.store.set("process_policy:monitor", "")
+        self.store.set("process_policy:listener", "")
+        payload = {
+            "repository": self.config.repository,
+            "pull_request": 12,
+            "head_sha": "abc123",
+        }
+        with self.assertRaisesRegex(SupervisorError, "expired before merge"):
+            self.supervisor.verify_autonomous_merge(self.github.pr, payload)
+        self.assertEqual(self.supervisor.policy.profile, "assisted")
+        self.assertEqual(self.github.merges, [])
+
+    def test_lease_expiring_while_marking_ready_blocks_merge_and_reverts(self) -> None:
+        self.activate_autonomous()
+        expiry = datetime.datetime.fromisoformat(
+            self.supervisor.policy.expires_at.replace("Z", "+00:00")
+        )
+        self.github.ready_hook = lambda: self.clock.__setitem__(0, expiry.timestamp())
+
+        self.supervisor.monitor_once()
+
+        self.assertEqual(self.github.readied, [12])
+        self.assertEqual(self.github.merges, [])
+        self.assertEqual(self.supervisor.policy.profile, "assisted")
+
+    def test_expired_lease_survives_restart_and_reverts_before_action(self) -> None:
         path = self.configure_policy_file()
         pending = self.supervisor.handle_command(
             "/autonomy autonomous 30m", "101"
@@ -460,20 +585,31 @@ class SupervisorTest(unittest.TestCase):
         restarted = Supervisor(
             self.config, self.store, self.github, self.telegram
         )
-        self.assertIn(
-            "Configuration: expired-lease",
-            restarted.handle_command("/autonomy", "101"),
-        )
-        with self.assertRaisesRegex(SupervisorError, "lease expired"):
-            restarted.handle_command("/start-next", "101")
-
-        pending = restarted.handle_command("/autonomy assisted", "101")
-        result = restarted.handle_command(
-            f"/confirm {self.confirmation_token(pending)}", "101"
-        )
-        self.assertIn("Autonomy changed to assisted", result)
+        self.assertIn("Autonomy: assisted", restarted.handle_command("/autonomy", "101"))
         self.assertEqual(json.loads(path.read_text())["profile"], "assisted")
         self.assertEqual(restarted.configuration_state(), "active")
+        kinds = {
+            row["kind"]
+            for row in self.store.connection.execute(
+                "SELECT kind FROM events WHERE kind LIKE 'autonomy.%'"
+            )
+        }
+        self.assertIn("autonomy.lease_expired", kinds)
+        self.assertIn("autonomy.reverted", kinds)
+
+    def test_restart_preserves_active_lease_without_extension(self) -> None:
+        path = self.configure_policy_file()
+        pending = self.supervisor.handle_command(
+            "/autonomy autonomous 30m", "101"
+        )
+        self.supervisor.handle_command(
+            f"/confirm {self.confirmation_token(pending)}", "101"
+        )
+        expiry = json.loads(path.read_text())["expires_at"]
+        self.clock[0] += 600
+        restarted = Supervisor(self.config, self.store, self.github, self.telegram)
+        self.assertEqual(restarted.policy.expires_at, expiry)
+        self.assertEqual(json.loads(path.read_text())["expires_at"], expiry)
 
     def test_mixed_process_generation_blocks_actions_and_is_reported(self) -> None:
         self.configure_policy_file()
