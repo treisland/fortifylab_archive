@@ -7,6 +7,11 @@
 
 ## Unreleased
 
+- Separate workload, persistence, in-cluster service/application,
+  ingress/TLS, and external-reachability health domains; public DNS failures
+  now degrade access without changing database workload health or blocking
+  unrelated internal dependencies.
+
 - Separate observation and mutation capability presentation, distinguish
   policy-disabled, setup-required, unauthorized, transient, and unsupported
   states, and fail lifecycle mutation closed during an explicit MicroK8s RBAC

@@ -47,6 +47,7 @@ main { width:min(1500px,94vw); margin:2rem auto 4rem; }
 .filter-check { display:flex; gap:.4rem; align-items:center; min-height:2.9rem; white-space:nowrap; }
 .two-column { display:grid; grid-template-columns:1.2fr 1fr; gap:1rem; }
 .evidence-card { margin-bottom:.7rem; }
+.health-domain-summary { color:var(--muted); margin:.45rem 0; font-size:.85rem; }
 .evidence-row,.check-row { display:grid; grid-template-columns:auto 1fr; gap:.7rem; padding:.6rem 0; border-top:1px solid var(--line); align-items:start; }
 .check-row a { grid-column:2; font-size:.85rem; }
 .root-cause { color:var(--red); font-weight:700; margin:.6rem 0; }
