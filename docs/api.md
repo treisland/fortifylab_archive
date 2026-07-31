@@ -227,7 +227,12 @@ order, freshness semantics, safe evidence, and remediation catalog are
 documented in [Dependency-aware health checks](health-checks.md). The response
 schema is
 [`registry/schemas/health-report.schema.json`](../registry/schemas/health-report.schema.json).
-Each item separates dependency, workload, and application dimensions. Workload
+Each item separates dependency, workload, and application dimensions. It also
+exposes compatible additive `directState`, `affectedDomains`,
+`downstreamImpact`, and `domains` fields for infrastructure, workload,
+persistence, internal service, application, ingress/TLS, and external
+reachability. External availability evidence can degrade access while leaving
+direct workload and application state unchanged. Workload
 evidence can include sanitized presence and desired/ready replica counts even
 while an upstream dependency blocks protected application probes. The legacy
 `state` and first `rootCause` remain available; `rootCauses` preserves every

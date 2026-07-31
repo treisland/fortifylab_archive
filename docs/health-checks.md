@@ -24,7 +24,8 @@ private certificate material, logs, raw responses, or Kubernetes output.
 
 ## Interpretation
 
-Checks run from roots to consumers:
+Checks run from roots to consumers, but dependency gates apply to individual
+checks rather than whole component subjects:
 
 1. MicroK8s node;
 2. storage and cluster DNS;
@@ -33,12 +34,15 @@ Checks run from roots to consumers:
 5. SSC and LIM;
 6. ScanCentral SAST controller/workers and ScanCentral DAST API/scanners.
 
-Registry dependencies are preserved. When a dependency is not healthy, its
-consumers report `dimensions.dependency.state=blocked`, but their independent
-workload metadata checks still run. Protected application, functional, and
-dependency-connectivity probes become `unknown` until the dependency recovers.
-This preserves the upstream cause without hiding an absent workload or a
-desired-versus-ready replica mismatch. Eligible checks for one subject use a
+Registry dependencies are preserved for internal-service and application
+checks. Workload checks depend only on the MicroK8s node; persistence checks
+depend on the node and storage; internal-service/application checks depend on
+in-cluster DNS and their declared application dependencies. Ingress, TLS, and
+public reachability never gate database workloads or internal application
+dependencies. When a relevant dependency is not healthy, only its affected
+checks become derived `unknown`; independent workload and persistence checks
+still run. This preserves the upstream cause without hiding an absent workload
+or a desired-versus-ready replica mismatch. Eligible checks for one subject use a
 fixed worker pool; the whole report shares a 30-second aggregate deadline.
 When that deadline expires, unfinished checks become sanitized `unknown`
 evidence and queued work is cancelled. Runtime adapters must also honor each
@@ -59,8 +63,21 @@ adapter that ignores cancellation.
 | `stale` | Evidence is older than the five-minute freshness threshold. |
 
 Each item includes timestamps, bounded latency, sanitized summaries,
-root-cause fields, three independent `dimensions`, and a safe documentation
-link. The dimensions use these card/inspector terms:
+root-cause fields, compatible `dimensions`, explicit `domains`, and a safe
+documentation link. `directState` excludes dependency-derived and external
+access evidence. `affectedDomains` names only non-healthy domains, while
+`downstreamImpact` lists consumers whose relevant checks are currently
+blocked. The domain states are:
+
+- `infrastructure`: node evidence;
+- `workload`: Kubernetes desired/present/ready evidence;
+- `persistence`: PVC and storage evidence;
+- `internalService`: cluster DNS, service, TCP/HTTPS, and declared connectivity;
+- `application`: authenticated readiness, query, configuration, and registration;
+- `ingressTls`: ingress and certificate evidence;
+- `externalReachability`: public DNS and operator-route evidence.
+
+The compatible dimensions use these card/inspector terms:
 
 - `blocked by dependency`: at least one upstream dependency is not healthy;
 - `workload absent`: a desired registry workload returned Kubernetes 404;
@@ -83,6 +100,14 @@ from the same report and are deterministic for that evidence snapshot.
 `unavailable` means no adapter was configured. Repository tests and rendered
 configuration are static validation and are never live-cluster evidence.
 
+Overall state uses deterministic precedence. Direct component failures rank
+`unhealthy`, `misconfigured`, `stopped`, `unreachable`, `unknown`, `stale`,
+`starting`, then `degraded`. If direct evidence is healthy, a relevant blocked
+dependency yields `blocked`. If direct evidence and dependencies are healthy,
+an ingress/TLS/external failure yields `degraded`, never `unhealthy` or
+`blocked`. Environment aggregation retains the documented state ordering, so
+stopped or unhealthy applications are not hidden by degraded public access.
+
 ## Service availability is separate
 
 The dashboard's curated quick links use
@@ -93,10 +118,16 @@ small recovery history. A successful login page, `401`, or `403` is
 `reachable`; it does not show that initialization, databases, dependencies,
 licenses, worker registration, or authenticated functions are healthy.
 
+The availability projection is also composed into matching Web-component
+health domains. It remains independently sourced: it can degrade
+`externalReachability` or `ingressTls`, but cannot change `workload`,
+`persistence`, `internalService`, or `application` evidence. A later fresh
+availability sample replaces stale evidence without restarting the Manager.
+
 `tls-warning` means certificate validation failed without returning
-certificate contents. `dns-mismatch` means resolved addresses do not intersect
-the IP addresses reported by ingress metadata when those addresses are
-available. `unreachable` covers DNS or connection failure, while
+certificate contents. `dns-mismatch` means resolved addresses do not match the
+configured approved public address set exactly; mixed approved and unapproved
+answers fail closed. `unreachable` covers DNS or connection failure, while
 `not-configured` means no approved TLS ingress was observed. The Manager does
 not follow redirects and reports redirects or HTTP 5xx responses as
 `degraded`. See [the API reference](api.md#curated-service-availability) for

@@ -96,7 +96,13 @@ class ManagerAPI:
             if path == AVAILABILITY_PATH and self._availability_monitor is None:
                 document = AvailabilityMonitor(registry).document()
             elif path == HEALTH_PATH:
-                document = HealthEngine(registry, self._health_probe).document()
+                availability = (
+                    self._availability_monitor.document()
+                    if self._availability_monitor is not None else None
+                )
+                document = HealthEngine(
+                    registry, self._health_probe, availability=availability
+                ).document()
             elif path == PREFLIGHT_PATH:
                 document = PreflightEngine(
                     registry, self._preflight_probe,

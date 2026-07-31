@@ -219,10 +219,20 @@ function renderHealth(payload) {
     const heading = documentNode("div", "evidence-title");
     heading.append(documentNode("strong", "", item.displayName), status(item.state));
     article.append(heading);
+    article.append(documentNode(
+      "p", "health-domain-summary",
+      `Direct: ${(item.directState || item.state || "unknown").replaceAll("-", " ")} · Domains: ${Array.isArray(item.affectedDomains) && item.affectedDomains.length ? item.affectedDomains.join(", ") : "none"}`
+    ));
     if (item.rootCause) article.append(documentNode("p", "root-cause", `Root cause: ${item.rootCause}`));
+    if (Array.isArray(item.downstreamImpact) && item.downstreamImpact.length) {
+      article.append(documentNode("p", "muted", `Downstream impact: ${item.downstreamImpact.join(", ")}`));
+    }
     for (const evidence of item.evidence || []) {
       const row = documentNode("div", "evidence-row");
-      row.append(status(evidence.state), documentNode("span", "", evidence.summary));
+      row.append(
+        status(evidence.state),
+        documentNode("span", "", `${evidence.layer || "unknown domain"}: ${evidence.summary}`)
+      );
       article.append(row);
     }
     if (item.remediation?.href) {
@@ -518,6 +528,9 @@ function refreshInspector() {
       ["Root cause", health?.rootCause || "No root cause reported"],
       ["All actionable causes", (health?.rootCauses || []).join(", ") || "No actionable causes reported"],
       ["Blocked by", health?.blockedBy || "No upstream block reported"],
+      ["Direct state", health?.directState || health?.state || "unknown"],
+      ["Affected domains", (health?.affectedDomains || []).join(", ") || "none"],
+      ["Downstream impact", (health?.downstreamImpact || []).join(", ") || "none"],
       ["Dependency", health?.dimensions?.dependency?.state || "unknown"],
       ["Workload", health?.dimensions?.workload?.state || "unknown"],
       ["Application health", health?.dimensions?.application?.state || "unknown"],

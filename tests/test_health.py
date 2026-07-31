@@ -54,6 +54,14 @@ class MultidimensionalProbe(FakeProbe):
         )
 
 
+class Availability:
+    def __init__(self, document):
+        self._document = document
+
+    def document(self):
+        return self._document
+
+
 def by_id(document):
     return {item["id"]: item for item in document["items"]}
 
@@ -81,6 +89,23 @@ class HealthEngineTests(unittest.TestCase):
         return HealthEngine(
             self.registry, self.probe, clock=lambda: NOW, **kwargs
         )
+
+    @staticmethod
+    def availability(
+        endpoint="ssc", state="reachable", tls="valid", checked_at=NOW
+    ):
+        return {
+            "items": [{
+                "id": endpoint,
+                "state": state,
+                "dns": "mismatch" if state == "dns-mismatch" else "resolved",
+                "tls": tls,
+                "http": "not-attempted" if state != "reachable" else "status-200",
+                "summary": "Sanitized operator route evidence",
+                "checkedAt": checked_at.isoformat().replace("+00:00", "Z"),
+                "latencyMs": 4,
+            }]
+        }
 
     def test_healthy_environment_has_layered_safe_evidence(self):
         document = self.engine().document()
@@ -162,7 +187,7 @@ class HealthEngineTests(unittest.TestCase):
         )
         items = by_id(self.engine().document())
         self.assertEqual(items["dns"]["state"], "stale")
-        self.assertEqual(items["ingress"]["state"], "blocked")
+        self.assertEqual(items["ingress"]["state"], "healthy")
 
     def test_warning_is_degraded_not_unhealthy(self):
         self.probe.states["mysql"] = ("degraded", "Query latency is elevated", NOW)
@@ -179,6 +204,94 @@ class HealthEngineTests(unittest.TestCase):
         self.assertEqual(second["storage"]["state"], "healthy")
         self.assertEqual(second["mysql"]["state"], "healthy")
         self.assertIn("mysql", self.probe.calls)
+
+    def test_public_dns_failure_degrades_only_external_domain(self):
+        document = HealthEngine(
+            self.registry,
+            self.probe,
+            clock=lambda: NOW,
+            availability=self.availability(state="dns-mismatch", tls="not-attempted"),
+        ).document()
+        Draft202012Validator(SCHEMA).validate(document)
+        items = by_id(document)
+        self.assertEqual(items["mysql"]["state"], "healthy")
+        self.assertEqual(items["mysql"]["domains"]["workload"]["state"], "healthy")
+        self.assertEqual(items["ssc"]["state"], "degraded")
+        self.assertEqual(items["ssc"]["directState"], "healthy")
+        self.assertEqual(
+            items["ssc"]["domains"]["externalReachability"]["state"],
+            "unreachable",
+        )
+        self.assertEqual(items["ssc"]["affectedDomains"], ["externalReachability"])
+        self.assertEqual(items["scancentral-sast"]["state"], "healthy")
+
+    def test_ingress_and_tls_access_failures_do_not_block_application_dependencies(self):
+        for state, tls in (("unreachable", "valid"), ("tls-warning", "warning")):
+            with self.subTest(state=state):
+                items = by_id(HealthEngine(
+                    self.registry,
+                    self.probe,
+                    clock=lambda: NOW,
+                    availability=self.availability(state=state, tls=tls),
+                ).document())
+                self.assertEqual(items["ssc"]["state"], "degraded")
+                self.assertEqual(items["ssc"]["directState"], "healthy")
+                self.assertEqual(items["scancentral-sast"]["state"], "healthy")
+
+    def test_ingress_infrastructure_failure_is_independent_from_components(self):
+        self.probe.states["ingress"] = ("unhealthy", "Ingress route failed", NOW)
+        items = by_id(self.engine().document())
+        self.assertEqual(items["ingress"]["state"], "degraded")
+        self.assertEqual(items["ingress"]["directState"], "healthy")
+        self.assertEqual(items["ssc"]["state"], "healthy")
+        self.assertEqual(items["mysql"]["state"], "healthy")
+
+    def test_database_failure_blocks_only_relevant_consumer_checks(self):
+        probe = MultidimensionalProbe()
+        probe.results[("mysql", "database-query")] = ProbeResult(
+            "unhealthy", "Authenticated query failed", NOW
+        )
+        items = by_id(HealthEngine(self.registry, probe, clock=lambda: NOW).document())
+        self.assertEqual(items["mysql"]["state"], "unhealthy")
+        self.assertIn("ssc", items["mysql"]["downstreamImpact"])
+        self.assertEqual(items["ssc"]["state"], "blocked")
+        self.assertEqual(items["ssc"]["domains"]["workload"]["state"], "healthy")
+        self.assertEqual(items["ssc"]["blockedBy"], "mysql")
+
+    def test_mixed_dependency_and_external_failures_have_deterministic_precedence(self):
+        probe = MultidimensionalProbe()
+        probe.results[("mysql", "database-query")] = ProbeResult(
+            "unhealthy", "Authenticated query failed", NOW
+        )
+        items = by_id(HealthEngine(
+            self.registry,
+            probe,
+            clock=lambda: NOW,
+            availability=self.availability(state="dns-mismatch", tls="not-attempted"),
+        ).document())
+        self.assertEqual(items["ssc"]["state"], "blocked")
+        self.assertEqual(items["ssc"]["directState"], "healthy")
+        self.assertEqual(items["ssc"]["rootCause"], "mysql/database-query")
+        self.assertIn("externalReachability", items["ssc"]["affectedDomains"])
+
+    def test_stale_external_evidence_degrades_then_recovers_without_affecting_workload(self):
+        stale = HealthEngine(
+            self.registry,
+            self.probe,
+            clock=lambda: NOW,
+            availability=self.availability(checked_at=NOW - timedelta(minutes=6)),
+        ).document()
+        ssc = by_id(stale)["ssc"]
+        self.assertEqual(ssc["state"], "degraded")
+        self.assertEqual(ssc["domains"]["externalReachability"]["state"], "stale")
+        self.assertEqual(ssc["domains"]["workload"]["state"], "healthy")
+        recovered = by_id(HealthEngine(
+            self.registry,
+            self.probe,
+            clock=lambda: NOW,
+            availability=self.availability(),
+        ).document())["ssc"]
+        self.assertEqual(recovered["state"], "healthy")
 
     def test_upstream_unknown_preserves_absent_and_not_ready_workloads(self):
         probe = MultidimensionalProbe()
@@ -252,6 +365,30 @@ class HealthEngineTests(unittest.TestCase):
         response = request(ManagerAPI(health_probe=self.probe))
         self.assertEqual(response["status"], "200 OK")
         Draft202012Validator(SCHEMA).validate(response["json"])
+
+    def test_health_api_composes_independent_availability_domains(self):
+        current = datetime.now(timezone.utc)
+        probe = FakeProbe()
+        probe.states = {
+            subject: ("healthy", "Authoritative check passed", current)
+            for subject in (
+                "microk8s-node", "storage", "dns", "ingress", "tls", "mysql",
+                "postgresql", "lim", "ssc", "scancentral-sast",
+                "scancentral-dast-core", "scancentral-dast-scanner",
+            )
+        }
+        response = request(ManagerAPI(
+            health_probe=probe,
+            availability_monitor=Availability(
+                self.availability(
+                    state="dns-mismatch", tls="not-attempted", checked_at=current
+                )
+            ),
+        ))
+        self.assertEqual(response["status"], "200 OK")
+        ssc = by_id(response["json"])["ssc"]
+        self.assertEqual(ssc["state"], "degraded")
+        self.assertEqual(ssc["directState"], "healthy")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,20 @@ _SENSITIVE = re.compile(
     r"authorization|cookie|bearer\s+\S+)"
 )
 
+_DIRECT_PRECEDENCE = (
+    "unhealthy", "misconfigured", "stopped", "unreachable", "unknown",
+    "stale", "starting", "degraded",
+)
+_DOMAIN_LAYERS = {
+    "infrastructure": ("infrastructure",),
+    "workload": ("workload",),
+    "persistence": ("storage",),
+    "internalService": ("internal-service", "dependency"),
+    "application": ("application", "functional"),
+    "ingressTls": ("ingress-tls",),
+    "externalReachability": ("external-reachability",),
+}
+
 
 @dataclass(frozen=True)
 class CheckSpec:
@@ -38,6 +52,7 @@ class CheckSpec:
     target: str
     timeout_seconds: float
     required: bool = True
+    dependencies: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,6 +111,7 @@ class HealthEngine:
         max_probe_timeout: float = 30.0,
         max_workers: int = 8,
         aggregate_timeout: float | None = None,
+        availability: dict | None = None,
     ) -> None:
         self._registry = registry
         self._probe = probe or UnavailableHealthProbe()
@@ -106,6 +122,7 @@ class HealthEngine:
         self._aggregate_timeout = (
             max_probe_timeout if aggregate_timeout is None else aggregate_timeout
         )
+        self._availability = availability or {}
 
     def document(self) -> dict:
         now = self._clock()
@@ -117,23 +134,14 @@ class HealthEngine:
         items: list[dict] = []
         results: dict[str, dict] = {}
         for subject in subjects:
-            failed_dependency = next(
-                (
-                    dependency
-                    for dependency in subject.dependencies
-                    if results[dependency]["state"] != "healthy"
-                ),
-                None,
-            )
-            blocked_root = None
-            if failed_dependency:
-                blocked_root = results[failed_dependency].get(
-                    "rootCause", failed_dependency
+            blocked_checks = {
+                check.id: tuple(
+                    dependency for dependency in check.dependencies
+                    if self._dependency_blocks(dependency, results)
                 )
-            runnable = tuple(
-                check for check in subject.checks
-                if not failed_dependency or check.layer == "workload"
-            )
+                for check in subject.checks
+            }
+            runnable = tuple(check for check in subject.checks if not blocked_checks[check.id])
             started = {check.id: time.monotonic() for check in runnable}
             futures = {
                 executor.submit(self._probe.probe, check): check
@@ -150,19 +158,29 @@ class HealthEngine:
                 )
                 for future, check in futures.items()
             ]
-            if failed_dependency:
-                evidence.append(self._dependency_evidence(failed_dependency, now))
-                evidence.extend(
-                    self._unavailable_evidence(check, failed_dependency, now)
-                    for check in subject.checks if check not in runnable
-                )
-            item = self._evaluate(
-                subject, now, evidence,
-                blocked_by=failed_dependency, blocked_root=blocked_root,
+            blocked_dependencies = tuple(dict.fromkeys(
+                dependency
+                for check in subject.checks
+                for dependency in blocked_checks[check.id]
+            ))
+            evidence.extend(
+                self._unavailable_evidence(check, blocked_checks[check.id], now)
+                for check in subject.checks if blocked_checks[check.id]
             )
+            evidence.extend(self._external_evidence(subject, now))
+            item = self._evaluate(subject, now, evidence, results, blocked_dependencies)
             results[subject.id] = item
             items.append(item)
         executor.shutdown(wait=False, cancel_futures=True)
+
+        for item in items:
+            item["downstreamImpact"] = sorted(
+                consumer["id"] for consumer in items
+                if any(
+                    item["id"] in entry.get("blockedBy", [])
+                    for entry in consumer["evidence"]
+                )
+            )
 
         aggregate = self._aggregate(items)
         return {
@@ -183,50 +201,164 @@ class HealthEngine:
         }
 
     def _evaluate(
-        self, subject: _Subject, now: datetime, evidence: list[dict],
-        *, blocked_by: str | None = None, blocked_root: str | None = None,
+        self,
+        subject: _Subject,
+        now: datetime,
+        evidence: list[dict],
+        results: dict[str, dict],
+        blocked_dependencies: tuple[str, ...],
     ) -> dict:
         required = [entry for entry in evidence if entry["required"]]
-        state = "healthy"
-        root: str | None = None
-        for candidate in (
-            "unhealthy", "misconfigured", "unreachable", "unknown", "stale",
-            "stopped", "starting", "degraded",
-        ):
-            match = next(
-                (entry for entry in required if entry["state"] == candidate), None
-            )
-            if match:
-                state = candidate
-                root = f"{subject.id}/{match['id']}"
-                break
-        if state == "healthy" and any(
-            entry["state"] != "healthy" for entry in evidence
-        ):
+        direct = [
+            entry for entry in required
+            if entry["layer"] not in {
+                "dependency", "ingress-tls", "external-reachability"
+            }
+            and not entry.get("derived", False)
+        ]
+        direct_state = self._rank_state(direct)
+        access = [
+            entry for entry in required
+            if entry["layer"] in {"ingress-tls", "external-reachability"}
+        ]
+        access_state = self._rank_state(access)
+        if direct_state != "healthy":
+            state = direct_state
+        elif blocked_dependencies:
+            state = "blocked"
+        elif access_state != "healthy":
             state = "degraded"
-            root = f"{subject.id}/" + next(
-                entry["id"] for entry in evidence if entry["state"] != "healthy"
-            )
+        elif any(entry["state"] != "healthy" for entry in evidence):
+            state = "degraded"
+        else:
+            state = "healthy"
+
         local_roots = [
             f"{subject.id}/{entry['id']}" for entry in required
-            if entry["layer"] != "dependency"
-            and (
-                entry["state"] in {"unhealthy", "misconfigured", "unreachable", "stale"}
-                or entry["layer"] == "workload" and entry["state"] == "degraded"
-                or not blocked_by and entry["state"] == "unknown"
-            )
+            if entry["state"] != "healthy" and not entry.get("derived", False)
         ]
-        roots = list(dict.fromkeys(([blocked_root] if blocked_root else []) + local_roots))
-        if blocked_by and not local_roots:
-            state = "blocked"
+        dependency_roots = [
+            results[dependency].get("rootCause", dependency)
+            for dependency in blocked_dependencies
+        ]
+        roots = list(dict.fromkeys(dependency_roots + local_roots))
         item = self._base(subject, state, evidence, now)
         if roots:
             item["rootCause"] = roots[0]
             item["rootCauses"] = roots
-        if blocked_by:
-            item["blockedBy"] = blocked_by
-        item["dimensions"] = self._dimensions(evidence, blocked_by)
+        if blocked_dependencies:
+            item["blockedBy"] = blocked_dependencies[0]
+        item["directState"] = direct_state
+        item["affectedDomains"] = [
+            name for name, domain in self._domains(evidence).items()
+            if domain["state"] not in {"healthy", "not-applicable"}
+        ]
+        item["domains"] = self._domains(evidence)
+        item["downstreamImpact"] = []
+        item["dimensions"] = self._dimensions(
+            evidence, blocked_dependencies[0] if blocked_dependencies else None
+        )
         return item
+
+    @staticmethod
+    def _rank_state(evidence: list[dict]) -> str:
+        states = {entry["state"] for entry in evidence}
+        for candidate in _DIRECT_PRECEDENCE:
+            if candidate in states:
+                return candidate
+        return "healthy"
+
+    @classmethod
+    def _domains(cls, evidence: list[dict]) -> dict[str, dict]:
+        domains = {}
+        for name, layers in _DOMAIN_LAYERS.items():
+            entries = [entry for entry in evidence if entry["layer"] in layers]
+            if not entries:
+                domains[name] = {
+                    "state": "not-applicable", "rootCause": None, "direct": True,
+                }
+                continue
+            state = cls._rank_state(entries)
+            failed = next((entry for entry in entries if entry["state"] != "healthy"), None)
+            domains[name] = {
+                "state": state,
+                "rootCause": failed["id"] if failed else None,
+                "direct": not any(entry.get("derived", False) for entry in entries),
+            }
+        return domains
+
+    @staticmethod
+    def _dependency_blocks(dependency: str, results: dict[str, dict]) -> bool:
+        item = results.get(dependency)
+        if item is None:
+            return True
+        domains = item.get("domains", {})
+        if dependency in {"microk8s-node", "storage", "dns", "ingress", "tls"}:
+            return item["state"] != "healthy"
+        relevant = (
+            domains.get("workload", {}).get("state"),
+            domains.get("persistence", {}).get("state"),
+            domains.get("internalService", {}).get("state"),
+            domains.get("application", {}).get("state"),
+        )
+        return any(state not in {"healthy", "not-applicable"} for state in relevant)
+
+    def _external_evidence(self, subject: _Subject, now: datetime) -> list[dict]:
+        item = next(
+            (
+                entry for entry in self._availability.get("items", [])
+                if entry.get("id") == subject.id
+            ),
+            None,
+        )
+        if item is None:
+            return []
+        external_state = {
+            "reachable": "healthy",
+            "degraded": "degraded",
+            "tls-warning": "degraded",
+            "dns-mismatch": "unreachable",
+            "unreachable": "unreachable",
+            "not-configured": "unknown",
+            "unknown": "unknown",
+        }.get(item.get("state"), "unknown")
+        tls_state = {
+            "valid": "healthy",
+            "warning": "degraded",
+            "failed": "unreachable",
+            "not-configured": "unknown",
+            "not-attempted": "unknown",
+        }.get(item.get("tls"), "unknown")
+        observed = item.get("checkedAt") or _timestamp(now)
+        try:
+            observed_time = datetime.fromisoformat(observed.replace("Z", "+00:00"))
+            if now - observed_time.astimezone(timezone.utc) > self._stale_after:
+                external_state = "stale"
+                tls_state = "stale"
+        except (AttributeError, TypeError, ValueError):
+            observed = _timestamp(now)
+            external_state = "unknown"
+            tls_state = "unknown"
+        evidence = [{
+                "id": "external-route",
+                "layer": "external-reachability",
+                "state": external_state,
+                "required": True,
+                "summary": _safe_summary(item.get("summary", "External route evidence unavailable")),
+                "observedAt": observed,
+                "latencyMs": max(0, int(item.get("latencyMs") or 0)),
+            }]
+        if item.get("tls") in {"valid", "warning", "failed"}:
+            evidence.append({
+                "id": "ingress-tls",
+                "layer": "ingress-tls",
+                "state": tls_state,
+                "required": True,
+                "summary": "TLS evidence is reported independently from application health",
+                "observedAt": observed,
+                "latencyMs": 0,
+            })
+        return evidence
 
     def _result(
         self,
@@ -283,30 +415,25 @@ class HealthEngine:
         return entry
 
     @staticmethod
-    def _dependency_evidence(dependency: str, now: datetime) -> dict:
-        return {
-                "id": "dependency",
-                "layer": "dependency",
-                "state": "blocked",
-                "required": True,
-                "summary": f"Blocked by dependency {dependency}",
-                "observedAt": _timestamp(now),
-                "latencyMs": 0,
-            }
-
-    @staticmethod
-    def _unavailable_evidence(check: CheckSpec, dependency: str, now: datetime) -> dict:
+    def _unavailable_evidence(
+        check: CheckSpec, dependencies: tuple[str, ...], now: datetime
+    ) -> dict:
         return {
             "id": check.id, "layer": check.layer, "state": "unknown",
             "required": check.required,
-            "summary": f"Probe unavailable while blocked by dependency {dependency}",
+            "summary": "Probe unavailable while a relevant dependency is unhealthy",
             "observedAt": _timestamp(now), "latencyMs": 0,
+            "derived": True,
+            "blockedBy": list(dependencies),
         }
 
     @staticmethod
     def _dimensions(evidence: list[dict], blocked_by: str | None) -> dict:
         workload = [entry for entry in evidence if entry["layer"] == "workload"]
-        application = [entry for entry in evidence if entry["layer"] in {"application", "functional"}]
+        application = [
+            entry for entry in evidence
+            if entry["layer"] in {"internal-service", "application", "functional"}
+        ]
         absent = any(entry.get("workload", {}).get("present") is False for entry in workload)
         mismatch = any(
             entry.get("workload", {}).get("present") is True
@@ -372,18 +499,10 @@ class HealthEngine:
 
     def _subjects(self) -> tuple[_Subject, ...]:
         infrastructure = _infrastructure_subjects()
-        component_dependencies = {
-            "mysql": ("storage", "dns", "tls"),
-            "postgresql": ("storage", "dns"),
-            "lim": ("dns", "ingress", "tls"),
-            "ssc": ("dns", "ingress", "tls"),
-            "scancentral-sast": ("dns", "ingress", "tls"),
-            "scancentral-dast-core": ("dns", "ingress", "tls"),
-            "scancentral-dast-scanner": ("dns",),
-        }
         components: list[_Subject] = []
         for component_id in self._registry.dependency_order():
             component = self._registry.component(component_id)
+            component_dependencies = tuple(component["dependencies"])
             checks = tuple(
                 CheckSpec(
                     id=check["id"],
@@ -393,14 +512,17 @@ class HealthEngine:
                     target=check["target"],
                     timeout_seconds=min(float(check["timeoutSeconds"]), 30.0),
                     required=check["required"],
+                    dependencies=_component_check_dependencies(
+                        _component_layer(check["type"]), component_dependencies
+                    ),
                 )
                 for check in component["health"]["checks"]
                 if check["required"]
             )
-            dependencies = (
-                component_dependencies.get(component_id, ())
-                + tuple(component["dependencies"])
-            )
+            dependencies = tuple(dict.fromkeys(
+                ("microk8s-node", "dns") + component_dependencies
+                + (("storage",) if any(check.layer == "storage" for check in checks) else ())
+            ))
             components.append(
                 _Subject(
                     component_id,
@@ -417,9 +539,9 @@ def _infrastructure_subjects() -> tuple[_Subject, ...]:
     definitions = (
         ("microk8s-node", "MicroK8s node", (), "infrastructure", "node-ready", "node"),
         ("storage", "Storage", ("microk8s-node",), "storage", "storage-ready", "default"),
-        ("dns", "Cluster DNS", ("microk8s-node",), "network", "dns-lookup", "kubernetes.default"),
-        ("ingress", "Ingress", ("dns",), "network", "ingress-ready", "ingress"),
-        ("tls", "TLS", ("ingress",), "network", "tls-valid", "managed-hosts"),
+        ("dns", "In-cluster DNS", ("microk8s-node",), "internal-service", "dns-lookup", "kubernetes.default"),
+        ("ingress", "Ingress routing", ("microk8s-node",), "ingress-tls", "ingress-ready", "ingress"),
+        ("tls", "TLS", ("ingress",), "ingress-tls", "tls-valid", "managed-hosts"),
     )
     return tuple(
         _Subject(
@@ -434,6 +556,7 @@ def _infrastructure_subjects() -> tuple[_Subject, ...]:
                     check_id,
                     target,
                     10.0,
+                    dependencies=dependencies,
                 ),
             ),
             f"/docs/health-checks.md#{subject_id}",
@@ -448,13 +571,25 @@ def _component_layer(probe_type: str) -> str:
         "persistent-volume": "storage",
         "native-readiness": "application",
         "database-query": "application",
-        "https": "application",
+        "https": "internal-service",
         "tcp": "functional",
         "application-ready": "application",
-        "dependency-connectivity": "dependency",
+        "dependency-connectivity": "internal-service",
         "configuration": "functional",
         "registration": "functional",
     }[probe_type]
+
+
+def _component_check_dependencies(
+    layer: str, component_dependencies: tuple[str, ...]
+) -> tuple[str, ...]:
+    if layer == "workload":
+        return ("microk8s-node",)
+    if layer == "storage":
+        return ("microk8s-node", "storage")
+    return tuple(dict.fromkeys(
+        ("microk8s-node", "dns") + component_dependencies
+    ))
 
 
 def _safe_summary(value: str) -> str:

@@ -38,6 +38,25 @@
           "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
           "displayName": {"type": "string", "minLength": 1, "maxLength": 128},
           "state": {"$ref": "#/$defs/state"},
+          "directState": {"$ref": "#/$defs/state"},
+          "affectedDomains": {
+            "type": "array", "uniqueItems": true,
+            "items": {"enum": ["infrastructure", "workload", "persistence", "internalService", "application", "ingressTls", "externalReachability"]}
+          },
+          "downstreamImpact": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+          "domains": {
+            "type": "object", "additionalProperties": false,
+            "required": ["infrastructure", "workload", "persistence", "internalService", "application", "ingressTls", "externalReachability"],
+            "properties": {
+              "infrastructure": {"$ref": "#/$defs/domain"},
+              "workload": {"$ref": "#/$defs/domain"},
+              "persistence": {"$ref": "#/$defs/domain"},
+              "internalService": {"$ref": "#/$defs/domain"},
+              "application": {"$ref": "#/$defs/domain"},
+              "ingressTls": {"$ref": "#/$defs/domain"},
+              "externalReachability": {"$ref": "#/$defs/domain"}
+            }
+          },
           "dependencies": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
           "checkedAt": {"type": "string", "format": "date-time"},
           "blockedBy": {"type": "string"},
@@ -74,12 +93,14 @@
               "required": ["id", "layer", "state", "required", "summary", "observedAt", "latencyMs"],
               "properties": {
                 "id": {"type": "string"},
-                "layer": {"enum": ["infrastructure", "storage", "workload", "network", "dependency", "application", "functional"]},
+                "layer": {"enum": ["infrastructure", "storage", "workload", "network", "dependency", "internal-service", "application", "functional", "ingress-tls", "external-reachability"]},
                 "state": {"$ref": "#/$defs/state"},
                 "required": {"type": "boolean"},
                 "summary": {"type": "string", "minLength": 1, "maxLength": 256},
                 "observedAt": {"type": "string", "format": "date-time"},
                 "latencyMs": {"type": "integer", "minimum": 0},
+                "derived": {"type": "boolean"},
+                "blockedBy": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
                 "workload": {
                   "type": "object", "additionalProperties": false,
                   "required": ["present", "desiredReplicas", "readyReplicas"],
@@ -106,6 +127,15 @@
     }
   },
   "$defs": {
-    "state": {"enum": ["healthy", "starting", "degraded", "blocked", "misconfigured", "stopped", "unreachable", "unhealthy", "unknown", "stale"]}
+    "state": {"enum": ["healthy", "starting", "degraded", "blocked", "misconfigured", "stopped", "unreachable", "unhealthy", "unknown", "stale"]},
+    "domain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "rootCause", "direct"],
+      "properties": {
+        "state": {"anyOf": [{"$ref": "#/$defs/state"}, {"const": "not-applicable"}]},
+        "rootCause": {"type": ["string", "null"]},
+        "direct": {"type": "boolean"}
+      }
+    }
   }
 }
