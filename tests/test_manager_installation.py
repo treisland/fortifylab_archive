@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -22,6 +23,104 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ManagerInstallationTests(unittest.TestCase):
+    def test_manifest_stages_complete_runtime_with_policy_modes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory) / "candidate"
+            subprocess.run(
+                [
+                    "python3",
+                    "scripts/package-manager-runtime.py",
+                    "stage",
+                    "--source",
+                    str(ROOT),
+                    "--target",
+                    str(candidate),
+                ],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertTrue((candidate / "apps/mysql/start.sh").is_file())
+            self.assertTrue((candidate / "manager/web/assets/dashboard.js").is_file())
+            self.assertTrue((candidate / "registry/schemas/component.schema.json").is_file())
+            self.assertTrue((candidate / "packaging/microk8s/manager-ingress.yaml.in").is_file())
+            self.assertEqual(
+                oct((candidate / "apps/mysql/start.sh").stat().st_mode & 0o777),
+                "0o755",
+            )
+            self.assertEqual(
+                oct((candidate / "manager/server.py").stat().st_mode & 0o777),
+                "0o644",
+            )
+            self.assertEqual(
+                oct((candidate / "bin/fortify-manager-server").stat().st_mode & 0o777),
+                "0o755",
+            )
+            manifest = json.loads(
+                (ROOT / "packaging/manager-runtime.json").read_text(encoding="utf-8")
+            )
+            source_files = {
+                str(path.relative_to(ROOT))
+                for directory in manifest["directories"]
+                for path in (ROOT / directory).rglob("*")
+                if path.is_file()
+            }
+            source_files.update(manifest["files"])
+            expected = (
+                source_files
+                | set(manifest["launchers"])
+                | {"packaging/runtime-files.json"}
+            )
+            packaged = {
+                str(path.relative_to(candidate))
+                for path in candidate.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(packaged, expected)
+
+    def test_staged_validation_rejects_omitted_runtime_classes(self):
+        omissions = (
+            "apps/mysql/start.sh",
+            "registry/schemas/component.schema.json",
+            "manager/web/assets/dashboard.js",
+            "packaging/microk8s/manager-ingress.yaml.in",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            candidate = base / "candidate"
+            subprocess.run(
+                [
+                    "python3",
+                    "scripts/package-manager-runtime.py",
+                    "stage",
+                    "--source",
+                    str(ROOT),
+                    "--target",
+                    str(candidate),
+                ],
+                cwd=ROOT,
+                check=True,
+            )
+            for index, omission in enumerate(omissions):
+                broken = base / f"broken-{index}"
+                shutil.copytree(candidate, broken)
+                (broken / omission).unlink()
+                result = subprocess.run(
+                    [
+                        "python3",
+                        "scripts/package-manager-runtime.py",
+                        "validate",
+                        "--target",
+                        str(broken),
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(result.returncode, 0, omission)
+                self.assertIn("differ from the packaging inventory", result.stderr)
+
     def test_rendered_ingress_has_host_tls_and_backend_symmetry(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "ingress.yaml"
@@ -206,6 +305,11 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertIn("FORTIFY_MANAGER_TLS_SECRET", script)
         self.assertIn("for _ in {1..15}", script)
         self.assertIn("prior manager release could not be restarted", script)
+        self.assertLess(
+            script.index("prepare_runtime_candidate", script.index("upgrade)")),
+            script.index('systemctl stop "$SERVICE_NAME"', script.index("upgrade)")),
+        )
+        self.assertNotIn('find "$release" -type f -exec chmod', script)
         self.assertIn("fortify-manager-cli", script)
         self.assertNotIn("create-certs.sh", script)
 

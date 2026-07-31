@@ -80,6 +80,23 @@ are deliberately invalidated by a manager restart, so users sign in again.
 Re-running `install` does not overwrite external configuration, accounts, or
 history.
 
+### Verified runtime packaging
+
+Installation is assembled beneath `releases/.candidate-*` from the explicit
+[`manager-runtime.json`](../../packaging/manager-runtime.json) manifest. The
+manifest closes over Manager imports, contracts, lifecycle adapters, registry
+schemas, platform profiles and evidence, Web UI assets, MicroK8s templates,
+the systemd unit, and the default external configuration template. The staged
+candidate records its exact file inventory and is rejected if any file is
+missing, is a symlink or special file, escapes the candidate root, or has a
+mode outside the packaging policy.
+
+Directories, lifecycle shell adapters, and generated Manager launchers use
+mode `0755`; ordinary code, schemas, profiles, assets, and templates use mode
+`0644`. The authoritative component registry is loaded from the staged root
+before its release symlink can become active, so every declared adapter must
+resolve to a regular file inside that root.
+
 `install-cluster-access` applies the dedicated observer ServiceAccount and
 least-privilege RBAC, then copies only that identity's token and cluster CA
 into `/var/lib/fortify-lab-manager/cluster-access` with mode `0600`. The
@@ -155,8 +172,10 @@ the [component-aware backup and restore workflow](backup-restore.md). Its
 profile gate and application verification are distinct from the
 manager-only safety copy described below.
 
-The supported upgrade stops the writer and creates a timestamped, mode-0600
-SQLite online backup plus copies of the verifier/configuration files below
+The supported upgrade first stages and validates the complete runtime while
+the current Manager remains active. Only a valid candidate permits the writer
+to stop. The upgrade then creates a timestamped, mode-0600 SQLite online backup
+plus copies of the verifier/configuration files below
 `/var/lib/fortify-lab-manager/backups`. It then installs the immutable
 release, runs forward migrations at startup, and restarts:
 
@@ -169,6 +188,8 @@ Copy that backup to separate protected storage before a high-risk upgrade.
 If backup or installation fails, the command retains any completed backup and
 attempts to restart the previously active release. Diagnose that service
 before retrying; the command never deletes a failed-upgrade backup.
+An incomplete candidate fails before the stop or backup boundary and leaves
+the active service and release symlink unchanged.
 Program rollback means repointing `/opt/fortify-lab-manager/current` to the
 prior release and restarting. Database rollback is **not** implied. If an
 upgrade advanced the schema, stop the service and restore the matching
@@ -194,7 +215,8 @@ Back up first. Deleted accounts and history are unrecoverable without it.
 
 `./scripts/validate-repository.sh` and
 `tests/test_manager_installation.py` provide rendered/static evidence only:
-listener policy, systemd hardening, private backend addressing, and ingress
+runtime closure and mode policy, staged registry validation, listener policy,
+systemd hardening, private backend addressing, and ingress
 host/TLS/service-port symmetry.
 
 Completion on EC2 additionally requires separately recorded live evidence
