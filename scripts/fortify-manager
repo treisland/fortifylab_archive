@@ -123,9 +123,25 @@ render_ingress() {
     printf 'Rendered manager ingress at %s\n' "$output"
 }
 
+remove_obsolete_backend() {
+    case "$1" in
+        endpointslice)
+            microk8s kubectl -n fortify delete endpoints fortify-manager-host \
+                --ignore-not-found >/dev/null ||
+                fail "EndpointSlice is active, but the obsolete Endpoints backend could not be removed"
+            ;;
+        legacy)
+            microk8s kubectl -n fortify delete endpointslice fortify-manager-host \
+                --ignore-not-found >/dev/null ||
+                fail "legacy Endpoints is active, but the obsolete EndpointSlice backend could not be removed"
+            ;;
+        *) fail "endpoint API must be endpointslice or legacy" ;;
+    esac
+}
+
 configure_route() {
     require_root
-    local domain="$1" address="$2" port="${3:-8080}" config_candidate manifest_candidate endpoint_resources
+    local domain="$1" address="$2" port="${3:-8080}" config_candidate manifest_candidate endpoint_api endpoint_resources
     [ -f "$CONFIG_ROOT/manager.toml" ] ||
         fail "install the manager before configuring ingress"
     validate_domain "$domain"
@@ -141,17 +157,20 @@ configure_route() {
     endpoint_resources="$(microk8s kubectl api-resources --api-group=discovery.k8s.io -o name 2>/dev/null)" ||
         fail "Kubernetes API discovery failed; existing configuration was preserved"
     if grep -qx endpointslices.discovery.k8s.io <<<"$endpoint_resources"; then
-        FORTIFY_MANAGER_ENDPOINT_API=endpointslice \
+        endpoint_api=endpointslice
+        FORTIFY_MANAGER_ENDPOINT_API="$endpoint_api" \
             render_ingress "$domain" "$address" "$port" "$manifest_candidate"
     else
+        endpoint_api=legacy
         printf 'WARNING: EndpointSlice v1 is unavailable; using the documented legacy Endpoints compatibility path.\n' >&2
-        FORTIFY_MANAGER_ENDPOINT_API=legacy \
+        FORTIFY_MANAGER_ENDPOINT_API="$endpoint_api" \
             render_ingress "$domain" "$address" "$port" "$manifest_candidate"
     fi
     microk8s kubectl apply --dry-run=server -f "$manifest_candidate" >/dev/null ||
         fail "manager ingress configuration was rejected; existing configuration was preserved"
     microk8s kubectl apply -f "$manifest_candidate" ||
         fail "manager ingress could not be applied; existing configuration was preserved"
+    remove_obsolete_backend "$endpoint_api"
     chown root:fortify-manager "$config_candidate"
     chmod 640 "$config_candidate"
     mv -f "$config_candidate" "$CONFIG_ROOT/manager.toml"
@@ -1072,6 +1091,7 @@ case "$command" in
         systemctl disable --now "$PROBE_SERVICE_NAME" 2>/dev/null || true
         microk8s kubectl -n fortify delete ingress fortify-manager \
             service fortify-manager-host endpoints fortify-manager-host \
+            endpointslice fortify-manager-host \
             --ignore-not-found
         rm -f "$UNIT_PATH"
         rm -f "$PROBE_UNIT_PATH"

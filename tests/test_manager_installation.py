@@ -457,6 +457,40 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(documents[1]["kind"], "Endpoints")
 
+    def test_backend_transition_removes_only_the_obsolete_named_resource(self):
+        command = r'''
+export FORTIFY_MANAGER_LIBRARY_ONLY=1
+source scripts/fortify-manager
+microk8s() { printf '%s\n' "$*" >>"$CALL_LOG"; }
+remove_obsolete_backend "$ENDPOINT_API"
+'''
+        for endpoint_api, obsolete in (
+            ("endpointslice", "delete endpoints fortify-manager-host"),
+            ("legacy", "delete endpointslice fortify-manager-host"),
+        ):
+            with self.subTest(endpoint_api=endpoint_api):
+                with tempfile.TemporaryDirectory() as directory:
+                    call_log = Path(directory) / "calls"
+                    result = subprocess.run(
+                        ["bash", "-c", command], cwd=ROOT,
+                        env=os.environ | {
+                            "ENDPOINT_API": endpoint_api,
+                            "CALL_LOG": str(call_log),
+                        }, capture_output=True, text=True,
+                    )
+                    calls = call_log.read_text()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(obsolete, calls)
+                self.assertIn("--ignore-not-found", calls)
+
+    def test_uninstall_removes_both_backend_api_variants(self):
+        script = (ROOT / "scripts/fortify-manager").read_text()
+        self.assertIn(
+            "service fortify-manager-host endpoints fortify-manager-host \\\n"
+            "            endpointslice fortify-manager-host",
+            script,
+        )
+
     def run_route_diagnostic(self, dns_address="10.0.0.10", external_code="200"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
