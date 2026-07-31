@@ -188,6 +188,23 @@ class DashboardTests(unittest.TestCase):
         ):
             self.assertIn(marker, sources)
 
+    def test_curated_availability_is_independent_and_links_are_hardened(self):
+        sources = "".join(
+            path.read_text(encoding="utf-8")
+            for path in (WEB / "index.html", WEB / "assets/dashboard.js")
+        )
+        for marker in (
+            "/api/v1alpha1/availability",
+            "Open service",
+            "independent from health",
+            "Manager host",
+            "tls-warning",
+            "dns-mismatch",
+            "not-configured",
+            "noopener noreferrer",
+        ):
+            self.assertIn(marker, sources)
+
     def test_browser_partial_503_retains_successful_panels_and_sanitizes_errors(self):
         script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
         self.assertIn("await Promise.all(requests)", script)

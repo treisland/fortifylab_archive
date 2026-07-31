@@ -27,6 +27,8 @@ Each component declares:
 
 - desired chart and image versions checked against the selected platform profile;
 - stable dependencies and Kubernetes workloads;
+- explicit Web intent through `web.hostLabel`, or `web: null` for components
+  that must not expose a browser action;
 - bounded lifecycle operations, adapter paths, disruption and destruction;
 - Kubernetes Secret references and classifications, never values;
 - persistent claims and whether an ordinary uninstall retains them;
@@ -39,6 +41,12 @@ All runtime consumers load the validated document through
 dependency ordering. Monitoring consumers use
 `ComponentRegistry.monitoring_checks()`. Both methods return data from the
 same loaded component definition; runtime observations remain separate.
+
+The `web` field is a security boundary, not a URL template. It contains only
+the expected first DNS label. The Manager combines it with observed ingress
+metadata only after the fixed `lab` ingress establishes the common domain.
+Arbitrary API input, raw ingress URLs, non-TLS routes, foreign domains, and
+undeclared host labels cannot become quick links or probe targets.
 
 An operation's `verify` list identifies the post-operation checks a future
 executor must evaluate. Checks with `required: false` describe stopped or

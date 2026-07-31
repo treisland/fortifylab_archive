@@ -111,6 +111,15 @@ version, chart and image versions, declared HTTPS endpoint identifiers,
 storage purpose/retention, supported typed operations, and recent sanitized
 history.
 
+Registry-approved Web components also show **Open service** and independent
+Manager-host availability evidence. SSC, ScanCentral SAST, LIM, ScanCentral
+DAST Core, and the Manager route are eligible when their approved TLS ingress
+is observed. MySQL, PostgreSQL, and DAST Scanner never show browser actions.
+The quick-link panel distinguishes reachable, degraded, TLS warning, DNS
+mismatch, unreachable, not configured, and unknown. A login response is
+reachable but is not application-health evidence. Manager-host reachability
+does not prove operator, VPN, browser, or AWS network reachability.
+
 Color is never the only health cue: every badge includes visible state text.
 The page provides landmarks, a skip link, labelled controls, table headers,
 alert/status live regions, keyboard focus styles, responsive layouts, and

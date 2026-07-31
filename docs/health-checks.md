@@ -60,6 +60,25 @@ root-cause fields, and a safe documentation link.
 `unavailable` means no adapter was configured. Repository tests and rendered
 configuration are static validation and are never live-cluster evidence.
 
+## Service availability is separate
+
+The dashboard's curated quick links use
+`GET /api/v1alpha1/availability`, not this application-health aggregate. That
+bounded Manager-host probe reports DNS resolution, observed-ingress address
+mismatch, TLS validation, HTTP reachability, latency, evidence time, and a
+small recovery history. A successful login page, `401`, or `403` is
+`reachable`; it does not show that initialization, databases, dependencies,
+licenses, worker registration, or authenticated functions are healthy.
+
+`tls-warning` means certificate validation failed without returning
+certificate contents. `dns-mismatch` means resolved addresses do not intersect
+the IP addresses reported by ingress metadata when those addresses are
+available. `unreachable` covers DNS or connection failure, while
+`not-configured` means no approved TLS ingress was observed. The Manager does
+not follow redirects and reports redirects or HTTP 5xx responses as
+`degraded`. See [the API reference](api.md#curated-service-availability) for
+the polling and SSRF boundary.
+
 ## Functional probe contract
 
 One newline-delimited JSON request is sent per check. `type`, `target`, and

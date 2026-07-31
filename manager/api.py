@@ -7,6 +7,7 @@ from http import HTTPStatus
 from typing import Any, Callable, Iterable, Protocol
 
 from manager.component_inventory import ClusterObserver, ComponentInventory
+from manager.availability import AvailabilityMonitor
 from manager.component_registry import ComponentRegistry, RegistryError
 from manager.health import HealthEngine, HealthProbe
 from manager.preflight import PreflightEngine, PreflightProbe
@@ -17,6 +18,7 @@ HEALTH_PATH = "/api/v1alpha1/health"
 PREFLIGHT_PATH = "/api/v1alpha1/preflight"
 HISTORY_PATH = "/api/v1alpha1/history"
 PROFILE_PATH = "/api/v1alpha1/platform-profile"
+AVAILABILITY_PATH = "/api/v1alpha1/availability"
 
 
 class HistoryReader(Protocol):
@@ -41,17 +43,26 @@ class ManagerAPI:
         health_probe: HealthProbe | None = None,
         preflight_probe: PreflightProbe | None = None,
         history_reader: HistoryReader | None = None,
+        availability_monitor: AvailabilityMonitor | None = None,
     ) -> None:
         self._registry_loader = registry_loader
         self._observer = observer
         self._health_probe = health_probe
         self._preflight_probe = preflight_probe
         self._history_reader = history_reader or EmptyHistoryReader()
+        self._availability_monitor = availability_monitor
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "")
-        if path not in {COMPONENTS_PATH, HEALTH_PATH, PREFLIGHT_PATH, HISTORY_PATH, PROFILE_PATH}:
+        if path not in {
+            COMPONENTS_PATH,
+            HEALTH_PATH,
+            PREFLIGHT_PATH,
+            HISTORY_PATH,
+            PROFILE_PATH,
+            AVAILABILITY_PATH,
+        }:
             return self._response(
                 start_response,
                 HTTPStatus.NOT_FOUND,
@@ -73,9 +84,13 @@ class ManagerAPI:
                     "kind": "OperationHistory",
                     "items": self._history_reader.recent(20),
                 }
+            elif path == AVAILABILITY_PATH and self._availability_monitor is not None:
+                document = self._availability_monitor.document()
             else:
                 registry = self._registry_loader()
-            if path == HEALTH_PATH:
+            if path == AVAILABILITY_PATH and self._availability_monitor is None:
+                document = AvailabilityMonitor(registry).document()
+            elif path == HEALTH_PATH:
                 document = HealthEngine(registry, self._health_probe).document()
             elif path == PREFLIGHT_PATH:
                 document = PreflightEngine(registry, self._preflight_probe).document()
@@ -96,6 +111,8 @@ class ManagerAPI:
                     "message": (
                         "operation history is unavailable"
                         if path == HISTORY_PATH
+                        else "service availability is unavailable"
+                        if path == AVAILABILITY_PATH
                         else "health read model is unavailable"
                         if path == HEALTH_PATH
                         else (

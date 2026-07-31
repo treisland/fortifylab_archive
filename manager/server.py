@@ -14,6 +14,7 @@ from socketserver import ThreadingMixIn
 from wsgiref.simple_server import WSGIServer, make_server
 
 from manager.api import ManagerAPI
+from manager.availability import AvailabilityMonitor
 from manager.capabilities import CapabilityProvider
 from manager.dashboard import DashboardApp
 from manager.history import StoreHistoryReader
@@ -201,6 +202,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         health_probe=observer,
         preflight_probe=observer,
         history_reader=StoreHistoryReader(store, operation_store),
+        availability_monitor=AvailabilityMonitor(registry, observer),
     )
     observation_state = (
         lambda: ComponentInventory(registry, observer).document()
