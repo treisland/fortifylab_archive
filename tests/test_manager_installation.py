@@ -333,6 +333,71 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertEqual(role["metadata"]["namespace"], "fortify")
         self.assertEqual(role_binding["metadata"]["namespace"], "fortify")
 
+    def test_cluster_access_activation_is_verified_and_fail_closed(self):
+        script = (ROOT / "scripts/fortify-manager").read_text()
+        activation = script[script.index("install_cluster_access() {"):]
+        for fragment in (
+            "--approve-enable-rbac",
+            "--approve-restart",
+            "restart-required",
+            "effective API-server authorization is ambiguous",
+            "get secrets -n fortify",
+            "get pods --subresource=log -n fortify",
+            "get services -n default",
+            "get --non-resource-url=/version",
+            "list nodes",
+            "list storageclasses.storage.k8s.io",
+        ):
+            self.assertIn(fragment, script)
+        self.assertLess(
+            activation.index('mv -f "$CLUSTER_ACCESS_ROOT/token"'),
+            activation.index("microk8s enable rbac"),
+        )
+        self.assertLess(
+            activation.index("verify_observer_authorization"),
+            activation.index('mv -f "$token_candidate" "$CLUSTER_ACCESS_ROOT/token"'),
+        )
+        self.assertNotIn("kubectl get secret", activation.split("verify_observer_authorization")[0])
+
+    def test_rbac_preflight_distinguishes_desired_and_restart_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            temporary = Path(directory)
+            arguments = temporary / "kube-apiserver"
+            fake_id = temporary / "id"
+            fake_id.write_text("#!/usr/bin/env bash\nprintf '0\\n'\n")
+            fake_id.chmod(0o755)
+            environment = os.environ | {
+                "PATH": f"{temporary}:{os.environ['PATH']}",
+                "FORTIFY_MANAGER_APISERVER_ARGS": str(arguments),
+                "FORTIFY_MANAGER_APISERVER_PID": str(os.getpid()),
+            }
+
+            arguments.write_text("--authorization-mode=AlwaysAllow\n")
+            permissive = subprocess.run(
+                ["bash", "scripts/fortify-manager", "rbac-preflight"],
+                cwd=ROOT, env=environment, capture_output=True, text=True,
+            )
+            self.assertEqual(permissive.returncode, 2)
+            self.assertIn("desired=permissive", permissive.stdout)
+
+            arguments.write_text("--authorization-mode=Node,RBAC\n")
+            os.utime(arguments, (1, 1))
+            candidate = subprocess.run(
+                ["bash", "scripts/fortify-manager", "rbac-preflight"],
+                cwd=ROOT, env=environment, capture_output=True, text=True,
+            )
+            self.assertEqual(candidate.returncode, 0)
+            self.assertIn("effective=verification-required", candidate.stdout)
+
+            future = int(datetime.now(tz=timezone.utc).timestamp()) + 60
+            os.utime(arguments, (future, future))
+            restart = subprocess.run(
+                ["bash", "scripts/fortify-manager", "rbac-preflight"],
+                cwd=ROOT, env=environment, capture_output=True, text=True,
+            )
+            self.assertEqual(restart.returncode, 3)
+            self.assertIn("action=restart-required", restart.stdout)
+
     def test_lifecycle_rbac_is_namespace_scoped_and_cannot_read_secrets(self):
         documents = list(yaml.safe_load_all(
             (ROOT / "packaging/microk8s/manager-lifecycle-rbac.yaml").read_text()

@@ -34,6 +34,7 @@ Run from a trusted repository checkout on the MicroK8s host:
 
 ```bash
 sudo ./scripts/fortify-manager install
+sudo ./scripts/fortify-manager rbac-preflight
 sudo ./scripts/fortify-manager install-cluster-access
 sudo ./scripts/fortify-manager bootstrap-account operator
 sudo ./scripts/fortify-manager configure fortifydemo.com <private-node-ip> 8080
@@ -97,8 +98,17 @@ mode `0755`; ordinary code, schemas, profiles, assets, and templates use mode
 before its release symlink can become active, so every declared adapter must
 resolve to a regular file inside that root.
 
-`install-cluster-access` applies the dedicated observer ServiceAccount and
-least-privilege RBAC, then copies only that identity's token and cluster CA
+`rbac-preflight` is read-only. It compares the desired authorization mode in
+the MicroK8s API-server arguments with the running control-plane process. It
+reports `restart-required` when the arguments were changed after that process
+started. An unreadable arguments file, missing process evidence, or any other
+ambiguous state is rejected.
+
+`install-cluster-access` first disconnects any active Manager observer
+credential. It then applies the dedicated observer ServiceAccount and
+least-privilege RBAC, proves the complete allow-list, and proves denial of
+Secrets, pod logs, and Services outside `fortify`. Only after every check
+passes does it atomically activate that identity's token and cluster CA
 into `/var/lib/fortify-lab-manager/cluster-access` with mode `0600`. The
 runtime reads Kubernetes metadata over HTTPS and never invokes `kubectl`.
 Its namespace Role can get/list only Services, PVCs, Deployments,
@@ -107,6 +117,46 @@ and StorageClasses and read `/version`; it cannot enumerate namespaces.
 Neither role grants Secrets, pod logs, exec, mutation, or workload access in
 another namespace. Re-running the command refreshes only the observer
 credential and CA; it does not read application Secrets.
+
+Enabling RBAC and restarting MicroK8s are separate disruptive decisions.
+Neither occurs implicitly. If preflight reports `enable-rbac`, review the
+impact and run:
+
+```bash
+sudo ./scripts/fortify-manager install-cluster-access --approve-enable-rbac
+```
+
+The addon can update the API-server arguments and still return a failure (for
+example, when an unrelated callback-token file is absent). The workflow
+rechecks state after the addon command. If it reports that RBAC is configured
+but not effective, inspect the arguments and explicitly approve the required
+control-plane restart:
+
+```bash
+sudo ./scripts/fortify-manager install-cluster-access --approve-restart
+```
+
+When both actions are known to be required they may be approved together.
+A failed enable, restart, or permission check leaves the Manager disconnected;
+it does not modify Fortify workloads or persistent data. Do not start the
+Manager until activation succeeds.
+
+### RBAC recovery and rollback
+
+Before enabling RBAC, save the existing
+`/var/snap/microk8s/current/args/kube-apiserver` file with root-only
+permissions. If the control plane cannot recover, restore that exact file,
+then explicitly stop and start MicroK8s. Confirm that `microk8s status` and
+`microk8s kubectl get nodes` succeed. The Manager must remain disconnected
+while authorization is permissive or uncertain.
+
+To retry the secure path, run `rbac-preflight`, repeat
+`install-cluster-access` with only the approval it requests, and then run
+`diagnose`. Do not restore `token.disconnected` manually: it represents an
+identity whose effective authorization has not been proven. The workflow
+reapplies only the dedicated ServiceAccount, namespace Role/binding, and
+discovery ClusterRole/binding; it never rolls back or edits component
+workloads, application Secrets, PVCs, or databases.
 
 MicroK8s clusters upgraded from older releases can retain a trusted cluster CA
 without the RFC 5280 `keyUsage` extension. The Manager accepts that documented

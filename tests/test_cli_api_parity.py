@@ -134,6 +134,10 @@ class CLIAPIParityTests(unittest.TestCase):
         self.client.login("operator", "password")
 
     def tearDown(self):
+        self.assertTrue(
+            self.engine.wait_for_idle(2),
+            "background operation did not finish its final durable save",
+        )
         self.operations.close()
         self.approvals.close()
         self.temp.cleanup()

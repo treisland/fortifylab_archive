@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a fail-closed MicroK8s RBAC preflight and observer activation workflow
+  with explicit enable/restart approval, partial-addon detection, mandatory
+  positive and negative authorization checks, and documented rollback.
 - Package the Manager from an explicit, policy-mode runtime manifest; validate
   its complete staged registry and file inventory before upgrade stops the
   active service.
