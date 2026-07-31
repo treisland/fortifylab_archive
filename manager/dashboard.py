@@ -14,11 +14,13 @@ from pathlib import Path
 from typing import Callable, Iterable, Mapping, Protocol
 
 from manager.api import ManagerAPI
+from manager.capabilities import CapabilityProvider
 
 
 ASSET_ROOT = Path(__file__).with_name("web")
 SESSION_PATH = "/api/v1alpha1/session"
 READINESS_PATH = "/ready"
+CAPABILITIES_PATH = "/api/v1alpha1/capabilities"
 COOKIE_NAME = "fortifylab_session"
 MAX_LOGIN_BODY = 4096
 
@@ -144,6 +146,7 @@ class DashboardApp:
         sessions: SessionStore | None = None,
         login_limiter: LoginLimiter | None = None,
         operation_api: AuthenticatedAPI | None = None,
+        capability_provider: CapabilityProvider | None = None,
         secure_cookies: bool = False,
     ) -> None:
         self._accounts = dict(accounts)
@@ -151,6 +154,7 @@ class DashboardApp:
         self._sessions = sessions or SessionStore()
         self._login_limiter = login_limiter or LoginLimiter()
         self._operation_api = operation_api
+        self._capability_provider = capability_provider or CapabilityProvider()
         self._secure_cookies = secure_cookies
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
@@ -167,6 +171,21 @@ class DashboardApp:
                     start_response,
                     HTTPStatus.UNAUTHORIZED,
                     {"code": "AUTHENTICATION_REQUIRED", "message": "authentication required"},
+                    method,
+                )
+            if path == CAPABILITIES_PATH:
+                if method not in {"GET", "HEAD"}:
+                    return self._json(
+                        start_response,
+                        HTTPStatus.METHOD_NOT_ALLOWED,
+                        {"code": "METHOD_NOT_ALLOWED", "message": "method not allowed"},
+                        method,
+                        (("Allow", "GET, HEAD"),),
+                    )
+                return self._json(
+                    self._security_headers(start_response),
+                    HTTPStatus.OK,
+                    self._capability_provider.document(identity),
                     method,
                 )
             if (

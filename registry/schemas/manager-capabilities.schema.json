@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/registry/schemas/manager-capabilities.schema.json",
+  "title": "Effective Manager capabilities",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "contractVersion", "generatedAt", "expiresAt", "refreshAfterSeconds", "capabilities"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/v1alpha1"},
+    "kind": {"const": "ManagerCapabilities"},
+    "contractVersion": {"const": "1.0"},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "expiresAt": {"type": "string", "format": "date-time"},
+    "refreshAfterSeconds": {"type": "integer", "minimum": 5, "maximum": 300},
+    "capabilities": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "state", "canInspect", "canMutate", "code", "prerequisites", "remediation"],
+        "properties": {
+          "id": {
+            "enum": ["observation", "functional-health", "lifecycle-execution", "approvals", "backup-restore", "upgrades", "secret-workflows", "notifications"]
+          },
+          "state": {
+            "enum": ["available", "disabled", "not-configured", "unauthorized", "degraded", "temporarily-unavailable"]
+          },
+          "canInspect": {"type": "boolean"},
+          "canMutate": {"type": "boolean"},
+          "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
+          "prerequisites": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"}
+          },
+          "remediation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "href"],
+            "properties": {
+              "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
+              "href": {"type": "string", "pattern": "^/docs/(operations/)?[a-z0-9-]+\\.md$"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

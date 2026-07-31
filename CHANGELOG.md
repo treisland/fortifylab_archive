@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a versioned, expiring effective Manager capability API covering
+  observation, functional health, lifecycle, approvals, recovery, upgrades,
+  secret workflows, and notifications; make all Web mutation controls and
+  the header badge fail closed from the same sanitized state while preserving
+  inspection and bounded no-login recovery.
 - Render all six dashboard evidence panels progressively with cancellable
   eight-second reads, non-overlapping refresh generations, retained evidence,
   honest per-panel observation/refresh times, derived counts, and bounded

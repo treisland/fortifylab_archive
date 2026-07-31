@@ -14,6 +14,24 @@ live-cluster adapter is enabled by this repository. It accepts component and
 operation identifiers only; commands, paths, environment values, and secrets
 are outside the contract.
 
+## Effective capability API
+
+`GET /api/v1alpha1/capabilities` returns the authenticated
+`ManagerCapabilities` contract used by the Web header and every mutation
+control. It covers observation, functional health, lifecycle execution,
+approvals, backup/restore, upgrades, write-only secret workflows, and
+notifications. States are `available`, `disabled`, `not-configured`,
+`unauthorized`, `degraded`, and `temporarily-unavailable`; entries separately
+declare inspection and mutation support and contain only safe reason,
+prerequisite, remediation, and documentation codes.
+
+Contract `1.0` is refreshed every 30 seconds and expires after 45 seconds.
+Clients must fail closed for missing, malformed, expired, unknown, or newer
+contract versions. Read-only inventory, health, history, and retained operation
+progress remain inspectable when mutation support is unavailable. See
+[Effective Manager capabilities](manager-capabilities.md) and its
+[`manager-capabilities.schema.json`](../registry/schemas/manager-capabilities.schema.json).
+
 ## Lifecycle operation API
 
 All routes require a server-side authenticated session and return

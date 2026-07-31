@@ -11,7 +11,7 @@
   <header class="topbar">
     <div><p class="eyebrow">FORTIFY LAB MANAGER</p><h1>Lab overview</h1></div>
     <div class="header-actions">
-      <span class="read-only">CONTROLLED OPERATIONS</span>
+      <span id="operations-capability-badge" class="read-only">OPERATIONS CHECKING</span>
       <label class="auto-refresh"><input id="auto-refresh" type="checkbox" checked> Auto-refresh</label>
       <button id="refresh" class="secondary" type="button">Refresh</button>
       <button id="logout" class="ghost" type="button">Sign out</button>
@@ -40,8 +40,9 @@
       <div><strong>Preflight</strong><span id="preflight-summary">Waiting for preflight evidence</span></div>
     </section>
     <section class="panel capability-panel">
-      <div class="section-heading"><div><p class="eyebrow">CAPABILITIES</p><h2>Tested platform profile</h2></div><div class="panel-heading-state"><strong id="capability-profile">—</strong><small id="capability-detail">Waiting for capability evidence</small></div></div>
+      <div class="section-heading"><div><p class="eyebrow">CAPABILITIES</p><h2>Effective Manager support</h2></div><div class="panel-heading-state"><strong id="capability-profile">Contract —</strong><small id="capability-detail">Waiting for capability evidence</small></div></div>
       <div id="capabilities-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading capability evidence…</div>
+      <div id="capability-list" class="capability-list" aria-live="polite"></div>
     </section>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">SYSTEM MAP</p><h2>Dependencies and versions</h2></div><p class="muted">Upstream services appear before their consumers.</p></div>
@@ -66,7 +67,7 @@
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">LIFECYCLE</p><h2>Component operations</h2></div><p class="muted">Plans are resolved and authorized by the shared manager service.</p></div>
       <div id="operations-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading operation prerequisites…</div>
-      <form id="operation-form" class="operation-form">
+      <form id="operation-form" class="operation-form" aria-describedby="operations-panel-state">
         <label for="operation">Action</label>
         <select id="operation" name="operation">
           <option value="clean-install">clean-install (complete profile)</option><option>start</option><option>stop</option><option>restart</option><option>install</option><option>configure</option><option>uninstall</option><option>delete-data</option>

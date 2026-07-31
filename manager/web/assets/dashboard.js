@@ -4,13 +4,14 @@ const panels = [
   {name: "health", path: "/api/v1alpha1/health", render: renderHealth},
   {name: "preflight", path: "/api/v1alpha1/preflight", render: renderPreflight},
   {name: "history", path: "/api/v1alpha1/history", render: renderHistory},
-  {name: "capabilities", path: "/api/v1alpha1/platform-profile", render: renderCapabilities},
+  {name: "capabilities", path: "/api/v1alpha1/capabilities", render: renderCapabilities},
   {name: "operations", path: () => activeOperationId ? `/api/v1alpha1/operations/${activeOperationId}` : null, render: renderOperationsRead}
 ];
-const stateNames = new Set(["healthy", "degraded", "unhealthy", "unknown", "blocked", "stale", "starting", "misconfigured", "stopped", "unreachable", "loading", "unavailable", "unauthorized", "timed-out", "error"]);
+const stateNames = new Set(["available", "healthy", "degraded", "unhealthy", "unknown", "blocked", "stale", "starting", "misconfigured", "stopped", "unreachable", "loading", "unavailable", "unauthorized", "timed-out", "error"]);
 const errorCodePattern = /^[A-Z][A-Z0-9_]{2,63}$/;
 const autoRefreshMilliseconds = 30000;
 const readDeadlineMilliseconds = 8000;
+const supportedCapabilityContractVersion = "1.0";
 const cleanState = value => stateNames.has(String(value).toLowerCase()) ? String(value).toLowerCase() : "unknown";
 const text = (element, value) => { element.textContent = value == null || value === "" ? "—" : String(value); };
 const byId = id => document.getElementById(id);
@@ -32,6 +33,8 @@ let autoRefreshTimer = null;
 let refreshInFlight = false;
 let refreshGeneration = 0;
 let sessionExpired = false;
+let lifecycleCapability = null;
+let capabilityExpiresAt = 0;
 const panelDocuments = new Map();
 const activeReadControllers = new Set();
 
@@ -102,22 +105,41 @@ function markPanelFailure(name, failure) {
     text(byId("cluster-state"), "Unavailable");
     byId("cluster-state").className = "status unavailable";
     text(byId("cluster-detail"), "Observer connectivity unavailable");
-    setOperationsAvailable(false, failure.code);
   }
+  if (name === "capabilities") failClosedCapabilities(failure.code);
 }
 
-function setOperationsAvailable(available, code = "") {
+function setOperationsAvailable(available, code = "", state = "unavailable") {
   const form = byId("operation-form");
   Array.from(form.elements).forEach(element => { element.disabled = !available; });
+  for (const id of ["execute-operation", "confirm-operation", "cancel-operation", "retry-operation"]) {
+    byId(id).disabled = !available;
+  }
+  const badge = byId("operations-capability-badge");
+  badge.className = `read-only ${available ? "available" : cleanCapabilityClass(state)}`;
+  text(badge, available ? "OPERATIONS AVAILABLE" : `OPERATIONS ${state.replaceAll("-", " ").toUpperCase()}`);
   panelState(
     "operations",
-    available ? "available" : "unavailable",
+    available ? "available" : cleanCapabilityClass(state),
     available
       ? "Available · Plans are validated before any action runs."
-      : `Unavailable · ${errorCodePattern.test(String(code)) ? code : "OPERATIONS_UNAVAILABLE"}. Restore manager composition or observer connectivity, then refresh.`,
-    panelDocuments.get("components")?.generatedAt
-      || panelDocuments.get("components")?.observation?.observedAt
+      : `Unavailable before submission · ${errorCodePattern.test(String(code)) ? code : "OPERATIONS_UNAVAILABLE"}. Review capability remediation, then refresh.`,
+    panelDocuments.get("capabilities")?.generatedAt
   );
+}
+
+function cleanCapabilityClass(state) {
+  if (state === "available") return "available";
+  if (state === "unauthorized") return "unauthorized";
+  if (state === "degraded") return "degraded";
+  if (state === "temporarily-unavailable") return "unavailable";
+  return "unavailable";
+}
+
+function failClosedCapabilities(code = "CAPABILITY_CONTRACT_UNAVAILABLE") {
+  lifecycleCapability = null;
+  capabilityExpiresAt = 0;
+  setOperationsAvailable(false, code, "unavailable");
 }
 
 function renderInventory(document) {
@@ -159,7 +181,6 @@ function renderInventory(document) {
       : "Empty · No managed components are registered. Add components through the project registry, then refresh.",
     document.generatedAt || document.observation?.observedAt
   );
-  setOperationsAvailable(items.length > 0 && !disconnected, disconnected ? "OBSERVER_DISCONNECTED" : "");
   const choices = byId("operation-components");
   const selected = new Set(Array.from(choices.selectedOptions).map(item => item.value));
   choices.replaceChildren();
@@ -289,11 +310,45 @@ function renderHistory(document) {
 }
 
 function renderCapabilities(document) {
-  text(byId("capability-profile"), document.id || "Profile not reported");
-  const components = document.components && typeof document.components === "object"
-    ? Object.keys(document.components).length : 0;
-  text(byId("capability-detail"), `${document.maturity || "maturity not reported"} · ${components} component capability sets`);
-  panelState("capabilities", "available", "Current · Tested platform capability metadata is available.");
+  const expires = new Date(document.expiresAt);
+  const valid = document.apiVersion === "fortifylab.io/v1alpha1"
+    && document.kind === "ManagerCapabilities"
+    && document.contractVersion === supportedCapabilityContractVersion
+    && Array.isArray(document.capabilities)
+    && !Number.isNaN(expires.valueOf())
+    && expires.valueOf() > Date.now();
+  if (!valid) {
+    text(byId("capability-profile"), "Unsupported contract");
+    text(byId("capability-detail"), "Mutation controls fail closed");
+    byId("capability-list").replaceChildren();
+    panelState("capabilities", "stale", "Unavailable · CAPABILITY_CONTRACT_UNSUPPORTED_OR_STALE. Refresh or upgrade this Web client.", document.generatedAt);
+    failClosedCapabilities("CAPABILITY_CONTRACT_UNSUPPORTED_OR_STALE");
+    return;
+  }
+  text(byId("capability-profile"), `Contract ${document.contractVersion}`);
+  text(byId("capability-detail"), `${document.capabilities.length} effective capability states · refresh within ${document.refreshAfterSeconds || 30}s`);
+  const list = byId("capability-list");
+  list.replaceChildren();
+  for (const capability of document.capabilities) {
+    const item = documentNode("article", "capability-item");
+    item.append(
+      documentNode("strong", "", capability.id?.replaceAll("-", " ")),
+      status(cleanCapabilityClass(capability.state)),
+      documentNode("small", "", `${capability.state || "unknown"} · ${errorCodePattern.test(String(capability.code || "")) ? capability.code : "CAPABILITY_STATE_INVALID"} · prerequisites: ${Array.isArray(capability.prerequisites) && capability.prerequisites.length ? capability.prerequisites.join(", ") : "none"}`)
+    );
+    if (capability.remediation?.href?.startsWith("/docs/")) {
+      const link = document.createElement("a");
+      link.href = capability.remediation.href;
+      link.textContent = "Open guidance";
+      item.append(link);
+    }
+    list.append(item);
+  }
+  lifecycleCapability = document.capabilities.find(item => item.id === "lifecycle-execution") || null;
+  capabilityExpiresAt = expires.valueOf();
+  const available = lifecycleCapability?.state === "available" && lifecycleCapability?.canMutate === true;
+  setOperationsAvailable(available, lifecycleCapability?.code, lifecycleCapability?.state || "unavailable");
+  panelState("capabilities", "available", "Current · Effective Manager capability evidence is authoritative for controls.", document.generatedAt);
 }
 
 function renderOperationsRead(document) {
@@ -303,13 +358,8 @@ function renderOperationsRead(document) {
     if (!document.terminal) scheduleProgress();
     return;
   }
-  const inventory = panelDocuments.get("components");
-  if (inventory) {
-    const available = Array.isArray(inventory.items) && inventory.items.length > 0 && inventory.observation?.state === "available";
-    setOperationsAvailable(available, available ? "" : "OBSERVER_DISCONNECTED");
-  } else {
-    panelState("operations", "unavailable", "Unavailable · operation prerequisites have not settled.");
-  }
+  const available = lifecycleCapability?.state === "available" && lifecycleCapability?.canMutate === true;
+  setOperationsAvailable(available, lifecycleCapability?.code, lifecycleCapability?.state || "unavailable");
 }
 
 function documentNode(tag, className, content) {
@@ -371,6 +421,18 @@ async function load() {
 }
 
 async function mutate(path, body = {}) {
+  if (
+    lifecycleCapability?.state !== "available"
+    || lifecycleCapability?.canMutate !== true
+    || capabilityExpiresAt <= Date.now()
+  ) {
+    failClosedCapabilities(
+      capabilityExpiresAt && capabilityExpiresAt <= Date.now()
+        ? "CAPABILITY_CONTRACT_STALE"
+        : lifecycleCapability?.code
+    );
+    throw new Error("Operation is unavailable before submission. Refresh Manager capabilities.");
+  }
   let response;
   try {
     response = await fetch(path, {
@@ -490,6 +552,11 @@ function renderOperation(operation) {
   (operation.events || []).forEach(event => events.append(documentNode("li", "", `${event.type} · ${event.component || "operation"} · attempt ${event.attempt || "—"}`)));
   byId("cancel-operation").hidden = operation.terminal;
   byId("retry-operation").hidden = !["failed", "timed-out", "interrupted"].includes(operation.state);
+  const mutationAvailable = lifecycleCapability?.state === "available"
+    && lifecycleCapability?.canMutate === true
+    && capabilityExpiresAt > Date.now();
+  byId("cancel-operation").disabled = !mutationAvailable;
+  byId("retry-operation").disabled = !mutationAvailable;
   if (operation.terminal) {
     clearTimeout(progressTimer);
     sessionStorage.removeItem("fortifylab.activeOperation");
@@ -567,4 +634,5 @@ byId("logout").addEventListener("click", async () => {
   await fetch("/api/v1alpha1/session", {method: "DELETE"});
   window.location.assign("/");
 });
+failClosedCapabilities("CAPABILITY_CONTRACT_PENDING");
 load();
