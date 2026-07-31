@@ -108,9 +108,14 @@ def validate_document(document: dict) -> int:
             raise MigrationError(
                 "manager configuration network.private_backend_address must be private"
             )
-        if public_address.is_unspecified or public_address.is_multicast:
+        legacy_private_only = (
+            public_address == private_address and private_address.is_private
+        )
+        if not legacy_private_only and (
+            public_address.version != 4 or not public_address.is_global
+        ):
             raise MigrationError(
-                "manager configuration network.public_address is not routable"
+                "manager configuration network.public_address must be a public IPv4 address"
             )
     for key in ("server", "namespace", "token_file", "ca_file", "health_probe_socket"):
         if key in cluster and not isinstance(cluster[key], str):

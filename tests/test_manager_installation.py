@@ -493,7 +493,10 @@ remove_obsolete_backend "$ENDPOINT_API"
         )
 
     def run_route_diagnostic(
-        self, dns_address="184.33.159.224", external_code="200"
+        self,
+        dns_address="184.33.159.224",
+        external_code="200",
+        network_config='[network]\npublic_address = "184.33.159.224"\n',
     ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -507,10 +510,7 @@ remove_obsolete_backend "$ENDPOINT_API"
             )
             config_root = root / "config"
             config_root.mkdir()
-            (config_root / "manager.toml").write_text(
-                '[network]\npublic_address = "184.33.159.224"\n',
-                encoding="utf-8",
-            )
+            (config_root / "manager.toml").write_text(network_config, encoding="utf-8")
             command = r'''
 export FORTIFY_MANAGER_LIBRARY_ONLY=1
 source scripts/fortify-manager
@@ -570,6 +570,16 @@ diagnose_manager_route
             "layer=external-reachability state=unreachable",
             result.stdout,
         )
+
+    def test_route_diagnostic_parses_noncanonical_valid_toml(self):
+        result = self.run_route_diagnostic(
+            network_config=(
+                "[network] # operator formatting\n"
+                "public_address   =   '184.33.159.224' # Elastic IP\n"
+            )
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("layer=public-dns state=healthy", result.stdout)
 
     def test_renderer_rejects_public_backend_and_invalid_port(self):
         for address, port in (("8.8.8.8", "8080"), ("10.0.0.10", "0")):
@@ -675,6 +685,29 @@ write_network_config "$FIRST" "$SECOND" fortifydemo.com 172.31.30.41 184.33.159.
                 document["network"]["private_backend_address"], "172.31.30.41"
             )
             self.assertEqual(document["network"]["public_address"], "184.33.159.224")
+
+    def test_public_address_validation_allows_elastic_ip_and_legacy_private_only(self):
+        command = r'''
+export FORTIFY_MANAGER_LIBRARY_ONLY=1
+source scripts/fortify-manager
+validate_public_address "$PUBLIC" 172.31.30.41
+'''
+        for address in ("184.33.159.224", "172.31.30.41"):
+            with self.subTest(address=address):
+                result = subprocess.run(
+                    ["bash", "-c", command], cwd=ROOT,
+                    env=os.environ | {"PUBLIC": address},
+                    capture_output=True, text=True,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+        for address in ("192.0.2.10", "2001:4860:4860::8888"):
+            with self.subTest(address=address):
+                result = subprocess.run(
+                    ["bash", "-c", command], cwd=ROOT,
+                    env=os.environ | {"PUBLIC": address},
+                    capture_output=True, text=True,
+                )
+                self.assertNotEqual(result.returncode, 0)
 
     def test_external_config_and_account_verifier_build_secure_app(self):
         with tempfile.TemporaryDirectory() as directory:

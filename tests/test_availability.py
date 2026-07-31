@@ -200,6 +200,17 @@ class AvailabilityTests(unittest.TestCase):
         self.assertEqual(mismatch.http, "not-attempted")
 
     @patch("manager.availability.socket.getaddrinfo")
+    def test_dns_mixed_with_unapproved_answer_is_mismatch(self, getaddrinfo):
+        getaddrinfo.return_value = [
+            (2, 1, 6, "", ("192.0.2.10", 443)),
+            (2, 1, 6, "", ("192.0.2.99", 443)),
+        ]
+        evidence = HostAvailabilityProbe().probe(self.routes[0])
+        self.assertEqual(evidence.state, "dns-mismatch")
+        self.assertEqual(evidence.dns, "mismatch")
+        self.assertEqual(evidence.http, "not-attempted")
+
+    @patch("manager.availability.socket.getaddrinfo")
     def test_tls_http_success_server_error_and_redirect_are_distinct(self, getaddrinfo):
         getaddrinfo.return_value = [(2, 1, 6, "", ("192.0.2.10", 443))]
         probe = HostAvailabilityProbe()

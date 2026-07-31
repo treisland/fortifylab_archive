@@ -169,6 +169,12 @@ class ConfigMigrationTests(unittest.TestCase):
             LEGACY + '\n[network]\ndomain = "fortifydemo.com"\n'
             'private_backend_address = "184.33.159.224"\n'
             'public_address = "184.33.159.224"\n',
+            LEGACY + '\n[network]\ndomain = "fortifydemo.com"\n'
+            'private_backend_address = "172.31.30.41"\n'
+            'public_address = "2001:4860:4860::8888"\n',
+            LEGACY + '\n[network]\ndomain = "fortifydemo.com"\n'
+            'private_backend_address = "172.31.30.41"\n'
+            'public_address = "192.0.2.10"\n',
         )
         for text in cases:
             with self.subTest(text=text[-48:]):
@@ -189,6 +195,18 @@ class ConfigMigrationTests(unittest.TestCase):
         config = load_config(self.config)
         self.assertEqual(config["network"]["private_backend_address"], "172.31.30.41")
         self.assertEqual(config["network"]["public_address"], "184.33.159.224")
+
+    def test_legacy_private_only_address_model_remains_valid(self) -> None:
+        self.write_config(
+            LEGACY
+            + '\n[network]\ndomain = "fortifydemo.com"\n'
+            + 'private_backend_address = "172.31.30.41"\n'
+            + 'public_address = "172.31.30.41"\n'
+        )
+        self.run_migration()
+        self.assertEqual(
+            load_config(self.config)["network"]["public_address"], "172.31.30.41"
+        )
 
     def test_failed_atomic_replacement_leaves_original_active(self) -> None:
         self.write_config()

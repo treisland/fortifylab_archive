@@ -55,9 +55,10 @@ sudo ./scripts/fortify-manager activate-lifecycle
 ```
 
 Use the lab domain and an address reachable from ingress pods, normally the
-EC2 instance's private IPv4 address. The fourth argument is the public DNS
-expectation. Omitting it retains the legacy behavior of using the backend
-address as the DNS expectation, so existing private-only labs remain
+EC2 instance's private IPv4 address. The fourth argument is the public IPv4
+DNS expectation; IPv6, documentation, loopback, link-local, and private
+addresses are rejected in this explicit public mode. Omitting it retains the
+legacy behavior of using the backend address as the DNS expectation, so existing private-only labs remain
 compatible. The renderer rejects public backend addresses. `configure`
 applies only the manager Service, EndpointSlice, and Ingress in namespace
 `fortify` and atomically aligns `server.port` plus the `[network]` address

@@ -110,7 +110,7 @@ class HostAvailabilityProbe:
                 started, "unreachable", "failed", "not-attempted",
                 "not-attempted", "DNS resolution failed",
             )
-        if route.addresses and resolved.isdisjoint(route.addresses):
+        if route.addresses and resolved != set(route.addresses):
             return self._result(
                 started, "dns-mismatch", "mismatch", "not-attempted",
                 "not-attempted", "DNS does not resolve to the configured public address",
