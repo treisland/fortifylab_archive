@@ -23,6 +23,7 @@ from manager.operation_engine import (
     OperationNotFound,
     OperationStore,
 )
+from manager.backup_restore import RecoveryError, RecoveryService
 
 
 MAX_BODY = 16_384
@@ -30,6 +31,7 @@ COLLECTION = "/api/v1alpha1/operations"
 PLANS = COLLECTION + "/plans"
 APPROVALS = "/api/v1alpha1/approvals"
 CLEAN_INSTALL = "/api/v1alpha1/clean-install"
+RECOVERY = "/api/v1alpha1/recovery"
 
 
 class WebOperationAPI:
@@ -41,11 +43,13 @@ class WebOperationAPI:
         store: OperationStore,
         authorization: AuthorizationService,
         state_provider: Callable[[tuple[str, ...]], dict[str, str]],
+        recovery: RecoveryService | None = None,
     ) -> None:
         self._engine = engine
         self._store = store
         self._authorization = authorization
         self._state_provider = state_provider
+        self._recovery = recovery
 
     def __call__(
         self, environ: dict, start_response: Callable, web: WebIdentity
@@ -61,6 +65,10 @@ class WebOperationAPI:
             ),
         )
         try:
+            if path.startswith(RECOVERY):
+                return self._recovery_request(
+                    path, method, environ, start_response, identity
+                )
             if path == CLEAN_INSTALL + "/plan" and method == "POST":
                 self._body(environ)
                 plan = self._engine.clean_install_plan()
@@ -105,7 +113,7 @@ class WebOperationAPI:
                 return self._json(start_response, HTTPStatus.ACCEPTED, self._detail(document))
             if path.startswith(COLLECTION + "/"):
                 return self._member(path, method, environ, start_response, identity)
-        except (OperationError, AuthorizationError, ValueError, TypeError, json.JSONDecodeError) as error:
+        except (OperationError, RecoveryError, AuthorizationError, ValueError, TypeError, json.JSONDecodeError) as error:
             status = HTTPStatus.NOT_FOUND if isinstance(error, OperationNotFound) else (
                 HTTPStatus.CONFLICT if isinstance(error, AuthorizationError) else
                 HTTPStatus.BAD_REQUEST
@@ -123,6 +131,47 @@ class WebOperationAPI:
             self._error("METHOD_NOT_ALLOWED", "method not allowed"),
             (("Allow", "GET, POST"),),
         )
+
+    def _recovery_request(self, path, method, environ, start_response, identity):
+        if self._recovery is None:
+            raise RecoveryError("backup and restore are not configured")
+        if path == RECOVERY + "/backup/plan" and method == "POST":
+            self._body(environ)
+            return self._json(start_response, HTTPStatus.OK, self._recovery.backup_plan())
+        if path == RECOVERY + "/backups" and method == "POST":
+            self._body(environ)
+            document = self._recovery.submit_backup(actor=identity.actor)
+            return self._json(start_response, HTTPStatus.ACCEPTED, document)
+        if path == RECOVERY + "/restore/plan" and method == "POST":
+            request = self._body(environ)
+            return self._json(
+                start_response, HTTPStatus.OK,
+                self._recovery.restore_plan(request.get("backupId")),
+            )
+        if path == RECOVERY + "/restores" and method == "POST":
+            request = self._body(environ)
+            document = self._recovery.submit_restore(
+                request.get("backupId"),
+                actor=identity.actor,
+                confirmation=request.get("confirmation"),
+            )
+            return self._json(start_response, HTTPStatus.ACCEPTED, document)
+        prefix = RECOVERY + "/operations/"
+        if path.startswith(prefix):
+            suffix = path[len(prefix):]
+            operation_id, _, action = suffix.partition("/")
+            if method == "GET" and not action:
+                return self._json(
+                    start_response, HTTPStatus.OK,
+                    self._recovery.store.operation(operation_id),
+                )
+            if method == "POST" and action == "cancel":
+                self._body(environ)
+                return self._json(
+                    start_response, HTTPStatus.ACCEPTED,
+                    self._recovery.cancel(operation_id),
+                )
+        raise ValueError("unsupported recovery action")
 
     def _member(self, path, method, environ, start_response, identity):
         suffix = path[len(COLLECTION) + 1 :]
