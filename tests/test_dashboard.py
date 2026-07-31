@@ -255,6 +255,10 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('id="session-expired"', html)
         self.assertNotIn('window.location.assign("/")', script.split("async function readModel", 1)[1].split("async function mutate", 1)[0])
 
+    def test_deploy_control_uses_deployment_readiness_contract(self):
+        script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
+        self.assertIn('action === "deploy" ? "deployment" : action', script)
+
     def test_each_dashboard_panel_has_an_independent_live_state_region(self):
         html = (WEB / "index.html").read_text(encoding="utf-8")
         for panel in ("components", "health", "preflight", "history", "capabilities", "operations"):

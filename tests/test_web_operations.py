@@ -115,7 +115,7 @@ class WebOperationTests(unittest.TestCase):
                 "ready": True,
                 "readiness": {
                     action: {"ready": True, "blockers": []}
-                    for action in ("deploy", "start", "suspend")
+                    for action in ("deployment", "start", "suspend")
                 },
                 "items": [],
             },

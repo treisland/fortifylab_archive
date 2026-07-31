@@ -703,7 +703,8 @@ function operationRequest() {
 
 function selectedActionReadiness() {
   const action = byId("operation").value;
-  const evidence = preflightReadiness?.[action];
+  const readinessKey = action === "deploy" ? "deployment" : action;
+  const evidence = preflightReadiness?.[readinessKey];
   const current = preflightGeneratedAt > 0 && Date.now() - preflightGeneratedAt <= 300000;
   return {
     ready: current && evidence?.ready === true,

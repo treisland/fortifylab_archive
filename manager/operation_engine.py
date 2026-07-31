@@ -490,7 +490,8 @@ class OperationEngine:
             raise PreflightBlocked("selected action readiness is unavailable")
         try:
             report = self._preflight_provider()
-            readiness = report.get("readiness", {}).get(action, {})
+            readiness_key = "deployment" if action == "deploy" else action
+            readiness = report.get("readiness", {}).get(readiness_key, {})
         except Exception as error:
             raise PreflightBlocked("selected action readiness is unavailable") from error
         if readiness.get("ready") is not True:
