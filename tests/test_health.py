@@ -41,6 +41,19 @@ class SlowProbe(FakeProbe):
         return super().probe(check)
 
 
+class MultidimensionalProbe(FakeProbe):
+    def __init__(self):
+        super().__init__()
+        self.results = {}
+
+    def probe(self, check):
+        self.calls.append((check.subject_id, check.id))
+        return self.results.get(
+            (check.subject_id, check.id),
+            ProbeResult("healthy", "Authoritative check passed", NOW),
+        )
+
+
 def by_id(document):
     return {item["id"]: item for item in document["items"]}
 
@@ -166,6 +179,53 @@ class HealthEngineTests(unittest.TestCase):
         self.assertEqual(second["storage"]["state"], "healthy")
         self.assertEqual(second["mysql"]["state"], "healthy")
         self.assertIn("mysql", self.probe.calls)
+
+    def test_upstream_unknown_preserves_absent_and_not_ready_workloads(self):
+        probe = MultidimensionalProbe()
+        probe.results[("dns", "dns-lookup")] = ProbeResult(
+            "unknown", "Protected DNS probe is unavailable", NOW
+        )
+        probe.results[("ssc", "webapp-ready")] = ProbeResult(
+            "unhealthy", "Desired workload is absent", NOW,
+            workload_present=False,
+        )
+        probe.results[("scancentral-dast-scanner", "scanner-ready")] = ProbeResult(
+            "degraded", "Workload has 0 of 1 desired replicas ready", NOW,
+            workload_present=True, desired_replicas=1, ready_replicas=0,
+        )
+        document = HealthEngine(
+            self.registry, probe, clock=lambda: NOW
+        ).document()
+        Draft202012Validator(SCHEMA).validate(document)
+        items = by_id(document)
+
+        self.assertEqual(items["ssc"]["dimensions"]["dependency"]["state"], "blocked")
+        self.assertEqual(items["ssc"]["dimensions"]["workload"]["state"], "absent")
+        self.assertEqual(items["ssc"]["dimensions"]["application"]["state"], "unknown")
+        self.assertIn("ssc/webapp-ready", items["ssc"]["rootCauses"])
+        scanner = items["scancentral-dast-scanner"]
+        self.assertEqual(scanner["dimensions"]["workload"]["state"], "not-ready")
+        self.assertIn("scancentral-dast-scanner/scanner-ready", scanner["rootCauses"])
+        self.assertEqual(document["summary"]["workloadAbsent"], 1)
+        self.assertEqual(document["summary"]["workloadNotReady"], 1)
+        self.assertGreaterEqual(document["summary"]["applicationUnknown"], 2)
+
+    def test_stale_dependency_keeps_fresh_local_workload_evidence_and_recovers(self):
+        probe = MultidimensionalProbe()
+        probe.results[("dns", "dns-lookup")] = ProbeResult(
+            "healthy", "Lookup passed", NOW - timedelta(minutes=6)
+        )
+        first = by_id(HealthEngine(self.registry, probe, clock=lambda: NOW).document())
+        self.assertEqual(first["ssc"]["dimensions"]["dependency"]["state"], "blocked")
+        self.assertEqual(first["ssc"]["dimensions"]["workload"]["state"], "ready")
+        self.assertEqual(first["ssc"]["dimensions"]["application"]["state"], "unknown")
+
+        probe.results[("dns", "dns-lookup")] = ProbeResult(
+            "healthy", "Lookup passed", NOW
+        )
+        second = by_id(HealthEngine(self.registry, probe, clock=lambda: NOW).document())
+        self.assertEqual(second["ssc"]["dimensions"]["dependency"]["state"], "clear")
+        self.assertEqual(second["ssc"]["dimensions"]["application"]["state"], "healthy")
 
     def test_sensitive_probe_summary_is_redacted(self):
         self.probe.states["microk8s-node"] = (

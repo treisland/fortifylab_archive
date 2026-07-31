@@ -48,6 +48,9 @@ class ProbeResult:
     summary: str
     observed_at: datetime
     latency_ms: int | None = None
+    workload_present: bool | None = None
+    desired_replicas: int | None = None
+    ready_replicas: int | None = None
 
     def __post_init__(self) -> None:
         if self.state not in _PROBE_STATES:
@@ -56,6 +59,9 @@ class ProbeResult:
             raise ValueError("probe timestamp must include a timezone")
         if self.latency_ms is not None and self.latency_ms < 0:
             raise ValueError("probe latency must be non-negative")
+        for value in (self.desired_replicas, self.ready_replicas):
+            if value is not None and value < 0:
+                raise ValueError("replica evidence must be non-negative")
 
 
 class HealthProbe(Protocol):
@@ -119,34 +125,41 @@ class HealthEngine:
                 ),
                 None,
             )
+            blocked_root = None
             if failed_dependency:
-                root = results[failed_dependency].get("rootCause", failed_dependency)
-                item = self._blocked(subject, failed_dependency, root, now)
-            else:
-                started = {check.id: time.monotonic() for check in subject.checks}
-                futures = {
-                    executor.submit(self._probe.probe, check): check
-                    for check in subject.checks
-                }
-                done, pending = wait(
-                    futures, timeout=max(0.0, deadline - time.monotonic())
+                blocked_root = results[failed_dependency].get(
+                    "rootCause", failed_dependency
                 )
-                for future in pending:
-                    future.cancel()
-                item = self._evaluate(
-                    subject,
-                    now,
-                    [
-                        self._result(
-                            check,
-                            future,
-                            future in done,
-                            now,
-                            started[check.id],
-                        )
-                        for future, check in futures.items()
-                    ],
+            runnable = tuple(
+                check for check in subject.checks
+                if not failed_dependency or check.layer == "workload"
+            )
+            started = {check.id: time.monotonic() for check in runnable}
+            futures = {
+                executor.submit(self._probe.probe, check): check
+                for check in runnable
+            }
+            done, pending = wait(
+                futures, timeout=max(0.0, deadline - time.monotonic())
+            )
+            for future in pending:
+                future.cancel()
+            evidence = [
+                self._result(
+                    check, future, future in done, now, started[check.id]
                 )
+                for future, check in futures.items()
+            ]
+            if failed_dependency:
+                evidence.append(self._dependency_evidence(failed_dependency, now))
+                evidence.extend(
+                    self._unavailable_evidence(check, failed_dependency, now)
+                    for check in subject.checks if check not in runnable
+                )
+            item = self._evaluate(
+                subject, now, evidence,
+                blocked_by=failed_dependency, blocked_root=blocked_root,
+            )
             results[subject.id] = item
             items.append(item)
         executor.shutdown(wait=False, cancel_futures=True)
@@ -165,11 +178,13 @@ class HealthEngine:
                 "validation": "runtime-observation",
             },
             "state": aggregate,
+            "summary": self._summary(items),
             "items": items,
         }
 
     def _evaluate(
-        self, subject: _Subject, now: datetime, evidence: list[dict]
+        self, subject: _Subject, now: datetime, evidence: list[dict],
+        *, blocked_by: str | None = None, blocked_root: str | None = None,
     ) -> dict:
         required = [entry for entry in evidence if entry["required"]]
         state = "healthy"
@@ -192,9 +207,25 @@ class HealthEngine:
             root = f"{subject.id}/" + next(
                 entry["id"] for entry in evidence if entry["state"] != "healthy"
             )
+        local_roots = [
+            f"{subject.id}/{entry['id']}" for entry in required
+            if entry["layer"] != "dependency"
+            and (
+                entry["state"] in {"unhealthy", "misconfigured", "unreachable", "stale"}
+                or entry["layer"] == "workload" and entry["state"] == "degraded"
+                or not blocked_by and entry["state"] == "unknown"
+            )
+        ]
+        roots = list(dict.fromkeys(([blocked_root] if blocked_root else []) + local_roots))
+        if blocked_by and not local_roots:
+            state = "blocked"
         item = self._base(subject, state, evidence, now)
-        if root:
-            item["rootCause"] = root
+        if roots:
+            item["rootCause"] = roots[0]
+            item["rootCauses"] = roots
+        if blocked_by:
+            item["blockedBy"] = blocked_by
+        item["dimensions"] = self._dimensions(evidence, blocked_by)
         return item
 
     def _result(
@@ -230,7 +261,7 @@ class HealthEngine:
                 now,
             )
         measured_latency = max(0, round((time.monotonic() - started) * 1000))
-        return {
+        entry = {
             "id": check.id,
             "layer": check.layer,
             "state": state,
@@ -243,13 +274,17 @@ class HealthEngine:
                 else measured_latency
             ),
         }
+        if "result" in locals() and check.layer == "workload":
+            entry["workload"] = {
+                "present": result.workload_present,
+                "desiredReplicas": result.desired_replicas,
+                "readyReplicas": result.ready_replicas,
+            }
+        return entry
 
     @staticmethod
-    def _blocked(
-        subject: _Subject, dependency: str, root: str, now: datetime
-    ) -> dict:
-        evidence = [
-            {
+    def _dependency_evidence(dependency: str, now: datetime) -> dict:
+        return {
                 "id": "dependency",
                 "layer": "dependency",
                 "state": "blocked",
@@ -258,11 +293,40 @@ class HealthEngine:
                 "observedAt": _timestamp(now),
                 "latencyMs": 0,
             }
-        ]
-        item = HealthEngine._base(subject, "blocked", evidence, now)
-        item["blockedBy"] = dependency
-        item["rootCause"] = root
-        return item
+
+    @staticmethod
+    def _unavailable_evidence(check: CheckSpec, dependency: str, now: datetime) -> dict:
+        return {
+            "id": check.id, "layer": check.layer, "state": "unknown",
+            "required": check.required,
+            "summary": f"Probe unavailable while blocked by dependency {dependency}",
+            "observedAt": _timestamp(now), "latencyMs": 0,
+        }
+
+    @staticmethod
+    def _dimensions(evidence: list[dict], blocked_by: str | None) -> dict:
+        workload = [entry for entry in evidence if entry["layer"] == "workload"]
+        application = [entry for entry in evidence if entry["layer"] in {"application", "functional"}]
+        absent = any(entry.get("workload", {}).get("present") is False for entry in workload)
+        mismatch = any(
+            entry.get("workload", {}).get("present") is True
+            and entry.get("workload", {}).get("desiredReplicas") is not None
+            and entry.get("workload", {}).get("readyReplicas")
+            < entry.get("workload", {}).get("desiredReplicas")
+            for entry in workload
+        )
+        workload_state = "absent" if absent else "not-ready" if mismatch else (
+            "ready" if workload and all(entry["state"] == "healthy" for entry in workload)
+            else "unknown"
+        )
+        application_state = "unknown" if not application or any(
+            entry["state"] in {"unknown", "stale"} for entry in application
+        ) else "healthy" if all(entry["state"] == "healthy" for entry in application) else "unhealthy"
+        return {
+            "dependency": {"state": "blocked" if blocked_by else "clear", "blockedBy": blocked_by},
+            "workload": {"state": workload_state},
+            "application": {"state": application_state},
+        }
 
     @staticmethod
     def _base(
@@ -292,6 +356,19 @@ class HealthEngine:
             if state in states:
                 return state
         return "healthy"
+
+    @staticmethod
+    def _summary(items: list[dict]) -> dict:
+        components = [item for item in items if item["id"] not in {
+            "microk8s-node", "storage", "dns", "ingress", "tls"
+        }]
+        return {
+            "components": len(components),
+            "blocked": sum(item["dimensions"]["dependency"]["state"] == "blocked" for item in components),
+            "workloadAbsent": sum(item["dimensions"]["workload"]["state"] == "absent" for item in components),
+            "workloadNotReady": sum(item["dimensions"]["workload"]["state"] == "not-ready" for item in components),
+            "applicationUnknown": sum(item["dimensions"]["application"]["state"] == "unknown" for item in components),
+        }
 
     def _subjects(self) -> tuple[_Subject, ...]:
         infrastructure = _infrastructure_subjects()

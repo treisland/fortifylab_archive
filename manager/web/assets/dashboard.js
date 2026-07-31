@@ -386,6 +386,17 @@ function componentConsumers(componentId, items) {
   return items.filter(item => (item.dependencies || []).includes(componentId));
 }
 
+function componentSummary(componentId) {
+  const health = (panelDocuments.get("health")?.items || []).find(item => item.id === componentId);
+  if (!health) return "application health unknown";
+  const labels = [];
+  if (health.dimensions?.dependency?.state === "blocked") labels.push("blocked by dependency");
+  if (health.dimensions?.workload?.state === "absent") labels.push("workload absent");
+  if (health.dimensions?.workload?.state === "not-ready") labels.push("workload not ready");
+  if (health.dimensions?.application?.state === "unknown") labels.push("application health unknown");
+  return labels.join(" · ") || `workload ${health.dimensions?.workload?.state || "unknown"} · application ${health.dimensions?.application?.state || "unknown"}`;
+}
+
 function renderComponentCards() {
   const inventory = panelDocuments.get("components");
   if (!inventory) return;
@@ -430,6 +441,7 @@ function renderComponentCards() {
     button.append(
       heading,
       documentNode("span", "component-meta", `${id} · observed ${runtime}`),
+      documentNode("span", "component-meta", componentSummary(id)),
       documentNode("span", "version", `Product ${item.profile?.productVersion || "not declared"} · chart ${item.version?.chart || "not declared"}`),
       documentNode("span", "dependencies", `Depends on: ${(item.dependencies || []).join(", ") || "Lab foundation"}`)
     );
@@ -495,8 +507,15 @@ function refreshInspector() {
     ]),
     detailSection("Health and root cause", [
       ["Root cause", health?.rootCause || "No root cause reported"],
+      ["All actionable causes", (health?.rootCauses || []).join(", ") || "No actionable causes reported"],
       ["Blocked by", health?.blockedBy || "No upstream block reported"],
-      ["Evidence", (health?.evidence || []).map(value => `${value.state}: ${value.summary}`).join(" · ") || "Partially observed or unavailable"]
+      ["Dependency", health?.dimensions?.dependency?.state || "unknown"],
+      ["Workload", health?.dimensions?.workload?.state || "unknown"],
+      ["Application health", health?.dimensions?.application?.state || "unknown"],
+      ["Evidence", (health?.evidence || []).map(value => {
+        const replicas = value.workload?.desiredReplicas == null ? "" : ` · replicas ${value.workload.readyReplicas}/${value.workload.desiredReplicas}`;
+        return `${value.layer} ${value.id} · ${value.state}: ${value.summary}${replicas}`;
+      }).join(" · ") || "Partially observed or unavailable"]
     ]),
     detailSection("Dependencies and consumers", [
       ["Upstream dependencies", (item.dependencies || []).join(", ") || "None"],

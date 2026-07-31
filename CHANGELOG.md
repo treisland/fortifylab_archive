@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Preserve independent workload presence and replica-readiness evidence beside
+  dependency blockers, with multidimensional health summaries and ranked local
+  root causes in the API, dashboard cards, and component inspector.
+
 - Derive Manager capabilities from current observer, probe, credential,
   adapter, store, helper, upgrade, secret, and notification evidence; add
   action-specific observation/deployment/start/suspend preflight gates and

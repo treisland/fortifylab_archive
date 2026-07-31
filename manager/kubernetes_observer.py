@@ -312,12 +312,23 @@ class KubernetesObserver:
             document = self._get(path)
         except urllib.error.HTTPError as error:
             if error.code == 404:
-                return ProbeResult("unhealthy", "Desired workload is absent", now)
+                error.close()
+                return ProbeResult(
+                    "unhealthy", "Desired workload is absent", now,
+                    workload_present=False,
+                )
             raise
         desired = int(document.get("spec", {}).get("replicas", 1))
         ready = int(document.get("status", {}).get("readyReplicas", 0))
         state = "healthy" if desired > 0 and ready >= desired else "degraded"
-        return ProbeResult(state, "Workload readiness metadata was observed", now)
+        return ProbeResult(
+            state,
+            f"Workload has {ready} of {desired} desired replicas ready",
+            now,
+            workload_present=True,
+            desired_replicas=desired,
+            ready_replicas=ready,
+        )
 
     def _functional(self, check: CheckSpec, now: datetime) -> ProbeResult:
         if self._functional_probe is None:
