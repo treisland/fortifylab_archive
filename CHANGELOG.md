@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an opt-in, bounded EC2 Manager upgrade acceptance gate with immutable
+  release, migration, persistence, session, RBAC, legacy CA, observation,
+  private ingress, rollback, earliest-layer, and sanitized evidence contracts.
+
 - Make Manager releases content-addressed and immutable, reuse identical
   installs, validate launchers and pre-start behavior before shutdown, switch
   `current` atomically, restore the prior release and services after failed
