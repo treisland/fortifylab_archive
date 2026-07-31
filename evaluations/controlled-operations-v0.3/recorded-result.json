@@ -1,0 +1,16 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "ControlledOperationsEvaluationGate",
+  "milestone": "0.3-controlled-operations",
+  "suiteVersion": "0.3.0",
+  "suiteDigest": "b840f8ee39fc63fdad3db43a9c3f67f6f3a4d0dc8872118ebf34d8b71049fa96",
+  "observationDigest": "7c2d52c2b8594a179f172e48fc53d4f2669bfd68cd4cf8ddc32c40606076c187",
+  "status": "passed",
+  "passedScenarioCount": 13,
+  "failedScenarioCount": 0,
+  "evidence": "deterministic-fixture",
+  "liveEvidence": {
+    "status": "not-run",
+    "reason": "Local evaluation does not contact MicroK8s, browsers, or providers"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "ControlledOperationsFixtureObservations",
+  "suiteVersion": "0.3.0",
+  "observedOutcomeDigests": {
+    "dependency-ordered-start-stop": "8c0d2f0536f20af81e20ad196d4caac7507802e467f59a084ce6d49740cd8723",
+    "mysql-blocking-ssc": "91baf208a1b62939c96fedcffed2bc1ee274191e8039e3d6242bf1e28d31a2c5",
+    "cancellation": "2a2591de7c4846930fdbdcbc52a34bb5923fa3161d1aac19c24916ac54b7ed8f",
+    "timeout": "de7a62b1e0c0383e399214576500db3839cbb82fc5a500033c8bc09ca11b135c",
+    "retry": "53b5be594e5dcffdbb360b33d93f9696a5fd9d726c2f79513a56ce0c83d7c45d",
+    "manager-restart": "7b737fa44b7163d981105d289bae186b04f3d76bdf6106f562626979477a638d",
+    "concurrent-conflict": "3023d511e993df4a8a158ff6a20836c732bbe3bee635a51bfe46cbfa86a40adb",
+    "stale-approval": "e5dbdae89308b5d4149560448b8c8b70d7c6da993c3a1dffcf8bf674f946a9d1",
+    "telegram-outage": "23db8163422553ff7f92304bf46ff4defb26ecf5ee5b68047b21762882bd3835",
+    "unauthorized-callback": "251a98f62b432726d8b34b1395c58c2a3e374473c87857af51122415d155ac91",
+    "write-only-input-update": "3d65724a354ccad09f5f6b22d351db301702d55e36dbe0d65d2b98a675c3ac5e",
+    "destructive-action-boundary": "3443e972952823b214c660d4b99028d00ad1376925d486e7df1f7344dfc0d9ff",
+    "post-operation-health-failure": "699266775a12333c8dc79887292d8b45e9ee723e4bce61fcafd08e9ea02697a4"
+  }
+}

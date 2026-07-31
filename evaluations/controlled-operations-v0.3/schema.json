@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/evaluations/controlled-operations-v0.3/schema.json",
+  "title": "Fortify Lab Manager 0.3 controlled-operations evaluation suite",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "suiteVersion", "milestoneGate", "scope", "artifactPolicy", "scenarios"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/evaluations/v1alpha1"},
+    "kind": {"const": "ControlledOperationsEvaluationSuite"},
+    "suiteVersion": {"type": "string", "pattern": "^0\\.3\\.[0-9]+$"},
+    "milestoneGate": {"const": "0.3-controlled-operations"},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "included", "excluded", "liveEvidence"],
+      "properties": {
+        "platform": {"const": "single-node MicroK8s lab"},
+        "included": {"type": "array", "minItems": 6, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "excluded": {"type": "array", "minItems": 1, "uniqueItems": true, "contains": {"const": "ASPM"}, "items": {"$ref": "#/$defs/text"}},
+        "liveEvidence": {"const": "separate-required-artifact"}
+      }
+    },
+    "artifactPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["syntheticOnly", "forbidden", "secretLeakageSurfaces"],
+      "properties": {
+        "syntheticOnly": {"const": true},
+        "forbidden": {"type": "array", "minItems": 7, "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+        "secretLeakageSurfaces": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"enum": ["api", "ui", "cli", "telegram", "logs", "history", "diagnostics"]},
+          "minItems": 7,
+          "maxItems": 7
+        }
+      }
+    },
+    "scenarios": {"type": "array", "minItems": 13, "maxItems": 13, "items": {"$ref": "#/$defs/scenario"}}
+  },
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 96},
+    "text": {"type": "string", "minLength": 1, "maxLength": 300},
+    "stringList": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+    "interfaces": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["api", "ui", "cli", "telegram"],
+      "properties": {
+        "api": {"$ref": "#/$defs/text"},
+        "ui": {"$ref": "#/$defs/text"},
+        "cli": {"$ref": "#/$defs/text"},
+        "telegram": {"$ref": "#/$defs/text"}
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["plan", "events", "approval", "terminalState", "health", "interfaces", "secretLeakage", "recovery", "rollback"],
+      "properties": {
+        "plan": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["orderedSteps", "blockedBy", "destructive", "deletesData"],
+          "properties": {
+            "orderedSteps": {"$ref": "#/$defs/stringList"},
+            "blockedBy": {"$ref": "#/$defs/stringList"},
+            "destructive": {"type": "boolean"},
+            "deletesData": {"type": "boolean"}
+          }
+        },
+        "events": {"$ref": "#/$defs/stringList"},
+        "approval": {"enum": ["not-required", "pending", "approved-single-use", "rejected-stale", "rejected-unauthorized", "unchanged"]},
+        "terminalState": {"enum": ["succeeded", "failed", "timed-out", "cancelled", "interrupted", "conflict", "blocked", "pending"]},
+        "health": {"$ref": "#/$defs/text"},
+        "interfaces": {"$ref": "#/$defs/interfaces"},
+        "secretLeakage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["redacted", "surfaces"],
+          "properties": {
+            "redacted": {"const": true},
+            "surfaces": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"enum": ["api", "ui", "cli", "telegram", "logs", "history", "diagnostics"]}
+            }
+          }
+        },
+        "recovery": {"$ref": "#/$defs/text"},
+        "rollback": {"$ref": "#/$defs/text"}
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "area", "description", "evidence", "fixture", "expected"],
+      "properties": {
+        "id": {"$ref": "#/$defs/identifier"},
+        "area": {"enum": ["lifecycle", "approval", "telegram", "secret", "safety", "health"]},
+        "description": {"$ref": "#/$defs/text"},
+        "evidence": {"const": "deterministic-fixture"},
+        "fixture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["clockSeconds", "signals"],
+          "properties": {
+            "clockSeconds": {"type": "integer", "minimum": 0},
+            "signals": {"type": "object", "minProperties": 1, "additionalProperties": {"type": ["string", "integer", "boolean", "null"]}}
+          }
+        },
+        "expected": {"$ref": "#/$defs/expected"}
+      }
+    }
+  }
+}

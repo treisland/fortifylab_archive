@@ -82,3 +82,37 @@ or Telegram provider delivery. The live browser/MicroK8s checklist remains in
 the [manager operator guide](operations/manager.md#verification-evidence) and
 must be recorded separately by an authorized operator. ASPM, production
 hardening, multi-node Kubernetes, and component mutation remain outside 0.2.
+
+## 0.3 controlled-operations milestone gate
+
+The versioned `evaluations/controlled-operations-v0.3` suite gates completion
+of milestone 0.3. Its thirteen deterministic scenarios cover dependency
+ordering, MySQL blocking SSC, cancellation, timeout, retry, manager restart,
+concurrent conflict, stale approval, Telegram outage, unauthorized callbacks,
+write-only secret updates, the uninstall/data-deletion boundary, and failed
+post-operation health verification.
+
+Each scenario has structured expected plans, event categories, approval state,
+terminal state, health outcome, API, Web UI, CLI, Telegram behavior, recovery,
+and rollback limitations. The write-only secret scenario additionally requires
+redaction across all seven named surfaces: API, UI, CLI, Telegram, logs,
+history, and diagnostics. Fixtures contain bounded synthetic classifications
+only; raw command output, protected locations, credentials, secret values, and
+provider payloads are prohibited.
+
+`recorded-result.json` is the machine-readable milestone gate. It pins the
+canonical suite and observation digests, requires all thirteen scenarios to
+pass, rejects unexpected observations, and records live evidence as `not-run`.
+Run it with:
+
+```bash
+python3 -m unittest tests.test_controlled_operations_evaluation
+```
+
+This result proves deterministic contract behavior only. It does not prove
+real MicroK8s mutation, Fortify image or license behavior, browser rendering,
+component timing, or Telegram delivery. Authorized live evidence must be
+recorded separately and must never be copied into these fixtures. Rollback is
+also intentionally limited: cancellation, timeout, manager restart, and failed
+health verification can follow partial mutation, and neither Helm rollback nor
+manager recovery is represented as reversing database or schema changes.

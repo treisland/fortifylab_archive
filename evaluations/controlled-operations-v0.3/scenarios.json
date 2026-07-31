@@ -1,0 +1,253 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "ControlledOperationsEvaluationSuite",
+  "suiteVersion": "0.3.0",
+  "milestoneGate": "0.3-controlled-operations",
+  "scope": {
+    "platform": "single-node MicroK8s lab",
+    "included": ["typed lifecycle operations", "risk-based approvals", "write-only secret updates", "authenticated Web UI", "local CLI", "private Telegram controls"],
+    "excluded": ["ASPM", "production hardening", "multi-node Kubernetes"],
+    "liveEvidence": "separate-required-artifact"
+  },
+  "artifactPolicy": {
+    "syntheticOnly": true,
+    "forbidden": ["secret-value", "protected-path", "raw-prompt", "source-excerpt", "environment-dump", "raw-log", "provider-credential"],
+    "secretLeakageSurfaces": ["api", "ui", "cli", "telegram", "logs", "history", "diagnostics"]
+  },
+  "scenarios": [
+    {
+      "id": "dependency-ordered-start-stop",
+      "area": "lifecycle",
+      "description": "Start includes upstream dependencies in order and stop rejects an unsafe database-first request.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 0, "signals": {"operation": "start-stop", "target": "scancentral-sast", "mysqlConsumersRunning": true}},
+      "expected": {
+        "plan": {"orderedSteps": ["mysql:start", "ssc:start", "scancentral-sast:start"], "blockedBy": ["ssc", "scancentral-sast"], "destructive": false, "deletesData": false},
+        "events": ["step-succeeded", "operation-succeeded", "dependency-blocked"],
+        "approval": "not-required",
+        "terminalState": "blocked",
+        "health": "successful start is verified; unsafe MySQL stop does not execute",
+        "interfaces": {"api": "plan and blocker use typed JSON", "ui": "ordered steps and blocker are visible", "cli": "plan matches API and blocked exit is stable", "telegram": "status is observational and cannot bypass the blocker"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "stop dependents explicitly before retrying MySQL stop",
+        "rollback": "no mutation occurs for the blocked stop"
+      }
+    },
+    {
+      "id": "mysql-blocking-ssc",
+      "area": "health",
+      "description": "An unhealthy MySQL dependency prevents SSC start and reports MySQL as the safe root cause.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 60, "signals": {"mysql": "unhealthy", "ssc": "requested", "verification": "failed"}},
+      "expected": {
+        "plan": {"orderedSteps": ["mysql:start", "ssc:start"], "blockedBy": ["mysql"], "destructive": false, "deletesData": false},
+        "events": ["step-failed", "operation-failed"],
+        "approval": "not-required",
+        "terminalState": "failed",
+        "health": "SSC is blocked by MySQL and post-operation health is not verified",
+        "interfaces": {"api": "sanitized dependency failure returned", "ui": "MySQL is shown as root cause", "cli": "failed exit distinguishes dependency failure", "telegram": "safe health detail names MySQL only"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "restore and verify MySQL before submitting a new SSC start",
+        "rollback": "automatic database rollback is not claimed"
+      }
+    },
+    {
+      "id": "cancellation",
+      "area": "lifecycle",
+      "description": "Cancellation is durable, checked cooperatively, and ends without abandoning the server-side record.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 120, "signals": {"operation": "start", "target": "postgresql", "cancelRequested": true}},
+      "expected": {
+        "plan": {"orderedSteps": ["postgresql:start"], "blockedBy": [], "destructive": false, "deletesData": false},
+        "events": ["cancellation-requested", "operation-cancelled"],
+        "approval": "not-required",
+        "terminalState": "cancelled",
+        "health": "completion health remains unverified after cancellation",
+        "interfaces": {"api": "cancel returns durable cancelling or cancelled state", "ui": "refresh converges on cancelled", "cli": "cancelled has a stable distinct exit", "telegram": "callback cannot invent cancellation authority"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "inspect component health before submitting a new operation",
+        "rollback": "completed steps are not automatically reversed"
+      }
+    },
+    {
+      "id": "timeout",
+      "area": "lifecycle",
+      "description": "A bounded step timeout produces a distinct terminal state and sanitized progress.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 180, "signals": {"operation": "start", "target": "mysql", "deadlineExceeded": true}},
+      "expected": {
+        "plan": {"orderedSteps": ["mysql:start"], "blockedBy": [], "destructive": false, "deletesData": false},
+        "events": ["step-timed-out", "operation-timed-out"],
+        "approval": "not-required",
+        "terminalState": "timed-out",
+        "health": "completion health remains unverified after timeout",
+        "interfaces": {"api": "timed-out is terminal and machine-readable", "ui": "timeout and recovery guidance are visible", "cli": "timeout has a stable distinct exit", "telegram": "safe timeout status does not advance authority"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "inspect health and retry through the typed retry endpoint",
+        "rollback": "a timed-out adapter may have partially acted and is not auto-reversed"
+      }
+    },
+    {
+      "id": "retry",
+      "area": "lifecycle",
+      "description": "Retry creates a new bounded operation linked to a failed or timed-out predecessor.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 240, "signals": {"previous": "timed-out", "retry": "succeeded", "sameRequest": true}},
+      "expected": {
+        "plan": {"orderedSteps": ["mysql:start"], "blockedBy": [], "destructive": false, "deletesData": false},
+        "events": ["step-succeeded", "operation-succeeded"],
+        "approval": "not-required",
+        "terminalState": "succeeded",
+        "health": "post-operation checks are verified on the retry",
+        "interfaces": {"api": "retryOf links immutable operation records", "ui": "retry progress replaces no history", "cli": "retry uses the same API contract", "telegram": "provider delivery is unrelated to retry execution"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "the successful retry is the authoritative final operation",
+        "rollback": "retry is forward recovery rather than rollback"
+      }
+    },
+    {
+      "id": "manager-restart",
+      "area": "lifecycle",
+      "description": "Manager startup fences an incomplete operation as interrupted while preserving sanitized history.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 300, "signals": {"persistedState": "running", "restart": true, "historyPreserved": true}},
+      "expected": {
+        "plan": {"orderedSteps": ["ssc:start"], "blockedBy": [], "destructive": false, "deletesData": false},
+        "events": ["manager-restart-fenced"],
+        "approval": "unchanged",
+        "terminalState": "interrupted",
+        "health": "actual component state requires fresh inspection",
+        "interfaces": {"api": "interrupted record remains readable after login", "ui": "history survives and session is reauthenticated", "cli": "status reports interrupted distinctly", "telegram": "recovery notice cannot resume mutation"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "inspect health and submit a new typed operation",
+        "rollback": "manager restart does not imply workload rollback"
+      }
+    },
+    {
+      "id": "concurrent-conflict",
+      "area": "lifecycle",
+      "description": "Overlapping affected components reject the second request without executing it.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 360, "signals": {"first": "running", "second": "submitted", "overlap": "ssc"}},
+      "expected": {
+        "plan": {"orderedSteps": ["ssc:start"], "blockedBy": ["active-operation"], "destructive": false, "deletesData": false},
+        "events": ["operation-conflict"],
+        "approval": "unchanged",
+        "terminalState": "conflict",
+        "health": "the first operation remains authoritative",
+        "interfaces": {"api": "conflict code is stable and sanitized", "ui": "active operation link is shown", "cli": "conflict is a blocked automation outcome", "telegram": "cannot submit a competing mutation"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "wait for the active operation and re-plan from current state",
+        "rollback": "the rejected request performs no mutation"
+      }
+    },
+    {
+      "id": "stale-approval",
+      "area": "approval",
+      "description": "Expired or state-drifted approval cannot authorize a lifecycle request.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 1000, "signals": {"approvalAgeSeconds": 601, "stateChanged": true, "singleUse": true}},
+      "expected": {
+        "plan": {"orderedSteps": ["ssc:stop"], "blockedBy": ["stale-approval"], "destructive": false, "deletesData": false},
+        "events": ["approval-denied"],
+        "approval": "rejected-stale",
+        "terminalState": "blocked",
+        "health": "no component mutation or health transition occurs",
+        "interfaces": {"api": "authorization denial omits submitted confirmation", "ui": "operator is prompted to refresh and re-plan", "cli": "rejected exit is stable", "telegram": "expired callback cannot approve"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "request a fresh state-bound approval",
+        "rollback": "no mutation occurs"
+      }
+    },
+    {
+      "id": "telegram-outage",
+      "area": "telegram",
+      "description": "Provider failure delays notification but cannot change operation or approval state.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 1100, "signals": {"firstDelivery": "failed", "retryDelivery": "succeeded", "authoritativeState": "pending"}},
+      "expected": {
+        "plan": {"orderedSteps": [], "blockedBy": ["provider-unavailable"], "destructive": false, "deletesData": false},
+        "events": ["delivery-failed", "delivery-recovered"],
+        "approval": "pending",
+        "terminalState": "pending",
+        "health": "operation and component health remain unchanged",
+        "interfaces": {"api": "authoritative approval remains pending", "ui": "provider outage does not show success", "cli": "local status remains authoritative", "telegram": "pending notification is delivered once after recovery"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "retry bounded provider delivery without replaying authority",
+        "rollback": "communications delivery has no component rollback"
+      }
+    },
+    {
+      "id": "unauthorized-callback",
+      "area": "telegram",
+      "description": "Wrong identity, expired, forged, or replayed opaque callbacks fail closed.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 1200, "signals": {"identityAllowed": false, "callbackFresh": false, "callbackReplayed": true}},
+      "expected": {
+        "plan": {"orderedSteps": [], "blockedBy": ["unauthorized-callback"], "destructive": false, "deletesData": false},
+        "events": ["callback-denied"],
+        "approval": "rejected-unauthorized",
+        "terminalState": "blocked",
+        "health": "no component mutation or health transition occurs",
+        "interfaces": {"api": "authoritative state is unchanged", "ui": "no false approval appears", "cli": "status remains unchanged", "telegram": "generic denial reveals no callback internals"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "authorized operator refreshes status and requests a new action",
+        "rollback": "no mutation occurs"
+      }
+    },
+    {
+      "id": "write-only-input-update",
+      "area": "secret",
+      "description": "A synthetic secret replacement exposes metadata only across every persisted and rendered surface.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 1300, "signals": {"sourceType": "upload", "target": "mysql-root-password", "consumersRestarted": 2}},
+      "expected": {
+        "plan": {"orderedSteps": ["mysql-root-password:replace", "mysql:restart", "ssc:restart"], "blockedBy": [], "destructive": true, "deletesData": false},
+        "events": ["replacement-applied", "consumers-restarted", "health-verified"],
+        "approval": "approved-single-use",
+        "terminalState": "succeeded",
+        "health": "all affected consumers pass post-update verification",
+        "interfaces": {"api": "response contains metadata and opaque revision only", "ui": "input clears and stored value cannot be read", "cli": "output contains metadata only", "telegram": "high-risk replacement cannot be approved there"},
+        "secretLeakage": {"redacted": true, "surfaces": ["api", "ui", "cli", "telegram", "logs", "history", "diagnostics"]},
+        "recovery": "targeted consumers can be inspected and a new replacement submitted",
+        "rollback": "adapter-owned prior revision may be restored; value is never returned"
+      }
+    },
+    {
+      "id": "destructive-action-boundary",
+      "area": "safety",
+      "description": "Uninstall remains separate from persistent-data deletion and each exact high-risk plan needs local approval.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 1400, "signals": {"operation": "uninstall", "deleteDataRequested": false, "confirmationMatched": true}},
+      "expected": {
+        "plan": {"orderedSteps": ["scancentral-dast-scanner:uninstall"], "blockedBy": [], "destructive": true, "deletesData": false},
+        "events": ["approval-consumed", "step-succeeded", "operation-succeeded"],
+        "approval": "approved-single-use",
+        "terminalState": "succeeded",
+        "health": "uninstalled workload is absent while persistent data is unchanged",
+        "interfaces": {"api": "destructive and deletesData are distinct booleans", "ui": "exact target and high-risk warning precede confirmation", "cli": "exact confirmation and approval identifier are required", "telegram": "high-risk action escalates to local Web or CLI"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "reinstall is a separate forward operation",
+        "rollback": "persistent data is preserved; uninstall rollback is not automatic"
+      }
+    },
+    {
+      "id": "post-operation-health-failure",
+      "area": "health",
+      "description": "A successful adapter mutation still fails the operation when an allowlisted completion check fails.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"clockSeconds": 1500, "signals": {"adapter": "succeeded", "verification": "failed", "target": "lim"}},
+      "expected": {
+        "plan": {"orderedSteps": ["postgresql:start", "lim:start"], "blockedBy": [], "destructive": false, "deletesData": false},
+        "events": ["step-succeeded", "health-verification-failed", "operation-failed"],
+        "approval": "not-required",
+        "terminalState": "failed",
+        "health": "completion health is failed and the operation cannot report success",
+        "interfaces": {"api": "failed terminal state includes safe next action", "ui": "mutation success is not presented as healthy completion", "cli": "failed exit remains nonzero", "telegram": "failure notification links to sanitized health detail"},
+        "secretLeakage": {"redacted": true, "surfaces": []},
+        "recovery": "diagnose the allowlisted health check before retry",
+        "rollback": "workload or schema mutation is not automatically reversed"
+      }
+    }
+  ]
+}

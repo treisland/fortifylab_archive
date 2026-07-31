@@ -10,6 +10,11 @@ platform profiles.
 
 ### Added
 
+- A versioned, machine-checked 0.3 controlled-operations milestone gate
+  covering lifecycle ordering and recovery, approvals, Telegram failures,
+  write-only secrets, destructive boundaries, completion health, interface
+  parity, and seven-surface secret redaction while separating fixture and live
+  evidence.
 - Local CLI and authenticated HTTP API parity for typed lifecycle plans,
   authorization, session-bound approvals, durable progress, cancellation,
   retries, and completion health, with versioned secret-safe JSON, stable
