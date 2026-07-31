@@ -9,22 +9,18 @@ spec:
       port: @BACKEND_PORT@
       targetPort: @BACKEND_PORT@
 ---
-apiVersion: discovery.k8s.io/v1
-kind: EndpointSlice
+apiVersion: v1
+kind: Endpoints
 metadata:
   name: fortify-manager-host
   namespace: fortify
-  labels:
-    kubernetes.io/service-name: fortify-manager-host
-addressType: @ADDRESS_TYPE@
-endpoints:
-  - addresses: ["@BACKEND_ADDRESS@"]
-    conditions:
-      ready: true
-ports:
-  - name: http
-    port: @BACKEND_PORT@
-    protocol: TCP
+subsets:
+  - addresses:
+      - ip: @BACKEND_ADDRESS@
+    ports:
+      - name: http
+        port: @BACKEND_PORT@
+        protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress

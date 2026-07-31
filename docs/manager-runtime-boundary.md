@@ -51,6 +51,12 @@ namespace. Static manifests and tests must match the exact resource and verb
 allow-list in ADR 0009. Live MicroK8s validation is a later integration step,
 not evidence supplied by this architecture change.
 
+The host-backed Manager Service uses `discovery.k8s.io/v1` EndpointSlice on
+the supported MicroK8s profile. Layered operator diagnostics keep private
+backend discovery, ingress routing, TLS, operator DNS, and external
+reachability distinct. In particular, private HTTPS success is not evidence
+that operator DNS or AWS exposure is correct.
+
 ## Ordered implementation
 
 Implementation issues must preserve this dependency order:

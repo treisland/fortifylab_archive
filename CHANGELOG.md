@@ -1,5 +1,10 @@
 # Changelog
 
+- Modernize the Manager host backend to EndpointSlice with an explicit legacy
+  Endpoints compatibility path, and split route diagnostics into sanitized
+  private backend, ingress, TLS, DNS, and external reachability layers so DNS
+  pointing elsewhere cannot be reported healthy.
+
 ## Unreleased
 
 - Add an opt-in, bounded EC2 Manager upgrade acceptance gate with immutable

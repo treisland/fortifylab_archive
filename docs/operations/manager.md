@@ -46,7 +46,7 @@ sudo ./scripts/fortify-manager activate-lifecycle
 
 Use the lab domain and an address reachable from ingress pods, normally the
 EC2 instance's private IPv4 address. The renderer rejects public backend
-addresses. `configure` applies only the manager Service, Endpoints, and
+addresses. `configure` applies only the manager Service, EndpointSlice, and
 Ingress in namespace `fortify` and atomically aligns `server.port` in the
 external manager configuration; it does not alter the TLS Secret. Restart the
 service after changing an existing route. It validates and server-side
@@ -58,6 +58,13 @@ intact. Render without contacting MicroK8s using:
 ./scripts/fortify-manager render-ingress \
   fortifydemo.com 10.0.0.10 8080 /tmp/manager-ingress.yaml
 ```
+
+Kubernetes versions supporting `discovery.k8s.io/v1` use EndpointSlice and do
+not query deprecated core Endpoints. If API discovery proves EndpointSlice is
+unavailable, `configure` emits a warning and renders the legacy Endpoints
+compatibility manifest. For offline rendering only, an operator targeting
+such an older cluster may set `FORTIFY_MANAGER_ENDPOINT_API=legacy`. Do not
+use that override on the supported MicroK8s profile.
 
 The manager listens on `0.0.0.0:8080` so ingress can reach it. This does not
 authorize direct browser access to 8080.
@@ -309,8 +316,12 @@ handshake for each capability document.
 protected observer files, Kubernetes API reachability, actual observer
 permissions and workload allow-list, configuration/account permissions,
 systemd state, bounded backend readiness, server-side manifest
-acceptance, live Service/Endpoints/Ingress drift, and presence of the existing
-`tls` Secret. Override its name with `FORTIFY_MANAGER_TLS_SECRET` when a lab
+acceptance and live route drift. It then reports five bounded route layers:
+private backend EndpointSlice address/port, ingress hostname/class/backend,
+TLS Secret reference and private handshake, operator DNS, and external HTTPS
+reachability. A legacy Endpoints manifest is queried only on the documented
+compatibility path. Override the TLS Secret name with
+`FORTIFY_MANAGER_TLS_SECRET` when a lab
 uses a different existing wildcard Secret. Diagnostics report categories
 without reading or printing
 passwords, cookies, keys, certificate contents, environment dumps, external
@@ -331,12 +342,19 @@ For failures, check in this order:
 1. `systemctl status fortify-manager` for configuration, permissions, or bind
    failure.
 2. `curl --max-time 5 http://127.0.0.1:8080/ready` for host readiness.
-3. `microk8s kubectl -n fortify get endpoints fortify-manager-host` for the
-   expected private address and port.
+3. `microk8s kubectl -n fortify get endpointslices \
+   -l kubernetes.io/service-name=fortify-manager-host` for the expected private
+   address and port. Use core Endpoints only when diagnosing a documented
+   legacy manifest.
 4. `microk8s kubectl -n fortify describe ingress fortify-manager` for host,
    backend, ingress class, and the configured TLS Secret.
-5. Check operator DNS and Security Group rules.
-6. Check the browser certificate hostname and existing lab CA.
+5. Check operator DNS separately. DNS must resolve exclusively to the
+   configured private lab address; a successful private HTTPS probe does not
+   make a different DNS target healthy.
+6. Check Security Group reachability separately. Keep TCP 443 restricted to
+   an operator-controlled IP address or VPN CIDR, never `0.0.0.0/0`, and never
+   expose backend port 8080. Diagnostics do not recommend broadening sources.
+7. Check the browser certificate hostname and existing lab CA.
 
 Do not include account files, cookies, private keys, or unredacted journal
 output in support material.

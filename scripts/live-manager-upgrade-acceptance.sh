@@ -160,8 +160,9 @@ PY
 mark dns-resolution passed
 FAILURE_LAYER="ingress"
 bounded "$TIMEOUT_SECONDS" microk8s kubectl -n fortify get ingress fortify-manager >/dev/null || fail 11 "private HTTPS ingress is absent"
-ENDPOINT_ADDRESSES="$(bounded "$TIMEOUT_SECONDS" microk8s kubectl -n fortify get endpoints fortify-manager-host \
-    -o 'jsonpath={.subsets[*].addresses[*].ip}')" || fail 11 "Manager ingress endpoint is unavailable"
+ENDPOINT_ADDRESSES="$(bounded "$TIMEOUT_SECONDS" microk8s kubectl -n fortify get endpointslices.discovery.k8s.io \
+    -l kubernetes.io/service-name=fortify-manager-host \
+    -o 'jsonpath={.items[*].endpoints[*].addresses[*]}')" || fail 11 "Manager ingress EndpointSlice is unavailable"
 [ "$ENDPOINT_ADDRESSES" = "$PRIVATE_ADDRESS" ] || fail 11 "Manager ingress does not target the configured private address"
 mark private-https passed
 FAILURE_LAYER="remote-access"
