@@ -179,6 +179,7 @@ class FakeGitHub:
         self.discovered: list[dict[str, Any]] = [self.pr]
         self.merges: list[tuple[int, str]] = []
         self.readied: list[int] = []
+        self.ready_hook: Callable[[], None] | None = None
         self.closed_issues: list[int] = []
         self.created_issues: list[tuple[str, str]] = []
         self.issue: dict[str, Any] | None = {
@@ -209,6 +210,8 @@ class FakeGitHub:
         self.readied.append(number)
         self.pr["isDraft"] = False
         self.pr["mergeStateStatus"] = "CLEAN"
+        if self.ready_hook is not None:
+            self.ready_hook()
 
     def close_issue(self, number: int) -> None:
         self.closed_issues.append(number)
@@ -474,11 +477,11 @@ class SupervisorTest(unittest.TestCase):
         )
         self.store.set("current_issue", "12")
         self.store.set("current_pr", "12")
-        self.github.pr["isDraft"] = False
 
     def test_autonomous_merge_requires_every_gate_and_notifies(self) -> None:
         self.activate_autonomous()
         self.supervisor.monitor_once()
+        self.assertEqual(self.github.readied, [12])
         self.assertEqual(self.github.merges, [(12, "abc123")])
         kinds = {
             row["kind"]
@@ -539,6 +542,7 @@ class SupervisorTest(unittest.TestCase):
 
     def test_lease_expiring_during_monitor_blocks_merge_and_reverts(self) -> None:
         self.activate_autonomous()
+        self.github.pr["isDraft"] = False
         expiry = datetime.datetime.fromisoformat(
             self.supervisor.policy.expires_at.replace("Z", "+00:00")
         )
@@ -554,6 +558,19 @@ class SupervisorTest(unittest.TestCase):
             self.supervisor.verify_autonomous_merge(self.github.pr, payload)
         self.assertEqual(self.supervisor.policy.profile, "assisted")
         self.assertEqual(self.github.merges, [])
+
+    def test_lease_expiring_while_marking_ready_blocks_merge_and_reverts(self) -> None:
+        self.activate_autonomous()
+        expiry = datetime.datetime.fromisoformat(
+            self.supervisor.policy.expires_at.replace("Z", "+00:00")
+        )
+        self.github.ready_hook = lambda: self.clock.__setitem__(0, expiry.timestamp())
+
+        self.supervisor.monitor_once()
+
+        self.assertEqual(self.github.readied, [12])
+        self.assertEqual(self.github.merges, [])
+        self.assertEqual(self.supervisor.policy.profile, "assisted")
 
     def test_expired_lease_survives_restart_and_reverts_before_action(self) -> None:
         path = self.configure_policy_file()

@@ -2030,12 +2030,19 @@ class Supervisor:
         pr = self.github.pull_request(int(payload["pull_request"]))
         self.verify_merge_plan(pr, payload, allow_draft=True)
         if actor == "autonomy-policy":
-            self.verify_autonomous_merge(pr, payload)
+            self.verify_autonomous_merge(pr, payload, allow_draft=True)
         self.store.decide(approval_id, "approved", actor)
         try:
             if pr.get("isDraft"):
                 self.github.ready(int(payload["pull_request"]))
-                pr = self.github.pull_request(int(payload["pull_request"]))
+            pr = self.github.pull_request(int(payload["pull_request"]))
+            if actor == "autonomy-policy":
+                # Readiness is a remote mutation and the lease, head, checks,
+                # review, or policy state can change while it completes.
+                # Re-evaluate every unattended gate against a fresh PR
+                # immediately before the exact-SHA merge.
+                self.verify_autonomous_merge(pr, payload)
+            else:
                 self.verify_merge_plan(pr, payload)
             self.github.merge(int(payload["pull_request"]), payload["head_sha"])
         except Exception:
@@ -2343,10 +2350,15 @@ class Supervisor:
                 f"PR merge state is {pr.get('mergeStateStatus', 'unknown')}"
             )
 
-    def verify_autonomous_merge(self, pr: dict[str, Any], payload: dict[str, Any]) -> None:
+    def verify_autonomous_merge(
+        self,
+        pr: dict[str, Any],
+        payload: dict[str, Any],
+        allow_draft: bool = False,
+    ) -> None:
         """Apply every fail-closed gate unique to unattended merging."""
 
-        self.verify_merge_plan(pr, payload)
+        self.verify_merge_plan(pr, payload, allow_draft=allow_draft)
         if self.revert_expired_lease():
             raise SupervisorError("Autonomous lease expired before merge")
         if self.policy.profile != "autonomous" or self.policy.expires_at is None:
@@ -2559,7 +2571,7 @@ class Supervisor:
             )
         if merge_decision == "auto":
             try:
-                self.verify_autonomous_merge(pr, payload)
+                self.verify_autonomous_merge(pr, payload, allow_draft=True)
                 self.approve(str(approval["id"]), "autonomy-policy")
             except SupervisorError as error:
                 merged = self.store.notification(
