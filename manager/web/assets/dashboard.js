@@ -36,6 +36,8 @@ let refreshGeneration = 0;
 let sessionExpired = false;
 let lifecycleCapability = null;
 let capabilityExpiresAt = 0;
+let preflightReadiness = null;
+let preflightGeneratedAt = 0;
 let selectedComponentId = null;
 let componentOpener = null;
 const panelDocuments = new Map();
@@ -243,6 +245,10 @@ function renderHealth(document) {
 
 function renderPreflight(document) {
   const items = Array.isArray(document.items) ? document.items : [];
+  const generated = new Date(document.generatedAt);
+  preflightReadiness = document.readiness && typeof document.readiness === "object"
+    ? document.readiness : null;
+  preflightGeneratedAt = Number.isNaN(generated.valueOf()) ? 0 : generated.valueOf();
   const state = byId("preflight-state");
   state.className = `status ${document.ready ? "healthy" : "blocked"}`;
   text(state, document.ready ? "Ready" : "Blocked");
@@ -277,6 +283,7 @@ function renderPreflight(document) {
         : `${age.stale ? "Stale" : "Current"} · Evidence ${age.label}. ${document.ready ? "No blockers." : "Open the listed safe remediation before deployment."}`,
     document.generatedAt
   );
+  updateSelectedActionControls();
 }
 
 function renderAvailability(document) {
@@ -571,6 +578,7 @@ function renderCapabilities(document) {
   capabilityExpiresAt = expires.valueOf();
   const available = lifecycleCapability?.state === "available" && lifecycleCapability?.canMutate === true;
   setOperationsAvailable(available, lifecycleCapability?.code, lifecycleCapability?.state || "unavailable");
+  updateSelectedActionControls();
   panelState("capabilities", "available", "Current · Effective Manager capability evidence is authoritative for controls.", document.generatedAt);
 }
 
@@ -693,9 +701,37 @@ function operationRequest() {
   };
 }
 
+function selectedActionReadiness() {
+  const action = byId("operation").value;
+  const evidence = preflightReadiness?.[action];
+  const current = preflightGeneratedAt > 0 && Date.now() - preflightGeneratedAt <= 300000;
+  return {
+    ready: current && evidence?.ready === true,
+    code: current
+      ? (Array.isArray(evidence?.blockers) && evidence.blockers[0]) || "ACTION_NOT_READY"
+      : "PREFLIGHT_EVIDENCE_STALE_OR_UNAVAILABLE"
+  };
+}
+
+function updateSelectedActionControls() {
+  const submit = byId("operation-form").querySelector('button[type="submit"]');
+  const lifecycleReady = lifecycleCapability?.state === "available"
+    && lifecycleCapability?.canMutate === true
+    && capabilityExpiresAt > Date.now();
+  const readiness = selectedActionReadiness();
+  submit.disabled = !(lifecycleReady && readiness.ready);
+  if (!byId("operation-plan").hidden) byId("execute-operation").disabled = !(lifecycleReady && readiness.ready);
+  if (lifecycleReady && !readiness.ready) {
+    panelState("operations", "unavailable", `Unavailable for selected action · ${readiness.code}. Refresh and follow preflight remediation.`, panelDocuments.get("preflight")?.generatedAt);
+  }
+}
+
+byId("operation").addEventListener("change", updateSelectedActionControls);
+
 byId("operation-form").addEventListener("submit", async event => {
   event.preventDefault();
   try {
+    if (!selectedActionReadiness().ready) throw new Error("Selected action is not ready. Refresh preflight evidence and resolve its blockers.");
     selectedPlan = await mutate("/api/v1alpha1/lab/plans", operationRequest());
     text(byId("plan-risk"), `${selectedPlan.risk} risk`);
     text(byId("plan-impact"), `${selectedPlan.impact} ${selectedPlan.dependencyImpact.length ? `Automatic expansion: ${selectedPlan.dependencyImpact.join(", ")}.` : "No automatic expansion."} Estimated duration: up to ${selectedPlan.estimatedDurationSeconds}s.`);
@@ -731,6 +767,7 @@ byId("operation-confirmation").addEventListener("close", () => {
 
 async function startOperation() {
   try {
+    if (!selectedActionReadiness().ready) throw new Error("Selected action readiness changed. Refresh and review a new plan.");
     const request = {operation: selectedPlan.operation, components: selectedPlan.requestedTargets};
     if (selectedPlan.approvalRequired) {
       const approval = await mutate("/api/v1alpha1/approvals", request);

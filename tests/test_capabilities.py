@@ -33,11 +33,19 @@ class CapabilityProviderTests(unittest.TestCase):
             functional_health_state=lambda: True,
             lifecycle_enabled=True,
             lifecycle_configured=True,
+            lifecycle_credential_state=lambda: True,
+            lifecycle_authorization_state=lambda: True,
+            lifecycle_adapter_state=lambda: True,
             approvals_configured=True,
+            approvals_state=lambda: True,
             recovery_configured=True,
+            recovery_state=lambda: True,
             upgrades_configured=True,
+            upgrades_state=lambda: True,
             secrets_configured=True,
+            secrets_state=lambda: True,
             notifications_configured=True,
+            notifications_state=lambda: True,
         ).document()
         schema = json.loads(
             (ROOT / "registry/schemas/manager-capabilities.schema.json").read_text()
@@ -88,6 +96,9 @@ class CapabilityProviderTests(unittest.TestCase):
             observation_state=lambda: "unavailable",
             lifecycle_enabled=True,
             lifecycle_configured=True,
+            lifecycle_credential_state=lambda: True,
+            lifecycle_authorization_state=lambda: True,
+            lifecycle_adapter_state=lambda: True,
             approvals_configured=True,
         ).document()
         capability = states(document)
@@ -106,6 +117,9 @@ class CapabilityProviderTests(unittest.TestCase):
             observation_state=lambda: "available",
             lifecycle_enabled=True,
             lifecycle_configured=True,
+            lifecycle_credential_state=lambda: True,
+            lifecycle_authorization_state=lambda: True,
+            lifecycle_adapter_state=lambda: True,
             authorized=lambda _identity, capability: capability != "lifecycle-execution",
         ).document(object())
         lifecycle = states(document)["lifecycle-execution"]
@@ -119,6 +133,9 @@ class CapabilityProviderTests(unittest.TestCase):
             observation_state=lambda: observation[0],
             lifecycle_enabled=True,
             lifecycle_configured=True,
+            lifecycle_credential_state=lambda: True,
+            lifecycle_authorization_state=lambda: True,
+            lifecycle_adapter_state=lambda: True,
         )
         self.assertFalse(
             states(provider.document())["lifecycle-execution"]["canMutate"]
@@ -127,6 +144,27 @@ class CapabilityProviderTests(unittest.TestCase):
         recovered = provider.document()
         self.assertTrue(states(recovered)["lifecycle-execution"]["canMutate"])
         self.assertEqual(recovered["refreshAfterSeconds"], 30)
+
+    def test_composed_runtime_services_fail_closed_and_recover(self):
+        credential = [False]
+        adapter = [True]
+        provider = self.provider(
+            observation_state=lambda: "available",
+            lifecycle_enabled=True,
+            lifecycle_configured=True,
+            lifecycle_credential_state=lambda: credential[0],
+            lifecycle_authorization_state=lambda: True,
+            lifecycle_adapter_state=lambda: adapter[0],
+        )
+        first = states(provider.document())["lifecycle-execution"]
+        self.assertEqual(first["code"], "LIFECYCLE_CREDENTIAL_UNAVAILABLE")
+        credential[0] = True
+        adapter[0] = False
+        self.assertEqual(
+            states(provider.document())["lifecycle-execution"]["state"], "degraded"
+        )
+        adapter[0] = True
+        self.assertTrue(states(provider.document())["lifecycle-execution"]["canMutate"])
 
 
 class CapabilityAPITests(unittest.TestCase):

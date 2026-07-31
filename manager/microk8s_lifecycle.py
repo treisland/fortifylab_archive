@@ -66,6 +66,48 @@ class MicroK8sLifecycleAdapter(OperationAdapter):
         self._monotonic = monotonic
         self._poll_interval = poll_interval
 
+    def runtime_ready(self) -> bool:
+        """Verify the installed, allow-listed adapter closure without executing it."""
+        if not Path("/bin/bash").is_file():
+            return False
+        operations = (
+            operation
+            for component_id in self._registry.component_ids
+            for operation in self._registry.lifecycle_operations(component_id)
+        )
+        adapters = {operation["adapter"] for operation in operations}
+        return bool(adapters) and all(
+            (self._root / adapter).resolve().is_file()
+            and (self._root / adapter).resolve().is_relative_to(self._root / "apps")
+            for adapter in adapters
+        ) and (Path(LIFECYCLE_CLIENT_ROOT) / "microk8s").is_file() and bool(
+            (Path(LIFECYCLE_CLIENT_ROOT) / "microk8s").stat().st_mode & 0o111
+        )
+
+    def credential_authorized(self) -> bool:
+        """Bounded positive and mandatory-denial checks for the live credential."""
+        command = str(Path(LIFECYCLE_CLIENT_ROOT) / "microk8s")
+        environment = {
+            "PATH": f"{LIFECYCLE_CLIENT_ROOT}:/usr/sbin:/usr/bin:/sbin:/bin",
+            "KUBECONFIG": LIFECYCLE_KUBECONFIG,
+        }
+        checks = (
+            ([command, "kubectl", "auth", "can-i", "get", "configmaps", "-n", self._namespace], "yes"),
+            ([command, "kubectl", "auth", "can-i", "get", "secrets", "-n", self._namespace], "no"),
+        )
+        try:
+            for arguments, expected in checks:
+                result = subprocess.run(
+                    arguments, env=environment, stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    text=True, timeout=3, check=False,
+                )
+                if result.returncode != 0 or result.stdout.strip() != expected:
+                    return False
+            return True
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
     def execute(
         self, step: Step, *, deadline: float, cancelled: Callable[[], bool]
     ) -> None:

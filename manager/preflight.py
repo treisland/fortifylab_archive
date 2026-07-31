@@ -6,13 +6,19 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from manager.component_registry import ComponentRegistry
 
 
 API_VERSION = "fortifylab.io/v1alpha1"
 RESULT_STATES = frozenset({"pass", "warning", "fail"})
+ACTION_CHECKS = {
+    "observation": ("microk8s",),
+    "deployment": (),  # Every check applies.
+    "start": ("microk8s", "storage", "configuration", "compatibility"),
+    "suspend": ("microk8s",),
+}
 
 
 @dataclass(frozen=True)
@@ -63,6 +69,7 @@ class PreflightEngine:
         max_probe_timeout: float = 30.0,
         max_workers: int = 6,
         aggregate_timeout: float | None = None,
+        capability_provider: Callable[[], dict[str, Any]] | None = None,
     ) -> None:
         self._registry = registry
         self._probe = probe or UnavailablePreflightProbe()
@@ -72,6 +79,7 @@ class PreflightEngine:
         self._aggregate_timeout = (
             max_probe_timeout if aggregate_timeout is None else aggregate_timeout
         )
+        self._capability_provider = capability_provider
 
     def document(self) -> dict:
         generated_at = self._clock()
@@ -104,11 +112,14 @@ class PreflightEngine:
             )
             for classification in ("blocker", "warning", "information")
         }
+        readiness = self._readiness(items)
         return {
             "apiVersion": API_VERSION,
             "kind": "DeploymentPreflight",
             "generatedAt": _timestamp(generated_at),
-            "ready": counts["blocker"] == 0,
+            # Backward-compatible alias for deployment clients.
+            "ready": readiness["deployment"]["ready"],
+            "readiness": readiness,
             "profile": {
                 "id": self._registry.profile.id,
                 "maturity": self._registry.profile.maturity,
@@ -125,6 +136,40 @@ class PreflightEngine:
             },
             "items": items,
         }
+
+    def _readiness(self, items: list[dict]) -> dict[str, dict[str, Any]]:
+        failed = {
+            item["id"] for item in items if item["classification"] == "blocker"
+        }
+        capability_states: dict[str, dict[str, Any]] = {}
+        if self._capability_provider is not None:
+            try:
+                document = self._capability_provider()
+                expires_at = _instant(document.get("expiresAt"))
+                if expires_at > self._clock():
+                    capability_states = {
+                        item["id"]: item for item in document.get("capabilities", [])
+                    }
+            except (RuntimeError, OSError, ValueError, TypeError):
+                capability_states = {}
+
+        readiness: dict[str, dict[str, Any]] = {}
+        for action, applicable in ACTION_CHECKS.items():
+            check_blockers = sorted(failed if not applicable else failed.intersection(applicable))
+            blockers = [f"PREFLIGHT_{item.upper().replace('-', '_')}" for item in check_blockers]
+            if action in {"deployment", "start", "suspend"}:
+                lifecycle = capability_states.get("lifecycle-execution")
+                if lifecycle is None or lifecycle.get("state") != "available" or lifecycle.get("canMutate") is not True:
+                    blockers.append(
+                        str((lifecycle or {}).get("code") or "LIFECYCLE_EVIDENCE_UNAVAILABLE")
+                    )
+            if action == "observation" and isinstance(self._probe, UnavailablePreflightProbe):
+                blockers.append("OBSERVER_NOT_CONFIGURED")
+            readiness[action] = {
+                "ready": not blockers,
+                "blockers": list(dict.fromkeys(blockers)),
+            }
+        return readiness
 
     def _result(
         self,
@@ -213,3 +258,12 @@ def _timestamp(value: datetime) -> str:
     if value.tzinfo is None:
         raise ValueError("preflight timestamp must include a timezone")
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _instant(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("capability evidence has no expiry")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("capability evidence expiry has no timezone")
+    return parsed.astimezone(timezone.utc)

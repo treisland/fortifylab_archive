@@ -73,7 +73,11 @@ class OperationEngineTests(unittest.TestCase):
         self.adapter = RecordingAdapter()
         self.verifier = RecordingVerifier()
         self.engine = OperationEngine(
-            self.registry, self.store, self.adapter, self.verifier
+            self.registry, self.store, self.adapter, self.verifier,
+            preflight_provider=lambda: {"readiness": {
+                action: {"ready": True, "blockers": []}
+                for action in ("deploy", "start", "suspend")
+            }},
         )
 
     def tearDown(self) -> None:

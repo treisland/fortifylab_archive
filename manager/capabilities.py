@@ -42,11 +42,19 @@ class CapabilityProvider:
         functional_health_state: Callable[[], bool] | None = None,
         lifecycle_enabled: bool = False,
         lifecycle_configured: bool = False,
+        lifecycle_credential_state: Callable[[], bool] | None = None,
+        lifecycle_authorization_state: Callable[[], bool] | None = None,
+        lifecycle_adapter_state: Callable[[], bool] | None = None,
         approvals_configured: bool = False,
+        approvals_state: Callable[[], bool] | None = None,
         recovery_configured: bool = False,
+        recovery_state: Callable[[], bool] | None = None,
         upgrades_configured: bool = False,
+        upgrades_state: Callable[[], bool] | None = None,
         secrets_configured: bool = False,
+        secrets_state: Callable[[], bool] | None = None,
         notifications_configured: bool = False,
+        notifications_state: Callable[[], bool] | None = None,
         authorized: Callable[[Any, str], bool] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -55,11 +63,19 @@ class CapabilityProvider:
         self._functional_health_state = functional_health_state
         self._lifecycle_enabled = lifecycle_enabled
         self._lifecycle_configured = lifecycle_configured
+        self._lifecycle_credential_state = lifecycle_credential_state
+        self._lifecycle_authorization_state = lifecycle_authorization_state
+        self._lifecycle_adapter_state = lifecycle_adapter_state
         self._approvals_configured = approvals_configured
+        self._approvals_state = approvals_state
         self._recovery_configured = recovery_configured
+        self._recovery_state = recovery_state
         self._upgrades_configured = upgrades_configured
+        self._upgrades_state = upgrades_state
         self._secrets_configured = secrets_configured
+        self._secrets_state = secrets_state
         self._notifications_configured = notifications_configured
+        self._notifications_state = notifications_state
         self._authorized = authorized or (lambda _identity, _capability: True)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
 
@@ -73,23 +89,28 @@ class CapabilityProvider:
             lifecycle,
             self._dependent(
                 "approvals", identity, lifecycle, self._approvals_configured,
-                "APPROVALS_NOT_CONFIGURED", "operations/authorization",
+                self._approvals_state, "APPROVALS_NOT_CONFIGURED",
+                "APPROVAL_STORE_UNAVAILABLE", "operations/authorization",
             ),
             self._dependent(
                 "backup-restore", identity, lifecycle, self._recovery_configured,
-                "BACKUP_RESTORE_NOT_CONFIGURED", "operations/backup-restore",
+                self._recovery_state, "BACKUP_RESTORE_NOT_CONFIGURED",
+                "RECOVERY_HELPER_UNAVAILABLE", "operations/backup-restore",
             ),
             self._dependent(
                 "upgrades", identity, lifecycle, self._upgrades_configured,
-                "UPGRADES_NOT_CONFIGURED", "operations/profile-upgrades",
+                self._upgrades_state, "UPGRADES_NOT_CONFIGURED",
+                "UPGRADE_SERVICE_UNAVAILABLE", "operations/profile-upgrades",
             ),
             self._configured(
                 "secret-workflows", identity, self._secrets_configured,
-                "SECRET_WORKFLOWS_NOT_CONFIGURED", "operations/write-only-secrets",
+                self._secrets_state, "SECRET_WORKFLOWS_NOT_CONFIGURED",
+                "SECRET_SERVICE_UNAVAILABLE", "operations/write-only-secrets",
             ),
             self._configured(
                 "notifications", identity, self._notifications_configured,
-                "NOTIFICATIONS_NOT_CONFIGURED", "operations/telegram-observability",
+                self._notifications_state, "NOTIFICATIONS_NOT_CONFIGURED",
+                "NOTIFICATION_PROVIDER_UNAVAILABLE", "operations/telegram-observability",
             ),
         ]
         return {
@@ -177,6 +198,21 @@ class CapabilityProvider:
                 "lifecycle-execution", "temporarily-unavailable", True, False,
                 "OBSERVER_DISCONNECTED", "operations/lifecycle-engine",
             )
+        if not _current(self._lifecycle_credential_state):
+            return _entry(
+                "lifecycle-execution", "temporarily-unavailable", True, False,
+                "LIFECYCLE_CREDENTIAL_UNAVAILABLE", "operations/lifecycle-engine",
+            )
+        if not _current(self._lifecycle_authorization_state):
+            return _entry(
+                "lifecycle-execution", "unauthorized", True, False,
+                "LIFECYCLE_CREDENTIAL_UNAUTHORIZED", "operations/lifecycle-engine",
+            )
+        if not _current(self._lifecycle_adapter_state):
+            return _entry(
+                "lifecycle-execution", "degraded", True, False,
+                "LIFECYCLE_ADAPTER_UNAVAILABLE", "operations/lifecycle-engine",
+            )
         return _entry(
             "lifecycle-execution", "available", True, True,
             "OPERATIONS_AVAILABLE", "operations/lifecycle-engine",
@@ -184,7 +220,8 @@ class CapabilityProvider:
 
     def _dependent(
         self, capability_id: str, identity: Any, lifecycle: dict[str, Any],
-        configured: bool, missing_code: str, docs: str,
+        configured: bool, runtime_state: Callable[[], bool] | None,
+        missing_code: str, unavailable_code: str, docs: str,
     ) -> dict[str, Any]:
         if not self._authorized(identity, capability_id):
             return _unauthorized(capability_id, docs)
@@ -197,6 +234,11 @@ class CapabilityProvider:
                 capability_id, lifecycle["state"], True, False,
                 lifecycle["code"], docs,
             )
+        if not _current(runtime_state):
+            return _entry(
+                capability_id, "temporarily-unavailable", True, False,
+                unavailable_code, docs,
+            )
         return _entry(
             capability_id, "available", True, True,
             f"{capability_id.replace('-', '_').upper()}_AVAILABLE", docs,
@@ -204,21 +246,34 @@ class CapabilityProvider:
 
     def _configured(
         self, capability_id: str, identity: Any, configured: bool,
-        missing_code: str, docs: str,
+        runtime_state: Callable[[], bool] | None, missing_code: str,
+        unavailable_code: str, docs: str,
     ) -> dict[str, Any]:
         if not self._authorized(identity, capability_id):
             return _unauthorized(capability_id, docs)
+        if not configured:
+            return _entry(
+                capability_id, "not-configured", True, False, missing_code, docs
+            )
+        if not _current(runtime_state):
+            return _entry(
+                capability_id, "temporarily-unavailable", True, False,
+                unavailable_code, docs,
+            )
         return _entry(
-            capability_id,
-            "available" if configured else "not-configured",
-            True,
-            configured,
-            (
-                f"{capability_id.replace('-', '_').upper()}_AVAILABLE"
-                if configured else missing_code
-            ),
-            docs,
+            capability_id, "available", True, True,
+            f"{capability_id.replace('-', '_').upper()}_AVAILABLE", docs,
         )
+
+
+def _current(check: Callable[[], bool] | None) -> bool:
+    """Fail closed when composed services cannot provide current evidence."""
+    if check is None:
+        return False
+    try:
+        return check() is True
+    except (RuntimeError, OSError, ValueError, TypeError):
+        return False
 
 
 def _unauthorized(capability_id: str, docs: str) -> dict[str, Any]:

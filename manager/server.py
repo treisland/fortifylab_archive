@@ -26,6 +26,7 @@ from manager.health import CheckSpec
 from manager.record_store import LoopRecordStore
 from manager.authorization import ApprovalStore, AuthorizationService
 from manager.microk8s_lifecycle import (
+    LIFECYCLE_KUBECONFIG,
     MicroK8sLifecycleAdapter,
     RegistryHealthVerifier,
 )
@@ -127,6 +128,8 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     functional_health_configured = False
     functional_probe = None
     recovery_service = None
+    lifecycle_adapter = None
+    approval_store = None
     if cluster:
         try:
             functional_probe = (
@@ -179,10 +182,11 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
                 )
             return states
 
+        lifecycle_adapter = MicroK8sLifecycleAdapter(registry)
         engine = OperationEngine(
             registry,
             operation_store,
-            MicroK8sLifecycleAdapter(registry),
+            lifecycle_adapter,
             RegistryHealthVerifier(registry, observer),
             authorization=authorization,
             state_provider=component_states,
@@ -197,35 +201,61 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
             recovery=recovery_service,
         )
         store._lifecycle_stores = (operation_store, approval_store)
+    observation_state = (
+        lambda: ComponentInventory(registry, observer).document()
+        .get("observation", {}).get("state", "unavailable")
+    ) if observer is not None else None
+    capability_provider = CapabilityProvider(
+        observation_state=observation_state,
+        functional_health_configured=functional_health_configured,
+        functional_health_state=(
+            functional_probe.handshake if functional_probe is not None else None
+        ),
+        lifecycle_enabled=config["lifecycle_enabled"],
+        lifecycle_configured=operation_api is not None,
+        lifecycle_credential_state=(
+            lambda: Path(LIFECYCLE_KUBECONFIG).is_file()
+            and os.access(LIFECYCLE_KUBECONFIG, os.R_OK)
+        ) if operation_api is not None else None,
+        lifecycle_authorization_state=(
+            lifecycle_adapter.credential_authorized
+            if lifecycle_adapter is not None else None
+        ),
+        lifecycle_adapter_state=(
+            lifecycle_adapter.runtime_ready if lifecycle_adapter is not None else None
+        ),
+        approvals_configured=operation_api is not None,
+        approvals_state=(
+            lambda: approval_store.connection.execute("SELECT 1").fetchone() is not None
+        ) if approval_store is not None else None,
+        recovery_configured=recovery_service is not None,
+        recovery_state=(
+            lambda: _configured_socket_ready(config.get("recovery", {}).get("helper_socket"))
+        ) if recovery_service is not None else None,
+    )
     api = ManagerAPI(
         registry_loader=lambda: registry,
         observer=observer,
         health_probe=observer,
         preflight_probe=observer,
+        preflight_capability_provider=capability_provider.document,
         history_reader=StoreHistoryReader(store, operation_store),
         availability_monitor=AvailabilityMonitor(registry, observer),
     )
-    observation_state = (
-        lambda: ComponentInventory(registry, observer).document()
-        .get("observation", {}).get("state", "unavailable")
-    ) if observer is not None else None
     return DashboardApp(
         accounts=accounts,
         api=api,
         operation_api=operation_api,
-        capability_provider=CapabilityProvider(
-            observation_state=observation_state,
-            functional_health_configured=functional_health_configured,
-            functional_health_state=(
-                functional_probe.handshake if functional_probe is not None else None
-            ),
-            lifecycle_enabled=config["lifecycle_enabled"],
-            lifecycle_configured=operation_api is not None,
-            approvals_configured=operation_api is not None,
-            recovery_configured=recovery_service is not None,
-        ),
+        capability_provider=capability_provider,
         secure_cookies=True,
     ), store
+
+
+def _configured_socket_ready(value: object) -> bool:
+    try:
+        return stat.S_ISSOCK(Path(str(value)).stat().st_mode)
+    except (OSError, TypeError, ValueError):
+        return False
 
 
 def _build_recovery(config, registry, database, parent_store):

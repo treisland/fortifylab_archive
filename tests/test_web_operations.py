@@ -111,7 +111,14 @@ class WebOperationTests(unittest.TestCase):
             Verifier(),
             authorization=self.authorization,
             state_provider=lambda targets: {target: "running" for target in targets},
-            preflight_provider=lambda: {"ready": True, "items": []},
+            preflight_provider=lambda: {
+                "ready": True,
+                "readiness": {
+                    action: {"ready": True, "blockers": []}
+                    for action in ("deploy", "start", "suspend")
+                },
+                "items": [],
+            },
             footprint_provider=lambda targets: {
                 target: "absent" for target in targets
             },

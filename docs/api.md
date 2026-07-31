@@ -233,6 +233,13 @@ interpretation are documented in
 [Deployment preflight](deployment-preflight.md); its schema is
 [`registry/schemas/preflight-report.schema.json`](../registry/schemas/preflight-report.schema.json).
 
+The response exposes separate `readiness.observation`,
+`readiness.deployment`, `readiness.start`, and `readiness.suspend` results,
+each with `ready` and sanitized blocker codes. Top-level `ready` is a
+compatibility alias for deployment readiness. Mutation readiness additionally
+requires unexpired effective capability evidence; observation can remain ready
+while lifecycle mutation is disabled or unavailable.
+
 Profile transition planning uses
 `POST /api/v1alpha1/profile-upgrades/plans`; submission and status use
 `POST /api/v1alpha1/profile-upgrades` and

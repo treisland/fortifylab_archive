@@ -384,6 +384,7 @@ class OperationEngine:
         self, action: str, component_id: str | None = None
     ) -> dict[str, Any]:
         """Plan one profile or component-centered lab transition."""
+        self._require_action_ready(action)
         operation, requested, steps = self._lab_steps(action, component_id)
         plan = self._describe_plan(operation, requested, steps)
         selected = set(requested)
@@ -443,6 +444,7 @@ class OperationEngine:
         approval_id: str | None = None,
         retry_of: str | None = None,
     ) -> dict[str, Any]:
+        self._require_action_ready(action)
         operation, requested, steps = self._lab_steps(action, component_id)
         document, prepared = self._prepare_steps(
             operation,
@@ -482,6 +484,17 @@ class OperationEngine:
         self._store.update(document)
         self._start_worker(document, prepared)
         return self._store.get(document["id"])
+
+    def _require_action_ready(self, action: str) -> None:
+        if self._preflight_provider is None:
+            raise PreflightBlocked("selected action readiness is unavailable")
+        try:
+            report = self._preflight_provider()
+            readiness = report.get("readiness", {}).get(action, {})
+        except Exception as error:
+            raise PreflightBlocked("selected action readiness is unavailable") from error
+        if readiness.get("ready") is not True:
+            raise PreflightBlocked("selected action has blocking prerequisites")
 
     def _prepare(
         self,

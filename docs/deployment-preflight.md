@@ -10,8 +10,9 @@ is a sanitized blocker for observable checks and is retried on the next
 request.
 
 `GET /api/v1alpha1/preflight` tells an authenticated user whether the
-single-node MicroK8s lab is ready for deployment. Run it immediately before a
-deployment operation. It is a read-only, repeatable observation: it does not
+single-node MicroK8s lab is ready for observation, deployment, start, and
+suspend independently. Run it immediately before an operation. It is a
+read-only, repeatable observation: it does not
 install MicroK8s, enable addons, create namespaces or Secrets, pull images,
 write files, rotate certificates, or otherwise repair a failure.
 
@@ -65,7 +66,22 @@ actionable blocker; it is never treated as a pass.
 
 ## Interpretation
 
-The top-level `ready` value is `true` only when there are no blockers.
+The top-level `ready` value remains a backward-compatible alias for
+`readiness.deployment.ready`. New consumers use the selected readiness entry:
+
+| Readiness | Required evidence |
+| --- | --- |
+| `observation` | Runtime adapter and usable MicroK8s observation; lifecycle may remain disabled. |
+| `deployment` | Every check plus fresh available lifecycle mutation. |
+| `start` | MicroK8s, storage, configuration, compatibility, and lifecycle mutation. |
+| `suspend` | MicroK8s observation and lifecycle mutation; deployment-only license or image blockers do not prevent suspend. |
+
+Each entry contains `ready` and sanitized `blockers`. Missing, expired,
+malformed, or contradictory capability evidence blocks mutation actions but
+does not block observation. The server repeats this evaluation before plan
+creation and execution submission. The browser disables **Review plan** and
+**Run operation** when selected-action evidence is blocked or stale.
+
 `summary` counts all classifications:
 
 | Classification | Meaning |
@@ -177,6 +193,12 @@ baseline is experimental, not vendor-supported; see
   "kind": "DeploymentPreflight",
   "generatedAt": "2026-07-30T12:00:00Z",
   "ready": false,
+  "readiness": {
+    "observation": {"ready": true, "blockers": []},
+    "deployment": {"ready": false, "blockers": ["PREFLIGHT_EXTERNAL_LICENSE"]},
+    "start": {"ready": true, "blockers": []},
+    "suspend": {"ready": true, "blockers": []}
+  },
   "profile": {"id": "fortify-24.4-eval.1", "maturity": "experimental", "vendorSupported": false},
   "summary": {"blocker": 1, "warning": 0, "information": 11},
   "evidence": {"source": "runtime-adapter", "mode": "read-only"},

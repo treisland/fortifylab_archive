@@ -69,6 +69,12 @@ class PreflightTests(unittest.TestCase):
         self.probe = FakeProbe()
 
     def engine(self, probe=None, **kwargs):
+        kwargs.setdefault(
+            "capability_provider",
+            lambda: {"expiresAt": "2099-01-01T00:00:00Z", "capabilities": [{
+                "id": "lifecycle-execution", "state": "available", "canMutate": True
+            }]},
+        )
         return PreflightEngine(
             self.registry,
             probe or self.probe,
@@ -80,6 +86,10 @@ class PreflightTests(unittest.TestCase):
         document = self.engine().document()
         Draft202012Validator(SCHEMA).validate(document)
         self.assertTrue(document["ready"])
+        self.assertTrue(document["readiness"]["observation"]["ready"])
+        self.assertTrue(document["readiness"]["deployment"]["ready"])
+        self.assertTrue(document["readiness"]["start"]["ready"])
+        self.assertTrue(document["readiness"]["suspend"]["ready"])
         self.assertEqual(
             document["summary"],
             {"blocker": 0, "warning": 0, "information": 12},
@@ -175,6 +185,34 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(second["ready"])
         self.assertEqual(by_id(second)["external-license"]["status"], "pass")
         self.assertEqual(len(self.probe.calls), 12)
+
+    def test_observation_can_be_ready_while_mutation_is_unavailable(self):
+        document = self.engine(capability_provider=None).document()
+        self.assertTrue(document["readiness"]["observation"]["ready"])
+        for action in ("deployment", "start", "suspend"):
+            self.assertFalse(document["readiness"][action]["ready"])
+            self.assertIn(
+                "LIFECYCLE_EVIDENCE_UNAVAILABLE",
+                document["readiness"][action]["blockers"],
+            )
+
+    def test_action_specific_blockers_do_not_overblock_suspend(self):
+        self.probe.results["external-license"] = PreflightResult("fail")
+        document = self.engine().document()
+        self.assertFalse(document["readiness"]["deployment"]["ready"])
+        self.assertTrue(document["readiness"]["start"]["ready"])
+        self.assertTrue(document["readiness"]["suspend"]["ready"])
+
+    def test_stale_capability_evidence_blocks_every_mutation_action(self):
+        document = self.engine(capability_provider=lambda: {
+            "expiresAt": "2026-07-30T11:59:59Z",
+            "capabilities": [{
+                "id": "lifecycle-execution", "state": "available", "canMutate": True
+            }],
+        }).document()
+        self.assertTrue(document["readiness"]["observation"]["ready"])
+        for action in ("deployment", "start", "suspend"):
+            self.assertFalse(document["readiness"][action]["ready"])
 
     def test_adapter_exception_details_never_enter_report(self):
         class UnsafeProbe:

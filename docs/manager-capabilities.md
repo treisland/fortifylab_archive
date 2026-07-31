@@ -38,6 +38,16 @@ and confirmation buttons, cancellation, and retry controls all consume the
 same `lifecycle-execution` entry. A retained operation can still be inspected
 when those mutation controls are disabled.
 
+Composition is necessary but never sufficient. Every document freshly checks
+the protected observer, functional-probe handshake, lifecycle credential
+metadata, complete packaged adapter closure, approval database, recovery helper
+socket, upgrade service, secret service, and notification provider when those
+services are configured. A missing lifecycle credential reports
+`LIFECYCLE_CREDENTIAL_UNAVAILABLE`; a missing declared adapter reports
+`LIFECYCLE_ADAPTER_UNAVAILABLE`. A configured dependent service that cannot
+answer its bounded runtime check is `temporarily-unavailable`, not `available`.
+Raw paths, socket names, credentials, and exceptions are never returned.
+
 The supported operator transition is
 `sudo ./scripts/fortify-manager activate-lifecycle`. It publishes `available`
 only after protected package, observer, health-probe, credential, positive
@@ -49,6 +59,14 @@ Backup/restore, upgrade, write-only secret, and notification services report
 `not-configured` until their independently protected runtime services are
 composed. This is intentional while those features remain unavailable; the
 browser does not infer support from registry metadata or connectivity.
+
+The lifecycle credential check reads file metadata and access state only; it
+does not read or return credential content. A bounded authorization probe must
+both allow a namespace-scoped lifecycle permission and deny Secret reads;
+failure reports `LIFECYCLE_CREDENTIAL_UNAUTHORIZED`. Adapter closure checks verify the
+fixed registry-declared files under the installed `apps` tree without running
+them. Authorization is evaluated for the authenticated identity before an
+available mutation state is emitted.
 
 ## Recovery and troubleshooting
 
@@ -62,6 +80,17 @@ with the protected socket. Merely configuring
 `cluster.health_probe_socket` yields
 `FUNCTIONAL_PROBE_HANDSHAKE_FAILED` and `temporarily-unavailable` until the
 service is live and the socket policy is valid.
+
+Use this decision order for a mutation failure:
+
+1. `disabled`: activate lifecycle through the protected operator workflow.
+2. `not-configured`: install or compose the named Manager service.
+3. `unauthorized`: reauthenticate; do not widen Kubernetes RBAC.
+4. `temporarily-unavailable`: restore the named credential, socket, store, or
+   observer and refresh. The next request rechecks it automatically.
+5. `degraded`: repair the packaged lifecycle adapter closure before planning.
+6. `available`: consult the selected action's preflight readiness; lifecycle
+   capability alone does not make every action ready.
 
 If the Web client reports `CAPABILITY_CONTRACT_UNSUPPORTED_OR_STALE`, refresh
 once. If the state persists, update the Web client and Manager together or
