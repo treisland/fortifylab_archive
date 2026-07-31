@@ -235,14 +235,19 @@ and preflight remediation remain in
 [health-checks.md](health-checks.md) and
 [deployment-preflight.md](deployment-preflight.md).
 
-Browser contract tests in `tests/test_dashboard.py` and operation transport
-tests in `tests/test_web_operations.py` cover authentication, expiry, logout,
+Browser contract tests in `tests/test_dashboard.py`, the JavaScript DOM
+execution fixture in `tests/browser/dashboard-populated.mjs`, and operation
+transport tests in `tests/test_web_operations.py` cover authentication, expiry, logout,
 method rejection, headers, disclosure, API history, accessibility structure,
 independent loading/empty/stale/unavailable/unauthorized/error presentations,
 partial `503`, disconnected adapter, recovery, empty cluster, current
 live-cluster failure projection, plans, dependency blocks,
 approval, timeout, cancellation, retry, reconnect, completion health, and
-sanitized failures. They are static and in-process tests: no live MicroK8s
+sanitized failures. The DOM fixture executes populated capability, health,
+availability, preflight, history, and inventory responses against both the
+source dashboard asset and the byte-identical staged release asset. CI
+provides Node.js for this regression; environments without Node report the
+test as skipped. These remain local and in-process tests: no live MicroK8s
 validation was performed.
 
 The release-blocking operational-console contract is documented in the

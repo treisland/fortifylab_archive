@@ -54,16 +54,16 @@ async function readModel(panel) {
       headers: {"Accept": "application/json"},
       signal: controller.signal
     });
-    let document = {};
-    try { document = await response.json(); } catch (_) { document = {}; }
+    let payload = {};
+    try { payload = await response.json(); } catch (_) { payload = {}; }
     if (response.status === 401 || response.status === 403) {
       throw {kind: "unauthorized", code: "AUTHENTICATION_REQUIRED"};
     }
     if (!response.ok) {
-      const code = errorCodePattern.test(String(document.code || "")) ? document.code : `HTTP_${response.status}`;
+      const code = errorCodePattern.test(String(payload.code || "")) ? payload.code : `HTTP_${response.status}`;
       throw {kind: response.status === 503 ? "unavailable" : "error", code};
     }
-    return document;
+    return payload;
   } catch (error) {
     if (error?.kind) throw error;
     if (controller.signal.reason === "deadline") {
@@ -152,16 +152,16 @@ function failClosedCapabilities(code = "CAPABILITY_CONTRACT_UNAVAILABLE") {
   setOperationsAvailable(false, code, "unavailable");
 }
 
-function renderInventory(document) {
-  const items = Array.isArray(document.items) ? document.items : [];
+function renderInventory(payload) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
   text(byId("component-count"), items.length);
   const observed = items.filter(item => (item.observedResources || []).every(resource => resource.state === "present")).length;
   text(byId("component-detail"), items.length ? `${observed} fully observed` : "No managed components registered");
-  const disconnected = document.observation?.state !== "available";
+  const disconnected = payload.observation?.state !== "available";
   const cluster = byId("cluster-state");
   cluster.className = `status ${disconnected ? "unreachable" : "healthy"}`;
   text(cluster, disconnected ? "Disconnected" : "Connected");
-  const observation = document.observation || {};
+  const observation = payload.observation || {};
   text(
     byId("cluster-detail"),
     disconnected
@@ -175,7 +175,7 @@ function renderInventory(document) {
     items.length
       ? (disconnected ? "Desired inventory is available; live observation is unavailable. Reconnect the allow-listed observer, then refresh." : `Current · ${items.length} components observed on ${observation.node || "the connected node"} · evidence ${formatAge(observation.ageSeconds)}`)
       : "Empty · No managed components are registered. Add components through the project registry, then refresh.",
-    document.generatedAt || document.observation?.observedAt
+    payload.generatedAt || payload.observation?.observedAt
   );
   const choices = byId("operation-components");
   const selected = choices.value;
@@ -193,13 +193,13 @@ function renderInventory(document) {
   if (linked && items.some(item => item.identity?.id === linked)) selectComponent(linked, null, false);
 }
 
-function renderHealth(document) {
-  const items = Array.isArray(document.items) ? document.items : [];
-  const state = cleanState(document.state);
+function renderHealth(payload) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const state = cleanState(payload.state);
   const overall = byId("environment-state");
   overall.className = `status ${state}`;
   text(overall, state);
-  text(byId("checked-at"), document.generatedAt ? `Checked ${safeDate(document.generatedAt)}` : "Not checked");
+  text(byId("checked-at"), payload.generatedAt ? `Checked ${safeDate(payload.generatedAt)}` : "Not checked");
   const degraded = items.filter(item => item.state !== "healthy");
   const componentIds = new Set((panelDocuments.get("components")?.items || []).map(item => item.identity?.id));
   const degradedComponents = degraded.filter(item => componentIds.has(item.id));
@@ -232,8 +232,8 @@ function renderHealth(document) {
     list.append(article);
   }
   byId("health-empty").hidden = items.length !== 0;
-  const age = evidenceAge(document.generatedAt);
-  const unavailable = document.evidence?.source === "unavailable";
+  const age = evidenceAge(payload.generatedAt);
+  const unavailable = payload.evidence?.source === "unavailable";
   panelState(
     "health",
     !items.length ? "empty" : (unavailable ? "unavailable" : (age.stale ? "stale" : "available")),
@@ -242,25 +242,25 @@ function renderHealth(document) {
       : unavailable
         ? "Unavailable · Live health adapter is disconnected. Review the first safe remediation; do not grant Secret access."
         : `${age.stale ? "Stale" : "Current"} · Evidence ${age.label}. ${degraded.length} degraded; ${blocked.length} blocked consumers.`,
-    document.generatedAt
+    payload.generatedAt
   );
   renderComponentCards();
   refreshInspector();
 }
 
-function renderPreflight(document) {
-  const items = Array.isArray(document.items) ? document.items : [];
-  const generated = new Date(document.generatedAt);
-  preflightReadiness = document.readiness && typeof document.readiness === "object"
-    ? document.readiness : null;
+function renderPreflight(payload) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const generated = new Date(payload.generatedAt);
+  preflightReadiness = payload.readiness && typeof payload.readiness === "object"
+    ? payload.readiness : null;
   preflightGeneratedAt = Number.isNaN(generated.valueOf()) ? 0 : generated.valueOf();
   const state = byId("preflight-state");
-  state.className = `status ${document.ready ? "healthy" : "blocked"}`;
-  text(state, document.ready ? "Ready" : "Blocked");
-  const summary = document.summary || {};
-  const profile = document.profile || {};
+  state.className = `status ${payload.ready ? "healthy" : "blocked"}`;
+  text(state, payload.ready ? "Ready" : "Blocked");
+  const summary = payload.summary || {};
+  const profile = payload.profile || {};
   text(byId("preflight-detail"), `${profile.id || "Unknown profile"} · ${profile.maturity || "unknown"} · ${summary.blocker || 0} blockers`);
-  text(byId("preflight-summary"), `${document.ready ? "Ready" : "Blocked"} · ${summary.blocker || 0} blockers · ${summary.warning || 0} warnings`);
+  text(byId("preflight-summary"), `${payload.ready ? "Ready" : "Blocked"} · ${summary.blocker || 0} blockers · ${summary.warning || 0} warnings`);
   const list = byId("preflight-list");
   list.replaceChildren();
   for (const item of items.filter(item => item.status !== "pass").slice(0, 8)) {
@@ -276,8 +276,8 @@ function renderPreflight(document) {
   }
   if (!list.children.length && items.length) list.append(documentNode("p", "success-message", "All preflight checks passed."));
   byId("preflight-empty").hidden = items.length !== 0;
-  const age = evidenceAge(document.generatedAt);
-  const unavailable = document.evidence?.source === "unavailable";
+  const age = evidenceAge(payload.generatedAt);
+  const unavailable = payload.evidence?.source === "unavailable";
   panelState(
     "preflight",
     !items.length ? "empty" : (unavailable ? "unavailable" : (age.stale ? "stale" : "available")),
@@ -285,14 +285,14 @@ function renderPreflight(document) {
       ? "Empty · No preflight checks are configured. Verify the component registry."
       : unavailable
         ? "Unavailable · The read-only preflight adapter is disconnected. Restore it, then refresh."
-        : `${age.stale ? "Stale" : "Current"} · Evidence ${age.label}. ${document.ready ? "No blockers." : "Open the listed safe remediation before deployment."}`,
-    document.generatedAt
+        : `${age.stale ? "Stale" : "Current"} · Evidence ${age.label}. ${payload.ready ? "No blockers." : "Open the listed safe remediation before deployment."}`,
+    payload.generatedAt
   );
   updateSelectedActionControls();
 }
 
-function renderAvailability(document) {
-  const items = Array.isArray(document.items) ? document.items : [];
+function renderAvailability(payload) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
   const list = byId("availability-list");
   list.replaceChildren();
   for (const item of items) {
@@ -327,8 +327,8 @@ function renderAvailability(document) {
   refreshInspector();
 }
 
-function renderHistory(document) {
-  const items = Array.isArray(document.items) ? document.items : [];
+function renderHistory(payload) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
   const body = byId("history-list");
   body.replaceChildren();
   for (const item of items) {
@@ -563,27 +563,27 @@ function refreshInspector() {
   content.replaceChildren(...sections);
 }
 
-function renderCapabilities(document) {
-  const expires = new Date(document.expiresAt);
-  const valid = document.apiVersion === "fortifylab.io/v1alpha1"
-    && document.kind === "ManagerCapabilities"
-    && document.contractVersion === supportedCapabilityContractVersion
-    && Array.isArray(document.capabilities)
+function renderCapabilities(payload) {
+  const expires = new Date(payload.expiresAt);
+  const valid = payload.apiVersion === "fortifylab.io/v1alpha1"
+    && payload.kind === "ManagerCapabilities"
+    && payload.contractVersion === supportedCapabilityContractVersion
+    && Array.isArray(payload.capabilities)
     && !Number.isNaN(expires.valueOf())
     && expires.valueOf() > Date.now();
   if (!valid) {
     text(byId("capability-profile"), "Unsupported contract");
     text(byId("capability-detail"), "Mutation controls fail closed");
     byId("capability-list").replaceChildren();
-    panelState("capabilities", "stale", "Unavailable · CAPABILITY_CONTRACT_UNSUPPORTED_OR_STALE. Refresh or upgrade this Web client.", document.generatedAt);
+    panelState("capabilities", "stale", "Unavailable · CAPABILITY_CONTRACT_UNSUPPORTED_OR_STALE. Refresh or upgrade this Web client.", payload.generatedAt);
     failClosedCapabilities("CAPABILITY_CONTRACT_UNSUPPORTED_OR_STALE");
     return;
   }
-  text(byId("capability-profile"), `Contract ${document.contractVersion}`);
-  text(byId("capability-detail"), `${document.capabilities.length} effective capability states · refresh within ${document.refreshAfterSeconds || 30}s`);
+  text(byId("capability-profile"), `Contract ${payload.contractVersion}`);
+  text(byId("capability-detail"), `${payload.capabilities.length} effective capability states · refresh within ${payload.refreshAfterSeconds || 30}s`);
   const list = byId("capability-list");
   list.replaceChildren();
-  for (const capability of document.capabilities) {
+  for (const capability of payload.capabilities) {
     const item = documentNode("article", "capability-item");
     item.append(
       documentNode("strong", "", capability.id?.replaceAll("-", " ")),
@@ -598,21 +598,21 @@ function renderCapabilities(document) {
     }
     list.append(item);
   }
-  lifecycleCapability = document.capabilities.find(item => item.id === "lifecycle-execution") || null;
+  lifecycleCapability = payload.capabilities.find(item => item.id === "lifecycle-execution") || null;
   capabilityExpiresAt = expires.valueOf();
   const available = lifecycleCapability?.state === "available" && lifecycleCapability?.canMutate === true;
   setOperationsAvailable(available, lifecycleCapability?.code, lifecycleCapability?.state || "unavailable");
   updateSelectedActionControls();
-  panelState("capabilities", "available", "Current · Effective Manager capability evidence is authoritative for controls.", document.generatedAt);
+  panelState("capabilities", "available", "Current · Effective Manager capability evidence is authoritative for controls.", payload.generatedAt);
 }
 
-function renderOperationsRead(document) {
-  if (document) {
-    renderOperation(document);
+function renderOperationsRead(payload) {
+  if (payload) {
+    renderOperation(payload);
     renderComponentCards();
     refreshInspector();
-    panelState("operations", "available", "Current · Durable operation progress restored.", document.updatedAt || document.startedAt);
-    if (!document.terminal) scheduleProgress();
+    panelState("operations", "available", "Current · Durable operation progress restored.", payload.updatedAt || payload.startedAt);
+    if (!payload.terminal) scheduleProgress();
     return;
   }
   const available = lifecycleCapability?.state === "available" && lifecycleCapability?.canMutate === true;
@@ -651,10 +651,10 @@ async function load() {
   text(byId("refresh-summary"), `0 of ${panels.length} panels settled`);
   const requests = panels.map(async panel => {
     try {
-      const document = await readModel(panel);
+      const payload = await readModel(panel);
       if (generation !== refreshGeneration) return;
-      if (document) panelDocuments.set(panel.name, document);
-      panel.render(document);
+      if (payload) panelDocuments.set(panel.name, payload);
+      panel.render(payload);
       settled.available += 1;
     } catch (failure) {
       if (generation !== refreshGeneration) return;
@@ -702,8 +702,8 @@ async function mutate(path, body = {}) {
     panelState("operations", "unavailable", "Unavailable · MANAGER_DISCONNECTED. Restore manager connectivity, then retry.");
     throw new Error("Operation service is disconnected. Restore manager connectivity, then retry.");
   }
-  let document = {};
-  try { document = await response.json(); } catch (_) { document = {}; }
+  let payload = {};
+  try { payload = await response.json(); } catch (_) { payload = {}; }
   if (response.status === 401 || response.status === 403) {
     sessionExpired = true;
     byId("session-expired").hidden = false;
@@ -711,12 +711,12 @@ async function mutate(path, body = {}) {
     throw new Error("Session expired. Sign in again to continue.");
   }
   if (!response.ok) {
-    const code = errorCodePattern.test(String(document.code || "")) ? document.code : `HTTP_${response.status}`;
+    const code = errorCodePattern.test(String(payload.code || "")) ? payload.code : `HTTP_${response.status}`;
     panelState("operations", response.status === 503 ? "unavailable" : "error", `Unavailable · ${code}. Refresh prerequisites and review the safe manager guidance.`);
     throw new Error(`Operation request failed (${code})`);
   }
   panelState("operations", "available", "Available · The manager accepted the typed request.");
-  return document;
+  return payload;
 }
 
 function operationRequest() {

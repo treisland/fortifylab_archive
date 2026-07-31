@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -208,12 +210,53 @@ class DashboardTests(unittest.TestCase):
     def test_browser_partial_503_retains_successful_panels_and_sanitizes_errors(self):
         script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
         self.assertIn("await Promise.all(requests)", script)
-        self.assertIn("panel.render(document)", script)
+        self.assertIn("panel.render(payload)", script)
         self.assertIn("panelDocuments.has(name)", script)
-        self.assertIn("panelDocuments.set(panel.name, document)", script)
+        self.assertIn("panelDocuments.set(panel.name, payload)", script)
         self.assertIn('response.status === 503 ? "unavailable" : "error"', script)
         self.assertIn("errorCodePattern", script)
         self.assertNotIn("document.message", script)
+
+    def test_populated_documents_execute_against_source_and_packaged_dashboard(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is unavailable; CI supplies it for DOM execution")
+        harness = ROOT / "tests/browser/dashboard-populated.mjs"
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory) / "candidate"
+            subprocess.run(
+                [
+                    "python3", "scripts/package-manager-runtime.py", "stage",
+                    "--source", str(ROOT), "--target", str(candidate),
+                ],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            source_asset = WEB / "assets/dashboard.js"
+            packaged_asset = candidate / "manager/web/assets/dashboard.js"
+            self.assertEqual(source_asset.read_bytes(), packaged_asset.read_bytes())
+            for asset in (source_asset, packaged_asset):
+                result = subprocess.run(
+                    [node, str(harness), str(asset)],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(
+                    result.returncode,
+                    0,
+                    f"dashboard DOM execution failed for {asset}:\n{result.stderr}",
+                )
+
+    def test_api_payload_names_do_not_shadow_the_browser_document(self):
+        script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
+        self.assertNotRegex(script, r"\b(?:const|let|var)\s+document\b")
+        self.assertNotRegex(script, r"function\s+\w+\([^)]*\bdocument\b")
+        self.assertIn('const link = document.createElement("a")', script)
+        self.assertIn('const row = document.createElement("tr")', script)
+        self.assertIn('const cell = document.createElement("td")', script)
 
     def test_browser_disconnected_adapter_empty_cluster_and_live_failures_are_actionable(self):
         sources = "".join(
