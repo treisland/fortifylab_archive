@@ -10,6 +10,11 @@ platform profiles.
 
 ### Added
 
+- An authorized, transport-neutral write-only secret replacement workflow for
+  protected external paths, bounded uploads, existing Kubernetes Secret
+  references, and generated values, with metadata-only history, explicit
+  impact plans, targeted restart/health verification, rollback boundaries,
+  interrupted-update recovery, and SSC `secret.key` safeguards.
 - Shared local authorization and risk-based, state-bound, expiring,
   revocable, single-use lifecycle approvals across Web, CLI, and
   communications identities, with stronger high-risk confirmation and
