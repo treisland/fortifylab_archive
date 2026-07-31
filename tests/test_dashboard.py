@@ -161,6 +161,11 @@ class DashboardTests(unittest.TestCase):
         script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
         for fragment in ('href="#main"', 'id="main"', 'role="alert"', '<th scope="col">'):
             self.assertIn(fragment, html)
+        for fragment in (
+            'id="operation-form"', 'id="operation-confirmation"',
+            'aria-live="polite"', 'id="cancel-operation"', 'id="retry-operation"',
+        ):
+            self.assertIn(fragment, html)
         for field in ('for="username"', 'for="password"', 'role="alert"'):
             self.assertIn(field, login)
         for state in (
@@ -169,6 +174,7 @@ class DashboardTests(unittest.TestCase):
         ):
             self.assertIn(state, css + script)
         self.assertNotIn("innerHTML", script)
+        self.assertIn("sessionStorage", script)
 
     def test_loading_empty_failure_and_disconnected_states_are_explicit(self):
         sources = "".join(

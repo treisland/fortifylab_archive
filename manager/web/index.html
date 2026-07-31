@@ -11,7 +11,7 @@
   <header class="topbar">
     <div><p class="eyebrow">FORTIFY LAB MANAGER</p><h1>Lab overview</h1></div>
     <div class="header-actions">
-      <span class="read-only">READ ONLY</span>
+      <span class="read-only">CONTROLLED OPERATIONS</span>
       <button id="refresh" class="secondary" type="button">Refresh</button>
       <button id="logout" class="ghost" type="button">Sign out</button>
     </div>
@@ -45,6 +45,48 @@
         <p id="preflight-empty" class="empty" hidden>No preflight checks are available.</p>
       </article>
     </section>
+    <section class="panel">
+      <div class="section-heading"><div><p class="eyebrow">LIFECYCLE</p><h2>Component operations</h2></div><p class="muted">Plans are resolved and authorized by the shared manager service.</p></div>
+      <form id="operation-form" class="operation-form">
+        <label for="operation">Action</label>
+        <select id="operation" name="operation">
+          <option>start</option><option>stop</option><option>restart</option><option>install</option><option>configure</option><option>uninstall</option><option>delete-data</option>
+        </select>
+        <label for="operation-components">Components</label>
+        <select id="operation-components" name="components" multiple required aria-describedby="component-help"></select>
+        <small id="component-help">Select every affected dependent for stop or uninstall. Data deletion is always separate.</small>
+        <button type="submit">Review plan</button>
+      </form>
+      <div id="operation-message" class="notice" role="status" aria-live="polite" hidden></div>
+      <section id="operation-plan" class="operation-plan" aria-labelledby="plan-heading" hidden>
+        <h3 id="plan-heading">Typed operation plan</h3>
+        <p><strong id="plan-risk"></strong> <span id="plan-impact"></span></p>
+        <ol id="plan-steps"></ol>
+        <div class="operation-actions">
+          <button id="execute-operation" type="button">Run operation</button>
+          <button id="cancel-plan" class="ghost" type="button">Discard</button>
+        </div>
+      </section>
+      <section id="operation-progress" class="operation-plan" aria-labelledby="progress-heading" hidden>
+        <h3 id="progress-heading">Operation progress</h3>
+        <p id="progress-summary"></p>
+        <progress id="progress-bar" max="1" value="0">0%</progress>
+        <ol id="progress-events"></ol>
+        <div class="operation-actions">
+          <button id="cancel-operation" class="secondary" type="button">Cancel operation</button>
+          <button id="retry-operation" type="button" hidden>Retry</button>
+        </div>
+      </section>
+    </section>
+    <dialog id="operation-confirmation" aria-labelledby="confirmation-heading">
+      <form method="dialog">
+        <h2 id="confirmation-heading">Confirm disruptive operation</h2>
+        <p id="confirmation-detail"></p>
+        <label id="high-risk-label" for="high-risk-confirmation" hidden>Type <strong>AUTHORIZE HIGH-RISK OPERATION</strong></label>
+        <input id="high-risk-confirmation" autocomplete="off" hidden>
+        <div class="operation-actions"><button id="confirm-operation" value="confirm">Confirm</button><button value="cancel" class="ghost">Go back</button></div>
+      </form>
+    </dialog>
     <section class="panel">
       <div class="section-heading"><div><p class="eyebrow">AUDIT TRAIL</p><h2>Recent operations</h2></div><p class="muted">Sanitized manager-owned history only.</p></div>
       <div class="table-wrap"><table><thead><tr><th scope="col">Time</th><th scope="col">Type</th><th scope="col">Subject</th><th scope="col">Summary</th><th scope="col">State</th></tr></thead><tbody id="history-list"></tbody></table></div>

@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
-from typing import Callable, Iterable, Mapping
+from typing import Callable, Iterable, Mapping, Protocol
 
 from manager.api import ManagerAPI
 
@@ -21,6 +21,19 @@ SESSION_PATH = "/api/v1alpha1/session"
 READINESS_PATH = "/ready"
 COOKIE_NAME = "fortifylab_session"
 MAX_LOGIN_BODY = 4096
+
+
+class AuthenticatedAPI(Protocol):
+    def __call__(
+        self, environ: dict, start_response: Callable, identity: "WebIdentity"
+    ) -> Iterable[bytes]: ...
+
+
+@dataclass(frozen=True)
+class WebIdentity:
+    username: str
+    session_id: str
+    authenticated_at: float
 
 
 def password_verifier(password: str, *, iterations: int = 210_000) -> str:
@@ -73,15 +86,18 @@ class SessionStore:
         return token
 
     def authenticated(self, token: str | None) -> bool:
+        return self.identity(token) is not None
+
+    def identity(self, token: str | None) -> WebIdentity | None:
         if not token or token not in self._sessions:
-            return False
+            return None
         now = self._clock()
         session = self._sessions[token]
         if now - session.accessed > self._idle or now - session.created > self._absolute:
             self._sessions.pop(token, None)
-            return False
+            return None
         session.accessed = now
-        return True
+        return WebIdentity(session.username, token, session.created)
 
     def delete(self, token: str | None) -> None:
         if token:
@@ -121,12 +137,14 @@ class DashboardApp:
         api: ManagerAPI | None = None,
         sessions: SessionStore | None = None,
         login_limiter: LoginLimiter | None = None,
+        operation_api: AuthenticatedAPI | None = None,
         secure_cookies: bool = False,
     ) -> None:
         self._accounts = dict(accounts)
         self._api = api or ManagerAPI()
         self._sessions = sessions or SessionStore()
         self._login_limiter = login_limiter or LoginLimiter()
+        self._operation_api = operation_api
         self._secure_cookies = secure_cookies
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
@@ -137,12 +155,29 @@ class DashboardApp:
         if path == SESSION_PATH:
             return self._session(environ, start_response, method)
         if path.startswith("/api/"):
-            if not self._authorized(environ):
+            identity = self._identity(environ)
+            if identity is None:
                 return self._json(
                     start_response,
                     HTTPStatus.UNAUTHORIZED,
                     {"code": "AUTHENTICATION_REQUIRED", "message": "authentication required"},
                     method,
+                )
+            if path.startswith("/api/v1alpha1/operations") or path.startswith(
+                "/api/v1alpha1/approvals"
+            ):
+                if self._operation_api is None:
+                    return self._json(
+                        start_response,
+                        HTTPStatus.SERVICE_UNAVAILABLE,
+                        {
+                            "code": "OPERATIONS_UNAVAILABLE",
+                            "message": "lifecycle operations are not configured",
+                        },
+                        method,
+                    )
+                return self._operation_api(
+                    environ, self._security_headers(start_response), identity
                 )
             return self._api(environ, self._security_headers(start_response))
         if path.startswith("/assets/"):
@@ -217,7 +252,10 @@ class DashboardApp:
         )
 
     def _authorized(self, environ: dict) -> bool:
-        return self._sessions.authenticated(_cookie(environ, COOKIE_NAME))
+        return self._identity(environ) is not None
+
+    def _identity(self, environ: dict) -> WebIdentity | None:
+        return self._sessions.identity(_cookie(environ, COOKIE_NAME))
 
     def _auth_failed(self, start_response: Callable) -> Iterable[bytes]:
         # Deliberately identical for unknown users, bad passwords, and malformed bodies.

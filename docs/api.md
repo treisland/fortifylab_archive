@@ -1,23 +1,43 @@
 # Manager API reference
 
-The local Fortify Lab Manager exposes a versioned, read-only component
+The local Fortify Lab Manager exposes a versioned component
 inventory at `GET /api/v1alpha1/components`. `HEAD` is also supported.
 Mutation methods are rejected with `405 Method Not Allowed`. This contract is
 MicroK8s-first, limited to the managed `fortify` namespace, and excludes ASPM.
 
-The typed lifecycle service contract that future authenticated mutation
-transports must use is documented in
+The authenticated Web mutation transport uses the service documented in
 [Typed lifecycle operation engine](operations/lifecycle-engine.md). No
-browser-facing mutation route is enabled yet. The service accepts component
-and operation identifiers only; arbitrary commands and caller-supplied paths
+live-cluster adapter is enabled by this repository. It accepts component and
+operation identifiers only; commands, paths, environment values, and secrets
 are outside the contract.
+
+## Lifecycle operation API
+
+All routes require the server-side Web session and return
+`Cache-Control: no-store`.
+
+| Method and path | Result |
+| --- | --- |
+| `POST /api/v1alpha1/operations/plans` | Resolve ordered steps, dependency impact, risk, approval requirement, destructive boundary, bounds, and verification checks |
+| `POST /api/v1alpha1/approvals` | Create a pending single-use approval for the exact plan and current state |
+| `POST /api/v1alpha1/approvals/{id}/approve` | Approve from the bound session; high risk requires the documented phrase |
+| `POST /api/v1alpha1/operations` | Queue a typed action with `operation`, `components`, and optional `approvalId` |
+| `GET /api/v1alpha1/operations/{id}` | Read durable progress, sanitized events, and completion health |
+| `POST /api/v1alpha1/operations/{id}/cancel` | Request cooperative cancellation |
+| `POST /api/v1alpha1/operations/{id}/retry` | Retry failed, timed-out, or interrupted work |
+
+For example, `{"operation":"start","components":["scancentral-sast"]}`
+resolves MySQL and SSC dependency steps without exposing adapter paths.
+Dependency-blocked stop plans fail before execution. Uninstall and
+`delete-data` are separate actions. A capability is supported only when the
+component registry declares it; `configure` therefore fails closed until an
+approved bounded capability exists.
 
 The internal [write-only secret service](operations/write-only-secrets.md)
 defines a separate high-risk replacement contract for approved external
 paths, protected uploads, existing Kubernetes Secret references, and generated
-values. It returns only `SecretUpdate` metadata and is not exposed as an HTTP
-route until a namespace-scoped live adapter and authenticated mutation
-transport are implemented and validated.
+values. It returns only `SecretUpdate` metadata and remains separate from the
+lifecycle routes; this change adds no browser secret-value endpoint.
 
 The endpoint is a safe projection of the authoritative
 [`registry/components.json`](../registry/components.json). It never returns

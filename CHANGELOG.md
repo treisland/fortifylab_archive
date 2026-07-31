@@ -10,6 +10,9 @@ platform profiles.
 
 ### Added
 
+- Authenticated Web lifecycle plan, approval, progress, cancellation, retry,
+  reconnect, completion-health, and sanitized-failure contracts while keeping
+  the live MicroK8s adapter boundary fail closed.
 - An authorized, transport-neutral write-only secret replacement workflow for
   protected external paths, bounded uploads, existing Kubernetes Secret
   references, and generated values, with metadata-only history, explicit
