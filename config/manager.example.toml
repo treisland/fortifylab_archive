@@ -9,3 +9,10 @@ database = "/var/lib/fortify-lab-manager/history.sqlite3"
 
 [authentication]
 accounts = "/var/lib/fortify-lab-manager/accounts.json"
+
+[cluster]
+server = "https://127.0.0.1:16443"
+namespace = "fortify"
+token_file = "/var/lib/fortify-lab-manager/cluster-access/token"
+ca_file = "/var/lib/fortify-lab-manager/cluster-access/ca.crt"
+timeout_seconds = 5

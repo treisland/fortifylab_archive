@@ -11,8 +11,16 @@
     "observation": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["state"],
-      "properties": {"state": {"enum": ["available", "unavailable"]}}
+      "required": ["state", "latencyMs"],
+      "properties": {
+        "state": {"enum": ["available", "unavailable"]},
+        "node": {"type": "string", "minLength": 1},
+        "namespace": {"const": "fortify"},
+        "kubernetesVersion": {"type": "string", "minLength": 1},
+        "observedAt": {"type": "string", "format": "date-time"},
+        "ageSeconds": {"type": "integer", "minimum": 0},
+        "latencyMs": {"type": "integer", "minimum": 0}
+      }
     },
     "items": {
       "type": "array",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol, Sequence
 
 from manager.component_registry import ComponentRegistry
@@ -75,11 +76,40 @@ class ComponentInventory:
     def document(self) -> dict:
         desired = self._desired_resources()
         observation_status = "available"
+        metadata: dict = {}
+        started_at = datetime.now(timezone.utc)
         try:
             observations = self._validated_observations(
                 self._observer.observe(tuple(resource for _, resource in desired)),
                 {resource.resource_id for _, resource in desired},
             )
+            evidence = getattr(self._observer, "evidence", lambda: None)()
+            if evidence is not None:
+                metadata = {
+                    "node": evidence.node,
+                    "namespace": evidence.namespace,
+                    "kubernetesVersion": evidence.kubernetes_version,
+                    "observedAt": evidence.observed_at.astimezone(timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                    "ageSeconds": max(
+                        0,
+                        round(
+                            (
+                                datetime.now(timezone.utc) - evidence.observed_at
+                            ).total_seconds()
+                        ),
+                    ),
+                    "latencyMs": max(
+                        evidence.latency_ms,
+                        round(
+                            (
+                                datetime.now(timezone.utc) - started_at
+                            ).total_seconds()
+                            * 1000
+                        ),
+                    ),
+                }
         except Exception:
             observation_status = "unavailable"
             observations = {}
@@ -127,7 +157,22 @@ class ComponentInventory:
         return {
             "apiVersion": API_VERSION,
             "kind": "ComponentInventory",
-            "observation": {"state": observation_status},
+            "observation": {
+                "state": observation_status,
+                **metadata,
+                "latencyMs": metadata.get(
+                    "latencyMs",
+                    max(
+                        0,
+                        round(
+                            (
+                                datetime.now(timezone.utc) - started_at
+                            ).total_seconds()
+                            * 1000
+                        ),
+                    ),
+                ),
+            },
             "items": items,
         }
 

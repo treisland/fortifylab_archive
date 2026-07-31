@@ -68,7 +68,8 @@ class ArchitectureDecisionTests(unittest.TestCase):
             "mkcert wildcard certificate Secret",
             "SameSite=Strict",
             "dedicated ServiceAccount",
-            "`get`, `list`, and `watch` only",
+            "`get` and `list` only",
+            "A separate discovery ClusterRole",
             "no access to `secrets`",
             "SSC remains the application-security system of record",
             "Follow-up implementation stays in ordered GitHub issues",
@@ -81,7 +82,7 @@ class ArchitectureDecisionTests(unittest.TestCase):
             "There is no raw Kubernetes proxy",
             "browser-triggered install",
             "It does not store secret values",
-            "It is neither a ClusterRole",
+            "It cannot enumerate namespaces or workloads outside `fortify`",
         )
         for capability in forbidden_capabilities:
             with self.subTest(capability=capability):

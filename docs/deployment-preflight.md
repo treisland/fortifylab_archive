@@ -1,5 +1,14 @@
 # Deployment preflight
 
+The authenticated Manager runs the Kubernetes-observable subset through its
+protected read-only observer. MicroK8s version, StorageClasses, Services, and
+Ingresses use live evidence. Checks requiring host capacity, addon discovery,
+license or registry credentials, image pulls, TLS contents, or external
+configuration remain warnings because the observer is intentionally unable to
+read Secrets, arbitrary files, or execute commands. Loss of Kubernetes access
+is a sanitized blocker for observable checks and is retried on the next
+request.
+
 `GET /api/v1alpha1/preflight` tells an authenticated user whether the
 single-node MicroK8s lab is ready for deployment. Run it immediately before a
 deployment operation. It is a read-only, repeatable observation: it does not

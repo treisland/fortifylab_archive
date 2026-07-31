@@ -1,5 +1,14 @@
 # Dependency-aware health checks
 
+The installed Manager composes these checks with the same protected
+MicroK8s observer used by component inventory. Node, storage, Service,
+Ingress, and registry-declared workload readiness use live metadata.
+Application-authenticated checks that would require credentials, Secret
+reads, logs, or arbitrary network targets are reported as `degraded` rather
+than widening observer access. Connectivity, authorization, timeout, and
+malformed-response failures are sanitized to `unknown`; a later request
+rechecks and can recover without restarting the Manager.
+
 `GET /api/v1alpha1/health` reports actionable runtime health for the
 single-node MicroK8s lab. This read-only contract never repairs resources,
 reads external configuration directories, or returns credentials, licenses,

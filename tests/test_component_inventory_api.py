@@ -80,7 +80,8 @@ class ComponentInventoryAPIContractTests(unittest.TestCase):
         document = response["json"]
         Draft202012Validator(INVENTORY_SCHEMA).validate(document)
         self.assertEqual(document["apiVersion"], "fortifylab.io/v1alpha1")
-        self.assertEqual(document["observation"], {"state": "available"})
+        self.assertEqual(document["observation"]["state"], "available")
+        self.assertIn("latencyMs", document["observation"])
         components = {item["identity"]["id"]: item for item in document["items"]}
         self.assertEqual(components["ssc"]["dependencies"], ["mysql"])
         self.assertEqual(components["scancentral-sast"]["dependencies"], ["ssc"])
@@ -125,7 +126,7 @@ class ComponentInventoryAPIContractTests(unittest.TestCase):
     def test_unavailable_cluster_returns_unknown_resources_without_details(self):
         response = request(ManagerAPI(observer=UnavailableObserver()))
         self.assertEqual(response["status"], "200 OK")
-        self.assertEqual(response["json"]["observation"], {"state": "unavailable"})
+        self.assertEqual(response["json"]["observation"]["state"], "unavailable")
         Draft202012Validator(INVENTORY_SCHEMA).validate(response["json"])
         self.assertTrue(
             all(
