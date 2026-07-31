@@ -13,12 +13,15 @@
     "config/manager.example.toml",
     "packaging/manager-runtime.json",
     "packaging/systemd/fortify-manager.service",
-    "packaging/systemd/fortify-health-probe.service"
+    "packaging/systemd/fortify-health-probe.service",
+    "packaging/systemd/fortify-helm-release-evidence.service",
+    "packaging/systemd/fortify-helm-release-evidence.timer"
   ],
   "launchers": {
     "bin/fortify-manager-cli": "manager.cli",
     "bin/fortify-manager-server": "manager.server",
-    "bin/fortify-health-probe": "manager.functional_probe_service"
+    "bin/fortify-health-probe": "manager.functional_probe_service",
+    "bin/fortify-helm-release-evidence": "manager.helm_release_evidence"
   },
   "modes": {
     "directory": "0755",

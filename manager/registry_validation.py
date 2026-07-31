@@ -13,6 +13,7 @@ TOP_LEVEL_KEYS = {"$schema", "apiVersion", "kind", "scope", "profileRef", "compo
 COMPONENT_KEYS = {
     "id",
     "displayName",
+    "helmRelease",
     "web",
     "version",
     "dependencies",
@@ -75,6 +76,14 @@ def validate_registry(
             errors.append(f"{prefix} fields do not match component schema")
             continue
         version = component["version"]
+        helm_release = component["helmRelease"]
+        if (
+            not isinstance(helm_release, str)
+            or not helm_release
+            or len(helm_release) > 63
+            or not helm_release.replace("-", "a").isalnum()
+        ):
+            errors.append(f"{prefix} helmRelease is invalid")
         web = component["web"]
         health_document = component.get("health")
         raw_checks = (

@@ -180,7 +180,7 @@
             "additionalProperties": false,
             "required": ["state", "installedRelease", "comparisonSource", "workloads"],
             "properties": {
-              "state": {"enum": ["match", "drift", "mixed", "absent", "unavailable"]},
+              "state": {"enum": ["match", "drift", "mixed", "retained", "absent", "unavailable"]},
               "installedRelease": {"$ref": "#/$defs/installedRelease"},
               "comparisonSource": {"const": "workload-declared-metadata"},
               "workloads": {
@@ -234,10 +234,24 @@
     "installedRelease": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["state", "reason"],
+      "required": ["state", "reason", "revisions", "latest"],
       "properties": {
-        "state": {"const": "unavailable"},
-        "reason": {"const": "helm-storage-not-observed"}
+        "state": {"enum": ["installed", "absent", "multiple", "stale", "unavailable"]},
+        "reason": {"enum": ["current-release-observed", "release-not-installed", "multiple-or-nonterminal-revisions", "snapshot-stale", "snapshot-unavailable"]},
+        "revisions": {"type": "array", "maxItems": 20, "items": {"$ref": "#/$defs/helmRevision"}},
+        "latest": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/helmRevision"}]}
+      }
+    },
+    "helmRevision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "revision", "status", "chartVersion", "appVersion"],
+      "properties": {
+        "name": {"type": "string", "maxLength": 63},
+        "revision": {"type": "integer", "minimum": 1, "maximum": 1000000},
+        "status": {"enum": ["deployed", "failed", "pending-install", "pending-upgrade", "pending-rollback", "uninstalled", "superseded"]},
+        "chartVersion": {"type": "string", "maxLength": 160},
+        "appVersion": {"type": "string", "maxLength": 160}
       }
     },
     "resourceIdentity": {

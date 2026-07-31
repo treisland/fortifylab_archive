@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 from manager.api import COMPONENTS_PATH, ManagerAPI
 from manager.component_inventory import ClusterUnavailable, ResourceObservation
 from manager.component_registry import ComponentRegistry
+from manager.helm_release_evidence import HelmEvidenceStale
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +100,29 @@ class MysqlVersionObserver:
         )
 
 
+class HelmEvidence:
+    def __init__(self, releases):
+        self.releases = releases
+
+    def document(self):
+        return {"releases": self.releases}
+
+
+class StaleHelmEvidence:
+    def document(self):
+        raise HelmEvidenceStale("sanitized stale evidence")
+
+
+def helm_release(name, chart, app, revision=1, status="deployed"):
+    return {
+        "name": name,
+        "revision": revision,
+        "status": status,
+        "chartVersion": chart,
+        "appVersion": app,
+    }
+
+
 def request(app, method="GET"):
     response = {}
 
@@ -180,7 +204,12 @@ class ComponentInventoryAPIContractTests(unittest.TestCase):
         self.assertNotIn("unknown", {resource["state"] for resource in resources})
 
     def test_observed_versions_are_independent_and_mixed_workloads_are_visible(self):
-        document = request(ManagerAPI(observer=VersionObserver()))["json"]
+        document = request(ManagerAPI(
+            observer=VersionObserver(),
+            helm_evidence=HelmEvidence([
+                helm_release("scancentral-sast", "26.2.0", "26.2")
+            ]),
+        ))["json"]
         Draft202012Validator(INVENTORY_SCHEMA).validate(document)
         sast = next(item for item in document["items"] if item["identity"]["id"] == "scancentral-sast")
         self.assertEqual(sast["version"]["chart"], "24.4.0-2")
@@ -199,38 +228,74 @@ class ComponentInventoryAPIContractTests(unittest.TestCase):
         )
         self.assertEqual(
             sast["observedDeployment"]["installedRelease"],
-            {"state": "unavailable", "reason": "helm-storage-not-observed"},
+            {
+                "state": "installed",
+                "reason": "current-release-observed",
+                "revisions": [helm_release("scancentral-sast", "26.2.0", "26.2")],
+                "latest": helm_release("scancentral-sast", "26.2.0", "26.2"),
+            },
         )
         serialized = json.dumps(document)
         self.assertNotIn("registry.internal", serialized)
         self.assertNotIn("helmValues", serialized)
 
     def test_complete_workload_declarations_can_match_but_never_prove_installation(self):
-        document = request(ManagerAPI(observer=MysqlVersionObserver()))["json"]
+        evidence = HelmEvidence([helm_release("mysql", "9.19.0", "8.0.36")])
+        document = request(ManagerAPI(observer=MysqlVersionObserver(), helm_evidence=evidence))["json"]
         mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
         self.assertEqual(mysql["observedDeployment"]["state"], "match")
-        self.assertEqual(mysql["observedDeployment"]["installedRelease"]["state"], "unavailable")
+        self.assertEqual(mysql["observedDeployment"]["installedRelease"]["state"], "installed")
 
     def test_app_version_mismatch_is_drift(self):
-        document = request(ManagerAPI(observer=MysqlVersionObserver(app="8.0.35")))["json"]
+        evidence = HelmEvidence([helm_release("mysql", "9.19.0", "8.0.35")])
+        document = request(ManagerAPI(observer=MysqlVersionObserver(app="8.0.35"), helm_evidence=evidence))["json"]
         mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
         self.assertEqual(mysql["observedDeployment"]["state"], "drift")
 
     def test_missing_or_unexpected_image_role_is_unavailable_not_match(self):
         for images in ((), (("unexpected", "8.0.36-debian-11-r2"),)):
             with self.subTest(images=images):
-                document = request(ManagerAPI(observer=MysqlVersionObserver(images=images)))["json"]
+                evidence = HelmEvidence([helm_release("mysql", "9.19.0", "8.0.36")])
+                document = request(ManagerAPI(observer=MysqlVersionObserver(images=images), helm_evidence=evidence))["json"]
                 mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
                 self.assertEqual(mysql["observedDeployment"]["state"], "unavailable")
 
     def test_nested_version_evidence_rejects_unknown_or_unbounded_fields(self):
-        document = request(ManagerAPI(observer=MysqlVersionObserver()))["json"]
+        evidence = HelmEvidence([helm_release("mysql", "9.19.0", "8.0.36")])
+        document = request(ManagerAPI(observer=MysqlVersionObserver(), helm_evidence=evidence))["json"]
         mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
         workload = mysql["observedDeployment"]["workloads"][0]
         workload["workloadMetadata"]["secretValue"] = "must-not-pass"
         workload["runningImages"][0]["repository"] = "private/path"
         workload["runningImages"][0]["version"] = "x" * 161
         self.assertTrue(list(Draft202012Validator(INVENTORY_SCHEMA).iter_errors(document)))
+
+    def test_release_history_retained_and_multiple_states_are_authoritative(self):
+        old = helm_release("mysql", "9.18.0", "8.0.35", 1, "superseded")
+        current = helm_release("mysql", "9.19.0", "8.0.36", 2)
+        document = request(ManagerAPI(
+            observer=MysqlVersionObserver(), helm_evidence=HelmEvidence([old, current])
+        ))["json"]
+        mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
+        self.assertEqual(mysql["observedDeployment"]["state"], "match")
+        self.assertEqual(len(mysql["observedDeployment"]["installedRelease"]["revisions"]), 2)
+
+        multiple = HelmEvidence([current, helm_release("mysql", "9.19.0", "8.0.36", 3)])
+        document = request(ManagerAPI(observer=MysqlVersionObserver(), helm_evidence=multiple))["json"]
+        mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
+        self.assertEqual(mysql["observedDeployment"]["installedRelease"]["state"], "multiple")
+        self.assertEqual(mysql["observedDeployment"]["state"], "mixed")
+
+        document = request(ManagerAPI(observer=MysqlVersionObserver(), helm_evidence=HelmEvidence([])))["json"]
+        mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
+        self.assertEqual(mysql["observedDeployment"]["state"], "retained")
+
+        document = request(ManagerAPI(
+            observer=MysqlVersionObserver(), helm_evidence=StaleHelmEvidence()
+        ))["json"]
+        mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
+        self.assertEqual(mysql["observedDeployment"]["state"], "unavailable")
+        self.assertEqual(mysql["observedDeployment"]["installedRelease"]["state"], "stale")
 
     def test_unavailable_cluster_returns_unknown_resources_without_details(self):
         response = request(ManagerAPI(observer=UnavailableObserver()))

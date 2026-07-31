@@ -198,8 +198,18 @@ StatefulSets, and Ingresses in `fortify`. Deployment and StatefulSet reads
 project only allow-listed identity, workload-declared standard release labels,
 and pod-template image tags/digests; they never expose repository paths,
 environment, Helm values, or Secret data. These labels are not authoritative
-installed-release evidence. That evidence remains unavailable rather than
-broadening permissions to Helm release records. No additional RBAC is required.
+installed-release evidence. A root-only systemd helper uses the cluster's
+default Helm storage driver to query history for the seven registry-allowlisted
+release names. It writes only name, revision, status, chart version, app
+version, and observation time to
+`/var/lib/fortify-lab-manager/helm-release-snapshot.json` as root and group
+`fortify-manager`, mode `0640`. The Web Manager validates owner, group, mode,
+regular-file type, 64 KiB size, strict fields, and five-minute freshness. It
+never executes Helm or receives Kubernetes Secret access. Refresh manually with
+`sudo fortify-manager refresh-release-evidence`; the installed timer refreshes
+every two minutes. `HELM_DRIVER` is deliberately removed from the helper
+environment so existing default Secret-backed MicroK8s releases are observed;
+only the root helper crosses that privilege boundary. No RBAC is expanded.
 A separate discovery ClusterRole can get/list Nodes
 and StorageClasses and read `/version`; it cannot enumerate namespaces.
 Neither role grants Secrets, pod logs, exec, mutation, or workload access in

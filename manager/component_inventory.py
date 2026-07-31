@@ -8,6 +8,11 @@ import re
 from typing import Protocol, Sequence
 
 from manager.component_registry import ComponentRegistry
+from manager.helm_release_evidence import (
+    HelmEvidenceUnavailable,
+    HelmEvidenceStale,
+    ProtectedHelmSnapshot,
+)
 
 
 API_VERSION = "fortifylab.io/v1alpha1"
@@ -84,9 +89,11 @@ class ComponentInventory:
         self,
         registry: ComponentRegistry,
         observer: ClusterObserver | None = None,
+        helm_evidence: ProtectedHelmSnapshot | None = None,
     ) -> None:
         self._registry = registry
         self._observer = observer or UnavailableClusterObserver()
+        self._helm_evidence = helm_evidence or ProtectedHelmSnapshot()
 
     def document(self) -> dict:
         desired = self._desired_resources()
@@ -128,6 +135,15 @@ class ComponentInventory:
         except Exception:
             observation_status = "unavailable"
             observations = {}
+        try:
+            helm_releases = self._helm_evidence.document()["releases"]
+            helm_status = "available"
+        except HelmEvidenceStale:
+            helm_releases = []
+            helm_status = "stale"
+        except HelmEvidenceUnavailable:
+            helm_releases = []
+            helm_status = "unavailable"
 
         items = []
         for component_id in self._registry.component_ids:
@@ -170,6 +186,12 @@ class ComponentInventory:
                 ],
                 component_resources,
                 observation_status,
+                [
+                    item
+                    for item in helm_releases
+                    if item["name"] == component["helmRelease"]
+                ],
+                helm_status,
             )
             items.append(
                 {
@@ -281,30 +303,24 @@ class ComponentInventory:
         product_version: str,
         resources: list[dict],
         status: str,
+        helm_releases: list[dict],
+        helm_status: str,
     ) -> dict:
         """Compare desired pins only with complete workload-declared evidence."""
-        if status != "available":
+        installed = ComponentInventory._installed_release(helm_releases, helm_status)
+        if status != "available" or installed["state"] in {"unavailable", "stale"}:
             state = "unavailable"
-        elif resources and all(item["state"] == "absent" for item in resources):
+        elif installed["state"] == "absent" and resources and all(
+            item["state"] == "absent" for item in resources
+        ):
             state = "absent"
+        elif installed["state"] == "absent":
+            state = "retained"
+        elif installed["state"] == "multiple":
+            state = "mixed"
         elif any(item["state"] != "present" for item in resources):
             state = "mixed"
         else:
-            releases = {
-                (item["workloadMetadata"] or {}).get("declaredReleaseName")
-                for item in resources
-                if (item["workloadMetadata"] or {}).get("declaredReleaseName")
-            }
-            charts = {
-                (item["workloadMetadata"] or {}).get("chartVersion")
-                for item in resources
-                if (item["workloadMetadata"] or {}).get("chartVersion")
-            }
-            apps = {
-                (item["workloadMetadata"] or {}).get("appVersion")
-                for item in resources
-                if (item["workloadMetadata"] or {}).get("appVersion")
-            }
             observed_images: dict[str, set[str]] = {}
             for item in resources:
                 for image in item["runningImages"]:
@@ -318,27 +334,16 @@ class ComponentInventory:
                 for version in versions
                 if version[:1].isdigit() and "." in version
             }
-            complete_metadata = all(
-                item["workloadMetadata"]
-                and all(item["workloadMetadata"].values())
-                for item in resources
-            )
             if (
-                len(releases) > 1
-                or len(charts) > 1
-                or len(apps) > 1
-                or len(numeric_families) > 1
+                len(numeric_families) > 1
                 or any(len(versions) > 1 for versions in observed_images.values())
             ):
                 state = "mixed"
-            elif (
-                not complete_metadata
-                or set(observed_images) != set(desired_images)
-            ):
+            elif set(observed_images) != set(desired_images):
                 state = "unavailable"
             elif (
-                charts == {component["version"]["chart"]}
-                and apps == {product_version}
+                installed["latest"]["chartVersion"] == component["version"]["chart"]
+                and installed["latest"]["appVersion"] == product_version
                 and observed_images
                 == {name: {version} for name, version in desired_images.items()}
             ):
@@ -347,10 +352,7 @@ class ComponentInventory:
                 state = "drift"
         return {
             "state": state,
-            "installedRelease": {
-                "state": "unavailable",
-                "reason": "helm-storage-not-observed",
-            },
+            "installedRelease": installed,
             "comparisonSource": "workload-declared-metadata",
             "workloads": [
                 {
@@ -362,6 +364,22 @@ class ComponentInventory:
                 for item in resources
             ],
         }
+
+    @staticmethod
+    def _installed_release(records: list[dict], status: str) -> dict:
+        if status != "available":
+            return {
+                "state": "stale" if status == "stale" else "unavailable",
+                "reason": "snapshot-stale" if status == "stale" else "snapshot-unavailable",
+                "revisions": [],
+                "latest": None,
+            }
+        ordered = sorted(records, key=lambda item: item["revision"])
+        if not ordered or ordered[-1]["status"] == "uninstalled":
+            return {"state": "absent", "reason": "release-not-installed", "revisions": ordered, "latest": ordered[-1] if ordered else None}
+        active = [item for item in ordered if item["status"] not in {"superseded", "uninstalled"}]
+        state = "installed" if len(active) == 1 and ordered[-1]["status"] == "deployed" else "multiple"
+        return {"state": state, "reason": "current-release-observed" if state == "installed" else "multiple-or-nonterminal-revisions", "revisions": ordered, "latest": ordered[-1]}
 
     @staticmethod
     def _validated_observations(

@@ -9,6 +9,8 @@ STATE_ROOT="${FORTIFY_MANAGER_STATE_ROOT:-/var/lib/fortify-lab-manager}"
 INSTALL_ROOT="${FORTIFY_MANAGER_INSTALL_ROOT:-/opt/fortify-lab-manager}"
 UNIT_PATH="${FORTIFY_MANAGER_UNIT_PATH:-/etc/systemd/system/fortify-manager.service}"
 PROBE_UNIT_PATH="${FORTIFY_MANAGER_PROBE_UNIT_PATH:-/etc/systemd/system/fortify-health-probe.service}"
+HELM_EVIDENCE_SERVICE_PATH="${FORTIFY_MANAGER_HELM_EVIDENCE_SERVICE_PATH:-/etc/systemd/system/fortify-helm-release-evidence.service}"
+HELM_EVIDENCE_TIMER_PATH="${FORTIFY_MANAGER_HELM_EVIDENCE_TIMER_PATH:-/etc/systemd/system/fortify-helm-release-evidence.timer}"
 CLI_PATH="${FORTIFY_MANAGER_CLI_PATH:-/usr/local/bin/fortify-manager-cli}"
 MANIFEST_PATH="${FORTIFY_MANAGER_MANIFEST_PATH:-/var/lib/fortify-lab-manager/manager-ingress.yaml}"
 CLUSTER_ACCESS_ROOT="${FORTIFY_MANAGER_CLUSTER_ACCESS_ROOT:-$STATE_ROOT/cluster-access}"
@@ -39,6 +41,7 @@ Commands:
                                   Verify RBAC and activate protected observer access
   activate-lifecycle              Verify and activate bounded lifecycle execution
   deactivate-lifecycle            Revoke lifecycle mutation; preserve all lab data
+  refresh-release-evidence        Publish a sanitized protected Helm history snapshot
   bootstrap-account [USERNAME]    Prompt for and persist the first/local account verifier
   configure DOMAIN PRIVATE_ADDRESS [PORT] [PUBLIC_ADDRESS]
                                   Configure private ingress and public DNS expectation
@@ -365,6 +368,10 @@ install_release_files() {
         "$UNIT_PATH"
     install -m 644 "$release/packaging/systemd/fortify-health-probe.service" \
         "$PROBE_UNIT_PATH"
+    install -m 644 "$release/packaging/systemd/fortify-helm-release-evidence.service" \
+        "$HELM_EVIDENCE_SERVICE_PATH"
+    install -m 644 "$release/packaging/systemd/fortify-helm-release-evidence.timer" \
+        "$HELM_EVIDENCE_TIMER_PATH"
     systemctl daemon-reload
 }
 
@@ -405,6 +412,8 @@ install_runtime() {
         record_activation_failure "$evidence_root" "$RUNTIME_ID" "probe-start"
         fail "Manager activation failed; prior release was restored and sanitized evidence retained"
     fi
+    systemctl enable --now fortify-helm-release-evidence.timer >/dev/null ||
+        printf 'Warning: Helm release evidence timer is unavailable; inventory will fail closed.\n' >&2
     printf 'Installed Manager %s (%s); protected configuration and state were preserved.\n' \
         "$VERSION" "$RUNTIME_ID"
 }
@@ -1117,6 +1126,8 @@ PY
             fail "Manager activation and prior service recovery failed; protected evidence was retained"
         fail "Manager activation failed; prior release and service were restored and protected evidence retained"
     fi
+    systemctl enable --now fortify-helm-release-evidence.timer >/dev/null ||
+        printf 'Warning: Helm release evidence timer is unavailable; inventory will fail closed.\n' >&2
     printf 'Upgraded Manager atomically to %s; protected backup retained at %s.\n' \
         "$RUNTIME_ID" "$backup_root"
 }
@@ -1150,6 +1161,12 @@ case "$command" in
     install-cluster-access) install_cluster_access "$@" ;;
     activate-lifecycle) activate_lifecycle "$@" ;;
     deactivate-lifecycle) deactivate_lifecycle "$@" ;;
+    refresh-release-evidence)
+        require_root
+        PYTHONPATH="$REPOSITORY_ROOT" python3 -m manager.helm_release_evidence \
+            --output "$STATE_ROOT/helm-release-snapshot.json"
+        printf 'Sanitized Helm release evidence refreshed.\n'
+        ;;
     bootstrap-account) bootstrap_account "$@" ;;
     render-ingress) render_ingress "$@" ;;
     configure) configure_route "$@" ;;
@@ -1183,12 +1200,14 @@ case "$command" in
         require_root
         systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
         systemctl disable --now "$PROBE_SERVICE_NAME" 2>/dev/null || true
+        systemctl disable --now fortify-helm-release-evidence.timer 2>/dev/null || true
         microk8s kubectl -n fortify delete ingress fortify-manager \
             service fortify-manager-host endpoints fortify-manager-host \
             endpointslice fortify-manager-host \
             --ignore-not-found
         rm -f "$UNIT_PATH"
         rm -f "$PROBE_UNIT_PATH"
+        rm -f "$HELM_EVIDENCE_SERVICE_PATH" "$HELM_EVIDENCE_TIMER_PATH"
         rm -f "$CLI_PATH"
         systemctl daemon-reload
         printf 'Manager service and ingress removed. Configuration and state preserved.\n'

@@ -343,11 +343,11 @@ credentials, and registry authorization are never returned. Its state is:
 Missing metadata or any missing expected image role remains unavailable and is
 never copied from `version`. App-version mismatch is drift; contradictory
 workload labels or version families are mixed. Workload labels are declarations,
-not authoritative installed-release evidence. `installedRelease` therefore
-remains `unavailable` with reason `helm-storage-not-observed`, including retained
-workloads, missing releases, and apparent multiple revisions. The Manager
-deliberately does not inspect Helm storage because that would require Secret or
-release-record permissions outside this observer boundary.
+not authoritative installed-release evidence. `installedRelease` comes only
+from a fresh protected root-helper snapshot and includes bounded sanitized Helm
+revision history. It distinguishes installed, absent, multiple/nonterminal, and
+unavailable evidence; an absent release with retained workloads is `retained`.
+The Web Manager never reads Helm storage or receives Secret permission.
 Sanitized live acceptance evidence and its explicit installed-release gap are
 recorded in [Issue 147 observed-version evidence](evidence/issue-147-observed-versions.md).
 

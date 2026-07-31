@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh Fortify Lab sanitized Helm release evidence
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=120s
+RandomizedDelaySec=10s
+Persistent=true
+Unit=fortify-helm-release-evidence.service
+
+[Install]
+WantedBy=timers.target

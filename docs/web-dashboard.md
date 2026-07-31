@@ -90,8 +90,9 @@ filters can be combined with update and active-operation filters. **Updates**
 uses only the independent `observedDeployment` comparison. Cards label desired
 profile pins separately from the observed deployment state. The inspector labels
 workload-declared release/chart/app metadata and running image tags or digests
-per workload, while independently showing the installed Helm release as
-unavailable. Workload labels are not presented as proof of an installed release.
+per workload, while independently showing sanitized installed Helm release and
+revision evidence from the protected helper snapshot. Workload labels are not
+presented as proof of an installed release.
 Missing observation or expected image-role evidence stays `unavailable` and
 never falls back to the profile template. `mixed` calls out controller/worker
 skew and contradictory workload declarations.

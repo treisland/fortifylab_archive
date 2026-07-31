@@ -542,7 +542,11 @@ function refreshInspector() {
     ]),
     detailSection("Installed release (independent evidence)", [
       ["State", item.observedDeployment?.installedRelease?.state || "unavailable"],
-      ["Reason", item.observedDeployment?.installedRelease?.reason === "helm-storage-not-observed" ? "Helm storage is intentionally not observed" : "Independent release evidence unavailable"]
+      ["Reason", item.observedDeployment?.installedRelease?.reason || "Independent release evidence unavailable"],
+      ["Latest", item.observedDeployment?.installedRelease?.latest
+        ? `${item.observedDeployment.installedRelease.latest.name} revision ${item.observedDeployment.installedRelease.latest.revision} · ${item.observedDeployment.installedRelease.latest.status} · chart ${item.observedDeployment.installedRelease.latest.chartVersion} · app ${item.observedDeployment.installedRelease.latest.appVersion}`
+        : "No installed release observed"],
+      ["History", (item.observedDeployment?.installedRelease?.revisions || []).map(revision => `r${revision.revision} ${revision.status}`).join(", ") || "No retained revision metadata"]
     ]),
     detailSection("Workload-declared metadata and running versions", [
       ["Evidence source", item.observedDeployment?.comparisonSource === "workload-declared-metadata" ? "Allow-listed workload metadata; not proof of an installed Helm release" : "Unavailable"],

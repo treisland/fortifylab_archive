@@ -19,8 +19,9 @@ Observed cases exercising the contract were:
   the desired comparison allow-list.
 
 These observations validate that real workload metadata contains match, drift,
-mixed, and incomplete inputs. They do **not** establish which Helm release or
-revision is installed. Installed-release evidence remains explicitly
-unavailable because the observer does not read Helm storage. Missing releases,
-retained workloads, and multiple revisions therefore remain a bounded gap until
-a separate safe evidence source is designed and approved.
+mixed, and incomplete inputs. They do **not** themselves establish which Helm
+release is installed. That conclusion comes independently from the protected
+root-helper snapshot, which projects bounded history metadata without values or
+Secrets. Live helper collection remains to be repeated after this candidate is
+installed; until then, current installed-release evidence is an explicit
+deployment acceptance gap rather than an inferred result.
