@@ -226,6 +226,21 @@ class FunctionalProbeServiceTests(unittest.TestCase):
             json.dumps(self.request(identity, timeout_ms=5)).encode()
         )
         self.assertEqual(timed_out["summary"], "PROBE_TIMEOUT")
+        with tempfile.TemporaryDirectory() as directory:
+            completion = Path(directory) / "completed"
+
+            def outlive_timeout(_timeout):
+                time.sleep(0.1)
+                completion.touch()
+                return "healthy", "TOO_LATE"
+
+            service.handlers[identity] = outlive_timeout
+            timed_out = service.handle(
+                json.dumps(self.request(identity, timeout_ms=5)).encode()
+            )
+            self.assertEqual(timed_out["summary"], "PROBE_TIMEOUT")
+            time.sleep(0.15)
+            self.assertFalse(completion.exists())
         service.handlers[identity] = lambda _timeout: ("healthy", "PROBE_RECOVERED")
         recovered = service.handle(json.dumps(self.request(identity)).encode())
         self.assertEqual(recovered["state"], "healthy")

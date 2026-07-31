@@ -8,6 +8,7 @@ Before=fortify-manager.service
 Type=simple
 User=fortify-health-probe
 Group=fortify-manager
+SupplementaryGroups=fortify-health-probe
 RuntimeDirectory=fortify-lab-manager
 RuntimeDirectoryMode=0750
 EnvironmentFile=-/etc/fortify-lab-manager/health-probe.env

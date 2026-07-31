@@ -382,6 +382,9 @@ class ManagerInstallationTests(unittest.TestCase):
 
     def test_systemd_and_lifecycle_boundaries_are_explicit(self):
         unit = (ROOT / "packaging/systemd/fortify-manager.service").read_text()
+        probe_unit = (
+            ROOT / "packaging/systemd/fortify-health-probe.service"
+        ).read_text()
         script = (ROOT / "scripts/fortify-manager").read_text()
         for fragment in (
             "User=fortify-manager",
@@ -390,6 +393,8 @@ class ManagerInstallationTests(unittest.TestCase):
             "ReadWritePaths=/var/lib/fortify-lab-manager",
         ):
             self.assertIn(fragment, unit)
+        self.assertIn("Group=fortify-manager", probe_unit)
+        self.assertIn("SupplementaryGroups=fortify-health-probe", probe_unit)
         self.assertIn("Configuration and state preserved", script)
         self.assertIn("DELETE MANAGER STATE", script)
         self.assertIn('port = $port', script)

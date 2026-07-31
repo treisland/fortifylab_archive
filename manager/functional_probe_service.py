@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
 import os
 import re
 import signal
@@ -14,7 +15,6 @@ import subprocess
 import threading
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -105,15 +105,32 @@ class FunctionalProbeService:
             handler = self.handlers.get(identity)
             if handler is None:
                 return self._result("misconfigured", "PROBE_EXTERNAL_INPUT_NOT_CONFIGURED")
-            executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="functional-probe")
-            future = executor.submit(handler, timeout)
-            try:
-                state, summary = future.result(timeout=timeout)
-            except FutureTimeout:
-                future.cancel()
+            context = multiprocessing.get_context("fork")
+            receiver, sender = context.Pipe(duplex=False)
+            process = context.Process(
+                target=_run_handler,
+                args=(handler, timeout, sender),
+                name="functional-probe-check",
+            )
+            process.start()
+            sender.close()
+            if not receiver.poll(timeout):
+                process.terminate()
+                process.join(1)
+                if process.is_alive():
+                    process.kill()
+                    process.join()
                 return self._result("unknown", "PROBE_TIMEOUT")
-            finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+            outcome = receiver.recv()
+            receiver.close()
+            process.join()
+            if outcome[0] == "timeout":
+                return self._result("unknown", "PROBE_TIMEOUT")
+            if outcome[0] == "unreachable":
+                return self._result("unreachable", "PROBE_TARGET_UNREACHABLE")
+            if outcome[0] != "ok":
+                return self._result("unknown", "PROBE_FAILED_SAFELY")
+            state, summary = outcome[1:]
             if state not in HEALTH_STATES - {"blocked", "stale"} or not isinstance(summary, str):
                 raise ProbeProtocolError
             return self._result(state, summary[:160])
@@ -165,6 +182,21 @@ class FunctionalProbeService:
 
     def stop(self, *_args: object) -> None:
         self._stop.set()
+
+
+def _run_handler(handler: Callable, timeout: float, sender) -> None:
+    """Return only typed, sanitized outcomes across the process boundary."""
+    try:
+        state, summary = handler(timeout)
+        sender.send(("ok", state, summary))
+    except TimeoutError:
+        sender.send(("timeout",))
+    except (OSError, ssl.SSLError, urllib.error.URLError):
+        sender.send(("unreachable",))
+    except Exception:
+        sender.send(("failed",))
+    finally:
+        sender.close()
 
 
 def default_handlers(registry: ProbeRegistry) -> dict:
