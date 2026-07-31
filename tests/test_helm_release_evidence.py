@@ -129,6 +129,39 @@ class HelmReleaseEvidenceTests(unittest.TestCase):
                 collect(self.path, ComponentRegistry.load())
         self.assertFalse(self.path.exists())
 
+    def test_complete_helm_status_set_is_bounded_and_accepted(self):
+        for status in ("unknown", "uninstalling"):
+            with self.subTest(status=status):
+                value = document()
+                value["releases"][0]["status"] = status
+                self.write(value)
+                self.assertEqual(
+                    self.loader().document()["releases"][0]["status"], status
+                )
+
+    def test_systemd_sandbox_invokes_packaged_root_collector(self):
+        root = Path(__file__).resolve().parents[1]
+        unit = (root / "packaging/systemd/fortify-helm-release-evidence.service").read_text()
+        manifest = json.loads((root / "packaging/manager-runtime.json").read_text())
+        self.assertIn("User=root", unit)
+        self.assertIn("Group=root", unit)
+        self.assertIn("NoNewPrivileges=true", unit)
+        self.assertIn("ProtectSystem=strict", unit)
+        self.assertIn("ReadWritePaths=/var/lib/fortify-lab-manager", unit)
+        self.assertIn("TimeoutStartSec=45", unit)
+        self.assertIn(
+            "ExecStart=/opt/fortify-lab-manager/current/bin/fortify-helm-release-evidence",
+            unit,
+        )
+        self.assertEqual(
+            manifest["launchers"]["bin/fortify-helm-release-evidence"],
+            "manager.helm_release_evidence",
+        )
+        self.assertIn(
+            "packaging/systemd/fortify-helm-release-evidence.service",
+            manifest["files"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -297,6 +297,27 @@ class ComponentInventoryAPIContractTests(unittest.TestCase):
         self.assertEqual(mysql["observedDeployment"]["state"], "unavailable")
         self.assertEqual(mysql["observedDeployment"]["installedRelease"]["state"], "stale")
 
+    def test_unknown_and_uninstalling_releases_never_match(self):
+        for release_status in ("unknown", "uninstalling"):
+            with self.subTest(status=release_status):
+                evidence = HelmEvidence([
+                    helm_release(
+                        "mysql", "9.19.0", "8.0.36", status=release_status
+                    )
+                ])
+                document = request(ManagerAPI(
+                    observer=MysqlVersionObserver(), helm_evidence=evidence
+                ))["json"]
+                mysql = next(
+                    item for item in document["items"]
+                    if item["identity"]["id"] == "mysql"
+                )
+                self.assertEqual(
+                    mysql["observedDeployment"]["installedRelease"]["state"],
+                    "multiple",
+                )
+                self.assertEqual(mysql["observedDeployment"]["state"], "mixed")
+
     def test_unavailable_cluster_returns_unknown_resources_without_details(self):
         response = request(ManagerAPI(observer=UnavailableObserver()))
         self.assertEqual(response["status"], "200 OK")

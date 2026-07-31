@@ -22,7 +22,17 @@ MAX_BYTES = 65536
 MAX_AGE_SECONDS = 300
 SAFE = re.compile(r"^[A-Za-z0-9._:+-]{1,160}$")
 STATUSES = frozenset(
-    {"deployed", "failed", "pending-install", "pending-upgrade", "pending-rollback", "uninstalled", "superseded"}
+    {
+        "unknown",
+        "deployed",
+        "uninstalled",
+        "superseded",
+        "failed",
+        "uninstalling",
+        "pending-install",
+        "pending-upgrade",
+        "pending-rollback",
+    }
 )
 
 
