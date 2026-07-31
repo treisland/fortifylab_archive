@@ -19,7 +19,7 @@ from manager.component_inventory import (
     ResourceObservation,
 )
 from manager.component_registry import ComponentRegistry
-from manager.health import CheckSpec, ProbeResult
+from manager.health import CheckSpec, HealthProbe, ProbeResult
 from manager.preflight import PreflightCheck, PreflightResult
 
 
@@ -51,6 +51,7 @@ class KubernetesObserver:
         *,
         namespace: str = NAMESPACE,
         timeout_seconds: float = 5.0,
+        functional_probe: HealthProbe | None = None,
     ) -> None:
         if namespace != NAMESPACE:
             raise ValueError("only the managed fortify namespace is supported")
@@ -62,6 +63,7 @@ class KubernetesObserver:
         self._registry = registry
         self._namespace = namespace
         self._timeout = min(max(float(timeout_seconds), 0.1), 10.0)
+        self._functional_probe = functional_probe
         self._workloads = {
             (component["id"], workload["id"]): workload
             for component in (
@@ -129,6 +131,7 @@ class KubernetesObserver:
         for path in (
             "apis/storage.k8s.io/v1/storageclasses",
             f"api/v1/namespaces/{self._namespace}/services",
+            f"api/v1/namespaces/{self._namespace}/persistentvolumeclaims",
             f"apis/networking.k8s.io/v1/namespaces/{self._namespace}/ingresses",
         ):
             self._get(path)
@@ -152,23 +155,61 @@ class KubernetesObserver:
             return self._preflight(check)
         now = datetime.now(timezone.utc)
         if check.subject_id == "microk8s-node":
-            self.evidence()
-            return ProbeResult("healthy", "MicroK8s node metadata is reachable", now)
-        if check.subject_id in {"storage", "dns", "ingress"}:
-            path = {
-                "storage": "apis/storage.k8s.io/v1/storageclasses",
-                "dns": f"api/v1/namespaces/{self._namespace}/services",
-                "ingress": f"apis/networking.k8s.io/v1/namespaces/{self._namespace}/ingresses",
-            }[check.subject_id]
-            document = self._get(path)
-            state = "healthy" if document.get("items") else "degraded"
-            return ProbeResult(state, "Required Kubernetes metadata was observed", now)
-        if check.subject_id == "tls":
+            document = self._get("api/v1/nodes")
+            ready = any(
+                condition.get("type") == "Ready" and condition.get("status") == "True"
+                for item in document.get("items", [])
+                for condition in item.get("status", {}).get("conditions", [])
+            )
             return ProbeResult(
-                "degraded",
-                "TLS contents are intentionally outside observer permissions",
+                "healthy" if ready else "unhealthy",
+                "MicroK8s node reports Ready"
+                if ready else "MicroK8s node does not report Ready",
                 now,
             )
+        if check.subject_id == "storage":
+            document = self._get("apis/storage.k8s.io/v1/storageclasses")
+            state = "healthy" if document.get("items") else "degraded"
+            return ProbeResult(state, "Required Kubernetes metadata was observed", now)
+        if check.subject_id in {"dns", "ingress", "tls"}:
+            return self._functional(check, now)
+        if check.probe_type == "persistent-volume":
+            component = self._registry.component(check.subject_id)
+            persistence = next(
+                (
+                    item for item in component["persistence"]
+                    if item["id"] == check.target
+                ),
+                None,
+            )
+            if persistence is None:
+                return ProbeResult(
+                    "unknown", "Persistent volume target is not registered", now
+                )
+            name = urllib.parse.quote(persistence["claim"], safe="")
+            try:
+                document = self._get(
+                    f"api/v1/namespaces/{self._namespace}/persistentvolumeclaims/{name}"
+                )
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    error.close()
+                    return ProbeResult(
+                        "unhealthy",
+                        "Required persistent volume claim is absent",
+                        now,
+                    )
+                raise
+            phase = document.get("status", {}).get("phase")
+            return ProbeResult(
+                "healthy" if phase == "Bound" else "unhealthy",
+                "Persistent volume claim is bound"
+                if phase == "Bound"
+                else "Persistent volume claim is not bound",
+                now,
+            )
+        if check.probe_type != "workload-ready":
+            return self._functional(check, now)
         workload = self._workloads.get((check.subject_id, check.target))
         if workload is None:
             return ProbeResult(
@@ -190,6 +231,15 @@ class KubernetesObserver:
         ready = int(document.get("status", {}).get("readyReplicas", 0))
         state = "healthy" if desired > 0 and ready >= desired else "degraded"
         return ProbeResult(state, "Workload readiness metadata was observed", now)
+
+    def _functional(self, check: CheckSpec, now: datetime) -> ProbeResult:
+        if self._functional_probe is None:
+            return ProbeResult(
+                "unknown",
+                "Protected functional probe service is unavailable",
+                now,
+            )
+        return self._functional_probe.probe(check)
 
     def _preflight(self, check: PreflightCheck) -> PreflightResult:
         paths = {

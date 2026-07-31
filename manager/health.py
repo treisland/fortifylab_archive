@@ -14,11 +14,15 @@ from manager.component_registry import ComponentRegistry
 
 API_VERSION = "fortifylab.io/v1alpha1"
 HEALTH_STATES = frozenset(
-    {"healthy", "degraded", "unhealthy", "unknown", "blocked", "stale"}
+    {
+        "healthy", "starting", "degraded", "blocked", "misconfigured",
+        "stopped", "unreachable", "unhealthy", "unknown", "stale",
+    }
 )
 _PROBE_STATES = HEALTH_STATES - {"blocked", "stale"}
 _SENSITIVE = re.compile(
-    r"(?i)(?:password|passwd|secret|token|credential|license|private.?key|"
+    r"(?i)(?:password|passwd|secret|token|credential|"
+    r"license\s*(?:data|value|key|content|[:=])|private.?key|"
     r"authorization|cookie|bearer\s+\S+)"
 )
 
@@ -43,12 +47,15 @@ class ProbeResult:
     state: str
     summary: str
     observed_at: datetime
+    latency_ms: int | None = None
 
     def __post_init__(self) -> None:
         if self.state not in _PROBE_STATES:
             raise ValueError("unsupported probe state")
         if self.observed_at.tzinfo is None:
             raise ValueError("probe timestamp must include a timezone")
+        if self.latency_ms is not None and self.latency_ms < 0:
+            raise ValueError("probe latency must be non-negative")
 
 
 class HealthProbe(Protocol):
@@ -132,7 +139,10 @@ class HealthEngine:
         required = [entry for entry in evidence if entry["required"]]
         state = "healthy"
         root: str | None = None
-        for candidate in ("unhealthy", "unknown", "stale", "degraded"):
+        for candidate in (
+            "unhealthy", "misconfigured", "unreachable", "unknown", "stale",
+            "stopped", "starting", "degraded",
+        ):
             match = next(
                 (entry for entry in required if entry["state"] == candidate), None
             )
@@ -183,6 +193,7 @@ class HealthEngine:
             )
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
+        measured_latency = max(0, round((time.monotonic() - started) * 1000))
         return {
             "id": check.id,
             "layer": check.layer,
@@ -190,7 +201,11 @@ class HealthEngine:
             "required": check.required,
             "summary": summary,
             "observedAt": _timestamp(observed_at),
-            "latencyMs": max(0, round((time.monotonic() - started) * 1000)),
+            "latencyMs": (
+                result.latency_ms
+                if "result" in locals() and result.latency_ms is not None
+                else measured_latency
+            ),
         }
 
     @staticmethod
@@ -234,7 +249,10 @@ class HealthEngine:
     @staticmethod
     def _aggregate(items: list[dict]) -> str:
         states = {item["state"] for item in items}
-        for state in ("unhealthy", "unknown", "stale", "degraded", "blocked"):
+        for state in (
+            "unhealthy", "misconfigured", "unreachable", "unknown", "stale",
+            "stopped", "starting", "degraded", "blocked",
+        ):
             if state in states:
                 return state
         return "healthy"
@@ -314,6 +332,8 @@ def _infrastructure_subjects() -> tuple[_Subject, ...]:
 def _component_layer(probe_type: str) -> str:
     return {
         "workload-ready": "workload",
+        "persistent-volume": "storage",
+        "native-readiness": "application",
         "database-query": "application",
         "https": "application",
         "tcp": "functional",

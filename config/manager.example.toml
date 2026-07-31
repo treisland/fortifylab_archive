@@ -16,3 +16,6 @@ namespace = "fortify"
 token_file = "/var/lib/fortify-lab-manager/cluster-access/token"
 ca_file = "/var/lib/fortify-lab-manager/cluster-access/ca.crt"
 timeout_seconds = 5
+# Optional protected local service that owns application/database credentials
+# and returns only versioned, sanitized functional health results.
+health_probe_socket = "/run/fortify-lab-manager/health-probe.sock"

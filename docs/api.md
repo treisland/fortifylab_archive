@@ -123,7 +123,7 @@ observation state becomes `unavailable`. A malformed registry remains a
 sanitized `503 REGISTRY_UNAVAILABLE`.
 
 Dependency-aware runtime health is exposed at `GET /api/v1alpha1/health`
-using the same read-only method policy. Its six states, layered dependency
+using the same read-only method policy. Its explicit states, layered dependency
 order, freshness semantics, safe evidence, and remediation catalog are
 documented in [Dependency-aware health checks](health-checks.md). The response
 schema is

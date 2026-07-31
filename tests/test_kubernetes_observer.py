@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import datetime
 import tempfile
 import unittest
 import urllib.error
@@ -13,6 +14,7 @@ from unittest.mock import patch
 from manager.component_inventory import ClusterUnavailable, ResourceIdentity
 from manager.component_registry import ComponentRegistry
 from manager.kubernetes_observer import KubernetesObserver
+from manager.health import CheckSpec, ProbeResult
 
 
 class Response:
@@ -167,10 +169,47 @@ class KubernetesObserverTests(unittest.TestCase):
             evidence = self.observer.diagnose_access(resource)
         self.assertEqual(evidence.node, "lab-node")
         self.assertTrue(any("/storageclasses" in url for url in urls))
+        self.assertTrue(any("/persistentvolumeclaims" in url for url in urls))
         self.assertTrue(any("/ingresses" in url for url in urls))
         self.assertTrue(any("/secrets" in url for url in urls))
         self.assertTrue(any("/namespaces/default/" in url for url in urls))
         self.assertTrue(any("/pods/access-check/log" in url for url in urls))
+
+    def test_pvc_and_workload_evidence_use_only_allowlisted_metadata(self):
+        def metadata(request, **kwargs):
+            if "/persistentvolumeclaims/data-mysql-0" in request.full_url:
+                return Response({"status": {"phase": "Bound"}})
+            return Response({"spec": {"replicas": 1}, "status": {"readyReplicas": 1}})
+
+        pvc = CheckSpec(
+            "database-pvc", "mysql", "storage", "persistent-volume",
+            "database-data", 1,
+        )
+        workload = CheckSpec(
+            "database-ready", "mysql", "workload", "workload-ready",
+            "database", 1,
+        )
+        with patch("manager.kubernetes_observer.urllib.request.urlopen", metadata):
+            self.assertEqual(self.observer.probe(pvc).state, "healthy")
+            self.assertEqual(self.observer.probe(workload).state, "healthy")
+
+    def test_functional_checks_delegate_and_missing_service_is_unknown(self):
+        functional = unittest.mock.Mock()
+        functional.probe.return_value = ProbeResult(
+            "healthy", "Authenticated query succeeded",
+            datetime.datetime.now(datetime.timezone.utc),
+        )
+        observer = KubernetesObserver(
+            "https://127.0.0.1:16443", self.token, self.ca, self.registry,
+            timeout_seconds=0.1, functional_probe=functional,
+        )
+        query = CheckSpec(
+            "database-query", "mysql", "application", "database-query",
+            "mysql", 1,
+        )
+        self.assertEqual(observer.probe(query).state, "healthy")
+        functional.probe.assert_called_once_with(query)
+        self.assertEqual(self.observer.probe(query).state, "unknown")
 
 
 if __name__ == "__main__":

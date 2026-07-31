@@ -61,6 +61,6 @@
     }
   },
   "$defs": {
-    "state": {"enum": ["healthy", "degraded", "unhealthy", "unknown", "blocked", "stale"]}
+    "state": {"enum": ["healthy", "starting", "degraded", "blocked", "misconfigured", "stopped", "unreachable", "unhealthy", "unknown", "stale"]}
   }
 }

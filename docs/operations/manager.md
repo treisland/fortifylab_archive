@@ -84,14 +84,25 @@ history.
 least-privilege RBAC, then copies only that identity's token and cluster CA
 into `/var/lib/fortify-lab-manager/cluster-access` with mode `0600`. The
 runtime reads Kubernetes metadata over HTTPS and never invokes `kubectl`.
-Its namespace Role can get/list only Services, Deployments, StatefulSets, and
-Ingresses in `fortify`. A separate discovery ClusterRole can get/list Nodes
+Its namespace Role can get/list only Services, PVCs, Deployments,
+StatefulSets, and Ingresses in `fortify`. A separate discovery ClusterRole can get/list Nodes
 and StorageClasses and read `/version`; it cannot enumerate namespaces.
 Neither role grants Secrets, pod logs, exec, mutation, or workload access in
 another namespace. Re-running the command refreshes only the observer
 credential and CA; it does not read application Secrets.
 
 ## Health and sanitized diagnostics
+
+Application-level health requires the protected functional probe configured
+by `cluster.health_probe_socket`. Keep its Unix socket owner/group restricted
+to the Manager and probe service. The probe service owns database and
+application authentication; do not grant the Manager Kubernetes Secret, log,
+or pod-exec access. If the service is absent or times out, affected root checks
+report `unknown` and downstream components report `blocked`.
+
+The versioned request/result format, component checks, safe evidence rules,
+and recovery behavior are defined in the
+[health check reference](../health-checks.md).
 
 `sudo ./scripts/fortify-manager diagnose` checks the authoritative registry,
 protected observer files, Kubernetes API reachability, actual observer
