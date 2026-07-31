@@ -243,8 +243,9 @@ persisted active milestone and rejects issues outside it.
 ## Autonomy policy
 
 The monitor, Telegram listener, issue runner, and workflow status renderer use
-one versioned policy loader. Policy is not accepted through Telegram and is
-not stored in Git. With no policy setting, generation `0` of the `assisted`
+one versioned policy loader. Policy is never stored in Telegram or Git.
+Confirmed Telegram changes atomically replace the configured protected policy
+file; that file remains authoritative. With no policy setting, generation `0` of the `assisted`
 profile is the recommended default after the Manual loop has been verified:
 eligible issue selection, post-merge issue closure, exact allowlisted
 milestone rollover, and requests for explicitly verified idempotent retry
@@ -277,6 +278,35 @@ supervisor services only after the status output shows the intended profile,
 generation, digest, and all eight effective action decisions. The digest is
 calculated from the canonical effective policy, not its path or JSON key
 order, so separate processes report the same value.
+
+### Private Telegram autonomy controls
+
+`/autonomy` reports the effective profile, action decisions, generation,
+digest prefix, lease expiry, held state, and configuration consistency. The
+infrequent controls remain slash commands:
+
+- `/autonomy manual`
+- `/autonomy assisted`
+- `/autonomy autonomous <duration>`, using a positive number plus `m`, `h`, or
+  `d`, capped at seven days
+- `/hold`, `/resume`, and `/approve-once`
+
+Every mutation first returns a `/confirm <token>` command. The token expires
+after at most five minutes, is bound to the linked private user, identifies
+exactly one requested action, and is consumed once. Requests and confirmations
+from any other user, chat, or non-private conversation are ignored. A Telegram
+delivery outage does not apply or consume a change.
+
+`/approve-once` arms one merge approval under an approval-bound policy. It is
+consumed by the next eligible merge plan and does not weaken destructive,
+secret, or scope-change policy.
+
+Each monitor, listener, status renderer, and runner records the effective
+generation and digest in sanitized state or heartbeat evidence. If fresh
+process evidence disagrees, status shows `Configuration: mismatch` and actions
+fail closed. An expired autonomous lease is reported separately and also
+blocks actions. Malformed external reloads report `configuration restart
+required`; they never expose a path, document content, or raw exception.
 
 The supported profiles are:
 

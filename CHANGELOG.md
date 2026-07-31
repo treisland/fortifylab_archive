@@ -38,6 +38,10 @@
   and expiring autonomous profiles, protected action boundaries, canonical
   effective-policy digests, durable change audit events, and compatible
   approval-first migration defaults.
+- Add confirmed private Telegram autonomy, hold, resume, and one-shot approval
+  controls with atomic protected-policy replacement, expiring identity-bound
+  capabilities, process generation attestations, and mixed-generation
+  fail-closed status.
 - Add a release-blocking 0.4 operational-console browser evaluation contract
   with deterministic desktop and narrow journeys, exact-profile sanitized live
   evidence, Telegram/audit correlation, and an explicit unavailable default.

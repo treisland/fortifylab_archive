@@ -39,7 +39,7 @@ class RunnerHeartbeatTests(unittest.TestCase):
             thresholds=ActivityThresholds(10, 20, 30),
             clock=self.clock,
         )
-        self.document = self.store.start(52, "0.2 — Observable Manager MVP")
+        self.document = self.store.start(52, "0.2 — Observable Manager MVP", 3, "a" * 64)
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
@@ -89,7 +89,7 @@ class RunnerHeartbeatTests(unittest.TestCase):
         self.assertEqual(recovered["last_completed_safe_step"], "preparing")
 
     def test_runner_restart_takes_over_and_rejects_stale_writer(self) -> None:
-        replacement = self.store.start(52, "0.2 — Observable Manager MVP")
+        replacement = self.store.start(52, "0.2 — Observable Manager MVP", 3, "a" * 64)
         self.assertEqual(replacement["generation"], self.document["generation"] + 1)
         with self.assertRaisesRegex(HeartbeatError, "stale"):
             self.update(phase="implementing")
@@ -137,7 +137,7 @@ class RunnerHeartbeatTests(unittest.TestCase):
         with self.assertRaisesRegex(HeartbeatError, "terminal"):
             self.update()
 
-        failed = self.store.start(53, "milestone")
+        failed = self.store.start(53, "milestone", 3, "a" * 64)
         value = self.store.update(
             53, failed["writer_id"], failed["generation"], phase="failed"
         )
@@ -168,19 +168,19 @@ class RunnerHeartbeatTests(unittest.TestCase):
             self.root, max_terminal_records=2, terminal_max_age_days=1, clock=self.clock
         )
         for issue in range(60, 63):
-            value = store.start(issue, "milestone")
+            value = store.start(issue, "milestone", 3, "a" * 64)
             store.update(issue, value["writer_id"], value["generation"], phase="completed")
             self.clock.advance(1)
         self.assertFalse((self.root / "issue-60.json").exists())
         self.clock.advance(86401)
-        store.start(70, "milestone")
+        store.start(70, "milestone", 3, "a" * 64)
         self.assertFalse((self.root / "issue-61.json").exists())
         self.assertFalse((self.root / "issue-62.json").exists())
 
     def test_total_record_retention_is_bounded(self) -> None:
         store = HeartbeatStore(self.root, max_records=3, clock=self.clock)
         for issue in range(80, 84):
-            store.start(issue, "milestone")
+            store.start(issue, "milestone", 3, "a" * 64)
             self.clock.advance(1)
         self.assertEqual(len(list(self.root.glob("issue-*.json"))), 3)
 
@@ -195,6 +195,17 @@ class RunnerHeartbeatTests(unittest.TestCase):
         self.assertIn(
             'timeout --signal=TERM --kill-after=10s "$VALIDATION_TIMEOUT"',
             runner,
+        )
+
+    def test_runner_revalidates_policy_before_each_phase(self) -> None:
+        runner = (
+            Path(__file__).resolve().parents[1] / "scripts/fortify-issue-runner.sh"
+        ).read_text(encoding="utf-8")
+        phase_function = runner.split("heartbeat_phase() {", 1)[1].split("}", 1)[0]
+        self.assertIn("policy_identity_matches", phase_function)
+        self.assertIn(
+            'fail "configuration mismatch; stale runner actions are blocked"',
+            phase_function,
         )
 
 

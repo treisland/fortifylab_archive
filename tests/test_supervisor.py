@@ -357,6 +357,140 @@ class SupervisorTest(unittest.TestCase):
         )
         self.assertEqual(self.store.get("watched"), "true")
 
+    def configure_policy_file(self) -> Path:
+        path = self.root / "autonomy-policy.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": "fortify.autonomy/v1alpha1",
+                    "profile": "assisted",
+                    "generation": 1,
+                }
+            ),
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+        self.config = dataclasses.replace(self.config, autonomy_policy_file=path)
+        self.supervisor = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        return path
+
+    def confirmation_token(self, response: str) -> str:
+        return response.rsplit(" ", 1)[1]
+
+    def test_autonomy_change_is_confirmed_persisted_and_reloaded(self) -> None:
+        self.configure_policy_file()
+        pending = self.supervisor.handle_command("/autonomy manual", "101")
+        self.assertIn("Pending confirmation", pending)
+        result = self.supervisor.handle_command(
+            f"/confirm {self.confirmation_token(pending)}", "101"
+        )
+        self.assertIn("Autonomy changed to manual", result)
+        restarted = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.assertEqual(restarted.policy.profile, "manual")
+        self.assertEqual(restarted.policy.generation, 2)
+        event = self.store.connection.execute(
+            "SELECT payload FROM events WHERE kind = 'autonomy.control_changed'"
+        ).fetchone()
+        self.assertNotIn(str(self.root), event["payload"])
+
+    def test_autonomy_confirmation_is_identity_bound_single_use_and_expiring(self) -> None:
+        self.configure_policy_file()
+        pending = self.supervisor.handle_command("/hold", "101")
+        token = self.confirmation_token(pending)
+        with self.assertRaisesRegex(SupervisorError, "another identity"):
+            self.supervisor.handle_command(f"/confirm {token}", "999")
+        self.assertIn("Held", self.supervisor.handle_command(f"/confirm {token}", "101"))
+        with self.assertRaisesRegex(SupervisorError, "already used"):
+            self.supervisor.handle_command(f"/confirm {token}", "101")
+        expiring = self.supervisor.handle_command("/resume", "101")
+        self.clock[0] += 301
+        with self.assertRaisesRegex(SupervisorError, "expired"):
+            self.supervisor.handle_command(
+                f"/confirm {self.confirmation_token(expiring)}", "101"
+            )
+
+    def test_telegram_outage_does_not_apply_or_consume_confirmation(self) -> None:
+        self.configure_policy_file()
+        pending = self.supervisor.handle_command("/hold", "101")
+        token = self.confirmation_token(pending)
+        update = {
+            "message": {
+                "text": f"/confirm {token}",
+                "from": {"id": 101},
+                "chat": {"id": 202, "type": "private"},
+            }
+        }
+        self.telegram.fail_sends = True
+        with self.assertRaisesRegex(SupervisorError, "Telegram send failed"):
+            self.supervisor.handle_update(update)
+        self.assertEqual(self.store.get("paused", "false"), "false")
+
+        self.telegram.fail_sends = False
+        self.supervisor.handle_update(update)
+        self.assertEqual(self.store.get("paused"), "true")
+
+    def test_autonomous_duration_is_bounded_and_malformed_duration_fails(self) -> None:
+        self.configure_policy_file()
+        with self.assertRaisesRegex(SupervisorError, "positive"):
+            self.supervisor.handle_command("/autonomy autonomous forever", "101")
+        with self.assertRaisesRegex(SupervisorError, "cannot exceed"):
+            self.supervisor.handle_command("/autonomy autonomous 8d", "101")
+        pending = self.supervisor.handle_command(
+            "/autonomy autonomous 30m", "101"
+        )
+        result = self.supervisor.handle_command(
+            f"/confirm {self.confirmation_token(pending)}", "101"
+        )
+        self.assertIn("Lease expiry:", result)
+
+    def test_expired_lease_survives_restart_and_allows_policy_recovery(self) -> None:
+        path = self.configure_policy_file()
+        pending = self.supervisor.handle_command(
+            "/autonomy autonomous 30m", "101"
+        )
+        self.supervisor.handle_command(
+            f"/confirm {self.confirmation_token(pending)}", "101"
+        )
+        self.clock[0] += 1801
+
+        restarted = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.assertIn(
+            "Configuration: expired-lease",
+            restarted.handle_command("/autonomy", "101"),
+        )
+        with self.assertRaisesRegex(SupervisorError, "lease expired"):
+            restarted.handle_command("/start-next", "101")
+
+        pending = restarted.handle_command("/autonomy assisted", "101")
+        result = restarted.handle_command(
+            f"/confirm {self.confirmation_token(pending)}", "101"
+        )
+        self.assertIn("Autonomy changed to assisted", result)
+        self.assertEqual(json.loads(path.read_text())["profile"], "assisted")
+        self.assertEqual(restarted.configuration_state(), "active")
+
+    def test_mixed_process_generation_blocks_actions_and_is_reported(self) -> None:
+        self.configure_policy_file()
+        self.store.set(
+            "process_policy:runner",
+            json.dumps(
+                {
+                    "generation": 99,
+                    "digest": "b" * 64,
+                    "updated_at": int(self.clock[0]),
+                }
+            ),
+        )
+        self.assertIn("Configuration: mismatch", self.supervisor.status_text())
+        with self.assertRaisesRegex(SupervisorError, "configuration mismatch"):
+            self.supervisor.monitor_once()
+
     def test_unauthorized_and_group_commands_are_ignored(self) -> None:
         self.supervisor.handle_update(
             {
@@ -859,6 +993,8 @@ class SupervisorTest(unittest.TestCase):
                     "milestone": self.config.milestone,
                     "writer_id": "a" * 32,
                     "generation": 1,
+                    "policy_generation": self.supervisor.policy.generation,
+                    "policy_digest": self.supervisor.policy.digest,
                     "revision": revision,
                     "phase": phase,
                     "phase_started_at": stamp(started),
@@ -904,6 +1040,29 @@ class SupervisorTest(unittest.TestCase):
         restarted = Supervisor(self.config, self.store, self.github, self.telegram)
         restarted.monitor_runner()
         self.assertEqual(len(self.telegram.messages), delivered)
+
+    def test_terminal_runner_does_not_attest_a_stale_policy_generation(self) -> None:
+        self.write_heartbeat(phase="completed", health="completed")
+        heartbeat_path = self.config.heartbeat_root / "issue-2.json"
+        heartbeat = json.loads(heartbeat_path.read_text(encoding="utf-8"))
+        heartbeat["policy_generation"] = 0
+        heartbeat["policy_digest"] = "b" * 64
+        heartbeat_path.write_text(json.dumps(heartbeat), encoding="utf-8")
+        self.store.set(
+            "process_policy:runner",
+            json.dumps(
+                {
+                    "generation": 0,
+                    "digest": "b" * 64,
+                    "updated_at": int(self.clock[0]),
+                }
+            ),
+        )
+
+        self.supervisor.monitor_runner()
+
+        self.assertEqual(self.store.get("process_policy:runner"), "")
+        self.assertEqual(self.supervisor.configuration_state(), "active")
 
     def test_quiet_hours_suppress_routine_but_not_stall(self) -> None:
         self.clock[0] = 1_800

@@ -52,6 +52,12 @@ terminal issue records. The heartbeat directory is additionally capped at the
 newest 200 issue records. Cleanup is performed during writes and never changes
 workflow state.
 
+Every heartbeat includes `policy_generation` and the canonical
+`policy_digest`. The monitor compares both fields with its effective policy
+before interpreting runner evidence or advancing workflow state. A mismatch
+is a configuration failure, not stale progress, and blocks actions until all
+long-running processes attest the same generation.
+
 ## Activity health
 
 The installed runner writes at every phase transition and every 30 seconds

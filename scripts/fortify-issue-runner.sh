@@ -62,7 +62,7 @@ done
 [ -x "$CODEX_BIN" ] || fail "Codex CLI is not executable: $CODEX_BIN"
 [ -r "$HEARTBEAT_TOOL" ] || fail "runner heartbeat helper is not readable"
 [ -r "$SUPERVISOR_CONFIG" ] || fail "supervisor configuration is not readable"
-APPROVED_MILESTONE="$(
+mapfile -t POLICY_CONTEXT < <(
   python3 - "$SUPERVISOR_CONFIG" "$HEARTBEAT_TOOL" <<'PY'
 import sqlite3
 import sys
@@ -90,9 +90,16 @@ active = str(row[0]) if row else str(supervisor["milestone"])
 if active not in authorized:
     raise SystemExit("active milestone is outside the authorized sequence")
 print(active)
+print(policy.generation)
+print(policy.digest)
 PY
-)"
+)
+APPROVED_MILESTONE="${POLICY_CONTEXT[0]:-}"
+POLICY_GENERATION="${POLICY_CONTEXT[1]:-}"
+POLICY_DIGEST="${POLICY_CONTEXT[2]:-}"
 [ -n "$APPROVED_MILESTONE" ] || fail "approved milestone is empty"
+[[ "$POLICY_GENERATION" =~ ^[0-9]+$ ]] || fail "policy generation is invalid"
+[[ "$POLICY_DIGEST" =~ ^[0-9a-f]{64}$ ]] || fail "policy digest is invalid"
 
 heartbeat_update() {
   [ -n "$HEARTBEAT_WRITER" ] || return 0
@@ -102,7 +109,31 @@ heartbeat_update() {
     --generation "$HEARTBEAT_GENERATION" "$@" >/dev/null
 }
 
+policy_identity_matches() {
+  python3 - "$SUPERVISOR_CONFIG" "$HEARTBEAT_TOOL" \
+    "$POLICY_GENERATION" "$POLICY_DIGEST" <<'PY'
+import sys
+import tomllib
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[2]).resolve().parent))
+from autonomy_policy import AutonomyPolicyError, load_policy
+
+with open(sys.argv[1], "rb") as stream:
+    supervisor = tomllib.load(stream)["supervisor"]
+policy_path = supervisor.get("autonomy_policy_file")
+try:
+    policy = load_policy(Path(policy_path) if policy_path else None)
+except AutonomyPolicyError:
+    raise SystemExit(1)
+if policy.generation != int(sys.argv[3]) or policy.digest != sys.argv[4]:
+    raise SystemExit(1)
+PY
+}
+
 heartbeat_phase() {
+  policy_identity_matches \
+    || fail "configuration mismatch; stale runner actions are blocked"
   heartbeat_update --phase "$1"
 }
 
@@ -135,7 +166,8 @@ heartbeat_ticker_stop() {
 }
 
 HEARTBEAT_JSON="$(python3 "$HEARTBEAT_TOOL" --root "$HEARTBEAT_ROOT" start \
-  --issue "$ISSUE_NUMBER" --milestone "$APPROVED_MILESTONE")"
+  --issue "$ISSUE_NUMBER" --milestone "$APPROVED_MILESTONE" \
+  --policy-generation "$POLICY_GENERATION" --policy-digest "$POLICY_DIGEST")"
 HEARTBEAT_WRITER="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["writer_id"])' \
   <<<"$HEARTBEAT_JSON")"
 HEARTBEAT_GENERATION="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["generation"])' \

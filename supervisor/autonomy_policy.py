@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import stat
+import tempfile
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -75,13 +76,16 @@ class EffectivePolicy:
         return self.decisions[action]
 
     def status(self) -> dict[str, Any]:
-        return {
+        result = {
             "schema_version": SCHEMA_VERSION,
             "profile": self.profile,
             "generation": self.generation,
             "digest": self.digest,
             "decisions": dict(self.decisions),
         }
+        if self.expires_at is not None:
+            result["expires_at"] = self.expires_at
+        return result
 
 
 def _digest(payload: Mapping[str, Any]) -> str:
@@ -99,6 +103,7 @@ def _effective(
     expires_at: str | None,
     configured: bool,
     now: datetime.datetime,
+    allow_expired: bool = False,
 ) -> EffectivePolicy:
     if profile not in PROFILE_DEFAULTS:
         raise AutonomyPolicyError(f"Unknown autonomy profile: {profile}")
@@ -141,7 +146,7 @@ def _effective(
             ) from error
         if expiry.tzinfo is None:
             raise AutonomyPolicyError("Autonomous expires_at must include a timezone")
-        if expiry <= now:
+        if expiry <= now and not allow_expired:
             raise AutonomyPolicyError("Autonomous policy has expired")
         normalized_expiry = expiry.astimezone(datetime.timezone.utc).isoformat().replace(
             "+00:00", "Z"
@@ -184,6 +189,7 @@ def load_policy(
     path: Path | None,
     *,
     now: datetime.datetime | None = None,
+    allow_expired: bool = False,
 ) -> EffectivePolicy:
     """Load one protected external policy file, or the compatible migration default."""
 
@@ -226,4 +232,54 @@ def load_policy(
         expires_at=document.get("expires_at"),
         configured=True,
         now=now or datetime.datetime.now(datetime.timezone.utc),
+        allow_expired=allow_expired,
     )
+
+
+def replace_policy(
+    path: Path,
+    *,
+    profile: str,
+    generation: int,
+    expires_at: str | None = None,
+    now: datetime.datetime | None = None,
+) -> EffectivePolicy:
+    """Atomically install a validated protected policy document."""
+
+    current_time = now or datetime.datetime.now(datetime.timezone.utc)
+    policy = _effective(
+        profile=profile,
+        generation=generation,
+        overrides={},
+        expires_at=expires_at,
+        configured=True,
+        now=current_time,
+    )
+    document: dict[str, Any] = {
+        "schema_version": SCHEMA_VERSION,
+        "profile": profile,
+        "generation": generation,
+    }
+    if policy.expires_at is not None:
+        document["expires_at"] = policy.expires_at
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".autonomy.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(document, stream, sort_keys=True, separators=(",", ":"))
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    except OSError as error:
+        raise AutonomyPolicyError("Autonomy policy could not be replaced") from error
+    finally:
+        temporary.unlink(missing_ok=True)
+    return policy
