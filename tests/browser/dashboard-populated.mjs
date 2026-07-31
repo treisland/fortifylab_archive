@@ -17,7 +17,8 @@ class Element {
     this.className = "";
     this.disabled = false;
     this.previousElementSibling = {hidden: false};
-    this.classList = {toggle() {}};
+    this.dataset = {};
+    this.classList = {add() {}, toggle() {}};
     this.elements = id === "operation-form" ? [new Element("button")] : [];
   }
   addEventListener() {}

@@ -238,12 +238,16 @@ class DashboardTests(unittest.TestCase):
             packaged_asset = candidate / "manager/web/assets/dashboard.js"
             self.assertEqual(source_asset.read_bytes(), packaged_asset.read_bytes())
             for asset in (source_asset, packaged_asset):
-                subprocess.run(
+                result = subprocess.run(
                     [node, str(harness), str(asset)],
                     cwd=ROOT,
-                    check=True,
                     capture_output=True,
                     text=True,
+                )
+                self.assertEqual(
+                    result.returncode,
+                    0,
+                    f"dashboard DOM execution failed for {asset}:\n{result.stderr}",
                 )
 
     def test_api_payload_names_do_not_shadow_the_browser_document(self):
