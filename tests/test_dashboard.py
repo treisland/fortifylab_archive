@@ -244,6 +244,59 @@ class DashboardTests(unittest.TestCase):
             self.assertIn(f'id="{panel}-panel-state"', html)
         self.assertGreaterEqual(html.count('aria-live="polite"'), 7)
 
+    def test_component_explorer_is_filterable_deep_linked_and_accessible(self):
+        html = (WEB / "index.html").read_text(encoding="utf-8")
+        css = (WEB / "assets/dashboard.css").read_text(encoding="utf-8")
+        script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
+        for marker in (
+            'id="component-search"',
+            'id="health-filter"',
+            'id="state-filter"',
+            'id="updates-filter"',
+            'id="operations-filter"',
+            'role="search"',
+            'id="component-inspector"',
+            'aria-labelledby="inspector-title"',
+            'aria-label="Close component inspector"',
+        ):
+            self.assertIn(marker, html)
+        for marker in (
+            'new URLSearchParams(window.location.search).get("component")',
+            'url.searchParams.set("component", componentId)',
+            'url.searchParams.delete("component")',
+            'showModal()',
+            'componentOpener.focus()',
+            'button.setAttribute("aria-pressed"',
+            "renderComponentCards",
+            "refreshInspector",
+            "blocked-consumer-highlight",
+            "dependency-highlight",
+        ):
+            self.assertIn(marker, script)
+        self.assertIn("@media (max-width:520px)", css)
+        self.assertIn("width:100vw", css)
+        self.assertIn("height:100dvh", css)
+        self.assertIn("@media (prefers-reduced-motion:reduce)", css)
+
+    def test_component_inspector_labels_desired_observed_and_safe_metadata(self):
+        script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
+        for marker in (
+            "Desired state",
+            "Observed state",
+            "Health and root cause",
+            "Dependencies and consumers",
+            "Workloads (desired / observed)",
+            "Profile and versions (desired)",
+            "Ingress and storage (desired metadata)",
+            "Supported operations",
+            "Recent history",
+            "Partially observed or unavailable",
+            "No observed image/version comparison is available",
+        ):
+            self.assertIn(marker, script)
+        for forbidden in ("kubernetesSecret", ".adapter", "environmentVariables", "helmValues", "manifest"):
+            self.assertNotIn(forbidden, script)
+
     def test_panel_count_and_freshness_are_derived_from_panel_definitions(self):
         script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
         html = (WEB / "index.html").read_text(encoding="utf-8")

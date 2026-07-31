@@ -94,6 +94,18 @@ class ComponentInventoryAPIContractTests(unittest.TestCase):
             "8.0.36-debian-11-r2",
         )
         self.assertEqual(components["mysql"]["desiredState"]["state"], "present")
+        self.assertEqual(components["ssc"]["profile"]["id"], "fortify-24.4-eval.1")
+        self.assertEqual(components["ssc"]["profile"]["productVersion"], "24.4.2.0009")
+        self.assertEqual(components["ssc"]["ingress"], [{"id": "ssc", "protocol": "https"}])
+        self.assertEqual(components["ssc"]["storage"][0]["purpose"], "application-data")
+        self.assertEqual(components["scancentral-sast"]["workloads"][1]["role"], "worker")
+        self.assertIn(
+            "scale",
+            {
+                operation["id"]
+                for operation in components["scancentral-sast"]["supportedOperations"]
+            },
+        )
         self.assertTrue(
             all(
                 resource["state"] == "present"

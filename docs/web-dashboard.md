@@ -81,6 +81,36 @@ one) and the browser refresh time. Missing observation time is labelled
 `not reported`, never inferred from another panel. The header count is derived
 from the same panel registry that starts the reads.
 
+## Component explorer and inspector
+
+The component explorer shows all seven registered MicroK8s components in a
+wrapping grid without horizontal page scrolling. Search matches safe component,
+workload, chart, image, and product-version metadata. Health and observed-state
+filters can be combined with update and active-operation filters. Because the
+current observer does not report running image versions, **Updates** fails
+closed to an empty result instead of inferring drift from desired versions.
+
+Select a card with pointer input or keyboard activation to open the right-side
+component inspector. The selected card has a visible and screen-reader-exposed
+pressed state. While the inspector is open, upstream dependency cards and
+unhealthy or blocked downstream consumer cards are emphasized. Native modal
+dialog behavior traps focus and closes on **Escape**; closing restores focus to
+the selected card. On displays up to 520 pixels wide the inspector fills the
+viewport. Reduced-motion preferences suppress its entrance movement.
+
+The current selection is represented as `?component=ssc`. A valid deep link
+opens after inventory arrives. Unknown component IDs are ignored and never
+interpolated into DOM markup or selectors. Removing or closing the inspector
+removes the query parameter without reloading the page.
+
+The inspector remains usable when live observation is disconnected, stale,
+unauthorized after earlier successful evidence, partial, or unknown. It labels
+desired configuration separately from observed state and presents overview,
+health/root cause, dependencies and consumers, workloads, profile and product
+version, chart and image versions, declared HTTPS endpoint identifiers,
+storage purpose/retention, supported typed operations, and recent sanitized
+history.
+
 Color is never the only health cue: every badge includes visible state text.
 The page provides landmarks, a skip link, labelled controls, table headers,
 alert/status live regions, keyboard focus styles, responsive layouts, and
@@ -131,6 +161,14 @@ credentials, Secrets, logs, filesystem paths, adapter targets, licenses,
 tokens, passwords, private keys, authorization headers, or cookies through
 JSON. History is projected to stable identity, kind, state, summary, subject,
 and time after persistence-layer sanitization.
+
+The inventory inspector projection adds only allowlisted registry metadata:
+profile identity/maturity/product version; workload identity, kind, role, and
+scalability; operation identity and safety flags; storage purpose and retention;
+and declared HTTPS health endpoint identifiers. It excludes operation adapter
+paths, raw Helm values and manifests, environment variables, Secret names and
+contents, persistence claim names, diagnostic targets, registry credentials,
+tokens, license contents, private keys, and protected filesystem paths.
 
 The UI uses DOM `textContent`, not HTML interpolation, for API data. A
 read-path compromise therefore cannot use the supported API to retrieve
