@@ -11,6 +11,7 @@ UNIT_PATH="${FORTIFY_MANAGER_UNIT_PATH:-/etc/systemd/system/fortify-manager.serv
 CLI_PATH="${FORTIFY_MANAGER_CLI_PATH:-/usr/local/bin/fortify-manager-cli}"
 MANIFEST_PATH="${FORTIFY_MANAGER_MANIFEST_PATH:-/var/lib/fortify-lab-manager/manager-ingress.yaml}"
 CLUSTER_ACCESS_ROOT="${FORTIFY_MANAGER_CLUSTER_ACCESS_ROOT:-$STATE_ROOT/cluster-access}"
+APISERVER_ARGS="${FORTIFY_MANAGER_APISERVER_ARGS:-/var/snap/microk8s/current/args/kube-apiserver}"
 TLS_SECRET="${FORTIFY_MANAGER_TLS_SECRET:-tls}"
 SERVICE_NAME="fortify-manager.service"
 
@@ -20,7 +21,9 @@ Usage: sudo ./scripts/fortify-manager COMMAND [arguments]
 
 Commands:
   install                         Install/upgrade files without changing config or state
-  install-cluster-access          Install protected read-only cluster access
+  rbac-preflight                  Report desired/effective MicroK8s RBAC state
+  install-cluster-access [--approve-enable-rbac] [--approve-restart]
+                                  Verify RBAC and activate protected observer access
   bootstrap-account [USERNAME]    Prompt for and persist the first/local account verifier
   configure DOMAIN ADDRESS [PORT] Render and apply the MicroK8s ingress route
   render-ingress DOMAIN ADDRESS [PORT] [OUTPUT]
@@ -163,13 +166,134 @@ install_runtime() {
         "$VERSION"
 }
 
+desired_rbac() {
+    [ -r "$APISERVER_ARGS" ] &&
+        grep -Eq '^--authorization-mode=([^#]*,)?RBAC(,|$)' "$APISERVER_ARGS"
+}
+
+apiserver_pid() {
+    if [ -n "${FORTIFY_MANAGER_APISERVER_PID:-}" ]; then
+        printf '%s\n' "$FORTIFY_MANAGER_APISERVER_PID"
+        return
+    fi
+    pgrep -o -x kubelite 2>/dev/null || pgrep -o -f '(^|/)kube-apiserver( |$)' 2>/dev/null
+}
+
+rbac_runtime_state() {
+    local pid
+    desired_rbac || { printf 'desired-permissive\n'; return; }
+    pid="$(apiserver_pid || true)"
+    [ -n "$pid" ] && [ -r "/proc/$pid/stat" ] ||
+        { printf 'effective-ambiguous\n'; return; }
+    if python3 - "$APISERVER_ARGS" "/proc/$pid" 2>/dev/null <<'PY'
+import os
+import sys
+try:
+    changed = os.stat(sys.argv[1]).st_mtime_ns
+    started = os.stat(sys.argv[2]).st_mtime_ns
+except OSError:
+    raise SystemExit(2)
+raise SystemExit(0 if changed > started else 1)
+PY
+    then
+        printf 'restart-required\n'
+    else
+        case "$?" in
+            1) printf 'rbac-candidate\n' ;;
+            *) printf 'effective-ambiguous\n' ;;
+        esac
+    fi
+}
+
+rbac_preflight() {
+    require_root
+    local state
+    state="$(rbac_runtime_state)"
+    case "$state" in
+        desired-permissive)
+            printf 'RBAC preflight: desired=permissive effective=permissive-or-ambiguous action=enable-rbac\n'
+            return 2 ;;
+        restart-required)
+            printf 'RBAC preflight: desired=RBAC effective=previous-authorization action=restart-required\n'
+            return 3 ;;
+        rbac-candidate)
+            printf 'RBAC preflight: desired=RBAC effective=verification-required action=verify-observer\n' ;;
+        *)
+            printf 'RBAC preflight: desired=RBAC effective=ambiguous action=investigate\n'
+            return 4 ;;
+    esac
+}
+
+observer_can() {
+    microk8s kubectl auth can-i "$@" \
+        --as=system:serviceaccount:fortify:fortify-manager-observer 2>/dev/null
+}
+
+verify_observer_authorization() {
+    local result
+    for check in \
+        "get services -n fortify" \
+        "list persistentvolumeclaims -n fortify" \
+        "list deployments.apps -n fortify" \
+        "list statefulsets.apps -n fortify" \
+        "list ingresses.networking.k8s.io -n fortify" \
+        "list nodes" \
+        "list storageclasses.storage.k8s.io" \
+        "get --non-resource-url=/version"; do
+        # shellcheck disable=SC2086
+        result="$(observer_can $check)" || return 1
+        [ "$result" = "yes" ] || return 1
+    done
+    for check in \
+        "get secrets -n fortify" \
+        "get pods --subresource=log -n fortify" \
+        "get services -n default"; do
+        # shellcheck disable=SC2086
+        result="$(observer_can $check)" || return 1
+        [ "$result" = "no" ] || return 1
+    done
+}
+
 install_cluster_access() {
     require_root
-    local token_candidate ca_candidate
+    local approve_enable=0 approve_restart=0 state token_candidate ca_candidate
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --approve-enable-rbac) approve_enable=1 ;;
+            --approve-restart) approve_restart=1 ;;
+            *) fail "unsupported install-cluster-access argument" ;;
+        esac
+        shift
+    done
+    install -d -m 700 -o fortify-manager -g fortify-manager "$CLUSTER_ACCESS_ROOT"
+    if [ -f "$CLUSTER_ACCESS_ROOT/token" ]; then
+        mv -f "$CLUSTER_ACCESS_ROOT/token" "$CLUSTER_ACCESS_ROOT/token.disconnected"
+    fi
+    state="$(rbac_runtime_state)"
+    if [ "$state" = desired-permissive ]; then
+        [ "$approve_enable" -eq 1 ] ||
+            fail "RBAC is not desired; review rbac-preflight and explicitly pass --approve-enable-rbac"
+        microk8s enable rbac >/dev/null 2>&1 || true
+        state="$(rbac_runtime_state)"
+        [ "$state" != desired-permissive ] ||
+            fail "RBAC addon did not configure API-server arguments; Manager remains disconnected"
+    fi
+    if [ "$state" = restart-required ]; then
+        [ "$approve_restart" -eq 1 ] ||
+            fail "RBAC is configured but not effective; explicitly pass --approve-restart"
+        if ! microk8s stop >/dev/null ||
+            ! microk8s start >/dev/null; then
+            fail "MicroK8s restart failed; Manager remains disconnected"
+        fi
+        state="$(rbac_runtime_state)"
+    fi
+    [ "$state" = rbac-candidate ] ||
+        fail "effective API-server authorization is ambiguous; Manager remains disconnected"
     microk8s kubectl apply -f \
         "$REPOSITORY_ROOT/packaging/microk8s/manager-observer-rbac.yaml" >/dev/null ||
         fail "observer access could not be installed"
-    install -d -m 700 -o fortify-manager -g fortify-manager "$CLUSTER_ACCESS_ROOT"
+    verify_observer_authorization ||
+        fail "observer allow-list or mandatory denial verification failed; Manager remains disconnected"
     token_candidate="$(mktemp "$CLUSTER_ACCESS_ROOT/.token.XXXXXX")"
     ca_candidate="$(mktemp "$CLUSTER_ACCESS_ROOT/.ca.XXXXXX")"
     trap 'rm -f "$token_candidate" "$ca_candidate"' RETURN
@@ -193,7 +317,8 @@ install_cluster_access() {
     mv -f "$token_candidate" "$CLUSTER_ACCESS_ROOT/token"
     mv -f "$ca_candidate" "$CLUSTER_ACCESS_ROOT/ca.crt"
     trap - RETURN
-    printf 'Installed namespace-scoped observer access; no application Secret was read.\n'
+    rm -f "$CLUSTER_ACCESS_ROOT/token.disconnected"
+    printf 'Verified effective RBAC and activated namespace-scoped observer access; no application Secret was read.\n'
 }
 
 bootstrap_account() {
@@ -284,7 +409,8 @@ command="${1:-}"
 shift || true
 case "$command" in
     install) install_runtime ;;
-    install-cluster-access) install_cluster_access ;;
+    rbac-preflight) rbac_preflight ;;
+    install-cluster-access) install_cluster_access "$@" ;;
     bootstrap-account) bootstrap_account "$@" ;;
     render-ingress) render_ingress "$@" ;;
     configure) configure_route "$@" ;;
