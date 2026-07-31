@@ -156,7 +156,7 @@ assert.equal(elements.get("history-list").children[0].children.length, 5, "histo
 assert.equal(elements.get("capability-list").children.length, 1, "capability must render");
 const capabilityCards = elements.get("capability-list").children[0].children.at(-1);
 assert.equal(capabilityCards.children[0].children.at(-1).href, "/docs/operations/lifecycle-engine.html");
-assert.match(capabilityCards.children[0].textContent, /lifecycle execution/i);
+assert.match(capabilityCards.children[0].children[0].children[0].textContent, /lifecycle execution/i);
 const serviceLink = elements.get("availability-list").children[0].children.at(-1);
 assert.equal(serviceLink.href, "https://ssc.lab.example/");
 assert.equal(serviceLink.target, "_blank");
