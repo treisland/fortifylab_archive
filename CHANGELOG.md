@@ -10,6 +10,9 @@ platform profiles.
 
 ### Added
 
+- Policy-bounded private Telegram lifecycle approvals and incident recovery
+  actions with immutable plan digests, opaque single-use callbacks,
+  authoritative state revalidation, Web UI escalation, and deep links.
 - Authenticated Web lifecycle plan, approval, progress, cancellation, retry,
   reconnect, completion-health, and sanitized-failure contracts while keeping
   the live MicroK8s adapter boundary fail closed.

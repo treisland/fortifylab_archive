@@ -13,6 +13,9 @@ from manager.communications import (
     encode_callback,
     parse_command,
 )
+from manager.authorization import ActorIdentity
+from manager.remote_actions import OpaqueAction, RemoteActionError, RemoteActionService
+from datetime import datetime, timezone
 
 
 class TelegramPort(Protocol):
@@ -30,11 +33,15 @@ class PrivateTelegramObserver:
         *,
         allowed_user: str,
         allowed_chat: str,
+        actions: RemoteActionService | None = None,
+        clock: Any = None,
     ) -> None:
         self._service = service
         self._telegram = telegram
         self._allowed_user = allowed_user
         self._allowed_chat = allowed_chat
+        self._actions = actions
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
 
     def handle(self, update: dict[str, Any]) -> bool:
         callback = update.get("callback_query")
@@ -45,10 +52,16 @@ class PrivateTelegramObserver:
                 return False
             callback_id = str(callback.get("id", ""))
             try:
-                command = decode_callback(str(callback.get("data", "")))
-                self._send(self._service.execute(command))
+                data = str(callback.get("data", ""))
+                if data.startswith("act:") and self._actions is not None:
+                    self._send(
+                        self._actions.execute(data[4:], self._identity())
+                    )
+                else:
+                    command = decode_callback(data)
+                    self._send(self._service.execute(command))
                 self._telegram.answer_callback(callback_id, "Updated")
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, RemoteActionError):
                 self._telegram.answer_callback(callback_id, "Action is invalid or expired")
             return True
 
@@ -80,6 +93,14 @@ class PrivateTelegramObserver:
     def _send(self, message: Message) -> None:
         self._telegram.send(message.text, self._markup(message.actions))
 
+    def _identity(self) -> ActorIdentity:
+        return ActorIdentity(
+            actor=f"telegram:{self._allowed_user}",
+            source="telegram",
+            session_id=f"private-chat:{self._allowed_chat}",
+            authenticated_at=self._clock(),
+        )
+
     @staticmethod
     def _markup(actions: tuple[Action, ...]) -> str | None:
         if not actions:
@@ -90,7 +111,11 @@ class PrivateTelegramObserver:
                     [
                         {
                             "text": action.label,
-                            "callback_data": encode_callback(action.command),
+                            "callback_data": (
+                                f"act:{action.command.token}"
+                                if isinstance(action.command, OpaqueAction)
+                                else encode_callback(action.command)
+                            ),
                         }
                         for action in actions
                     ]

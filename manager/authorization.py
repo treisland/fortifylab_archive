@@ -193,6 +193,10 @@ class AuthorizationService:
         self._audit(document["id"], "request", identity.actor, "accepted", plan.risk)
         return document
 
+    def approval(self, approval_id: str) -> dict[str, Any]:
+        """Return one authorization record for trusted manager adapters."""
+        return self._store.approval(approval_id)
+
     def approve(
         self,
         approval_id: str,

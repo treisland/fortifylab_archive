@@ -74,7 +74,7 @@ class ReadCommand:
 @dataclass(frozen=True)
 class Action:
     label: str
-    command: ReadCommand
+    command: Any
 
 
 @dataclass(frozen=True)
