@@ -67,7 +67,33 @@ class VersionObserver:
                 "sast-26-2" if resource.component_id == "scancentral-sast" else resource.component_id,
                 "26.2.0" if resource.component_id == "scancentral-sast" else "9.19.0",
                 "26.2",
-                (("25.2",) if resource.resource_id.endswith("/sensor") else ("26.2",)),
+                (
+                    (("sensor", "25.2"),)
+                    if resource.resource_id.endswith("/sensor")
+                    else (("controller", "26.2"),)
+                ),
+            )
+            for resource in resources
+        )
+
+
+class MysqlVersionObserver:
+    def __init__(self, *, app="8.0.36", images=(("database", "8.0.36-debian-11-r2"),)):
+        self.app = app
+        self.images = images
+
+    def observe(self, resources):
+        return tuple(
+            ResourceObservation(
+                resource.resource_id,
+                "present" if resource.component_id == "mysql" else "absent",
+                resource.kind,
+                resource.name,
+                resource.namespace,
+                "mysql-release" if resource.component_id == "mysql" else None,
+                "9.19.0" if resource.component_id == "mysql" else None,
+                self.app if resource.component_id == "mysql" else None,
+                self.images if resource.component_id == "mysql" else (),
             )
             for resource in resources
         )
@@ -161,13 +187,50 @@ class ComponentInventoryAPIContractTests(unittest.TestCase):
         self.assertEqual(sast["observedDeployment"]["state"], "mixed")
         self.assertTrue(sast["updateAvailable"])
         running = {
-            workload["id"]: workload["runningImageVersions"]
+            workload["id"]: workload["runningImages"]
             for workload in sast["observedDeployment"]["workloads"]
         }
-        self.assertEqual(running, {"scancentral-sast/controller": ["26.2"], "scancentral-sast/sensor": ["25.2"]})
+        self.assertEqual(
+            running,
+            {
+                "scancentral-sast/controller": [{"name": "controller", "version": "26.2"}],
+                "scancentral-sast/sensor": [{"name": "sensor", "version": "25.2"}],
+            },
+        )
+        self.assertEqual(
+            sast["observedDeployment"]["installedRelease"],
+            {"state": "unavailable", "reason": "helm-storage-not-observed"},
+        )
         serialized = json.dumps(document)
         self.assertNotIn("registry.internal", serialized)
         self.assertNotIn("helmValues", serialized)
+
+    def test_complete_workload_declarations_can_match_but_never_prove_installation(self):
+        document = request(ManagerAPI(observer=MysqlVersionObserver()))["json"]
+        mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
+        self.assertEqual(mysql["observedDeployment"]["state"], "match")
+        self.assertEqual(mysql["observedDeployment"]["installedRelease"]["state"], "unavailable")
+
+    def test_app_version_mismatch_is_drift(self):
+        document = request(ManagerAPI(observer=MysqlVersionObserver(app="8.0.35")))["json"]
+        mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
+        self.assertEqual(mysql["observedDeployment"]["state"], "drift")
+
+    def test_missing_or_unexpected_image_role_is_unavailable_not_match(self):
+        for images in ((), (("unexpected", "8.0.36-debian-11-r2"),)):
+            with self.subTest(images=images):
+                document = request(ManagerAPI(observer=MysqlVersionObserver(images=images)))["json"]
+                mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
+                self.assertEqual(mysql["observedDeployment"]["state"], "unavailable")
+
+    def test_nested_version_evidence_rejects_unknown_or_unbounded_fields(self):
+        document = request(ManagerAPI(observer=MysqlVersionObserver()))["json"]
+        mysql = next(item for item in document["items"] if item["identity"]["id"] == "mysql")
+        workload = mysql["observedDeployment"]["workloads"][0]
+        workload["workloadMetadata"]["secretValue"] = "must-not-pass"
+        workload["runningImages"][0]["repository"] = "private/path"
+        workload["runningImages"][0]["version"] = "x" * 161
+        self.assertTrue(list(Draft202012Validator(INVENTORY_SCHEMA).iter_errors(document)))
 
     def test_unavailable_cluster_returns_unknown_resources_without_details(self):
         response = request(ManagerAPI(observer=UnavailableObserver()))

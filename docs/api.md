@@ -328,8 +328,8 @@ component IDs and represents the complete MySQL → SSC → ScanCentral SAST and
 PostgreSQL/LIM (plus SSC) → ScanCentral DAST paths.
 
 `observedDeployment` is a separate projection of current workload metadata.
-For each allow-listed Deployment or StatefulSet it reports only the standard
-Helm release/chart/app labels and image tag or digest from the pod template.
+For each allow-listed Deployment or StatefulSet it reports only standard
+workload-declared release/chart/app labels and image tag or digest from the pod template.
 Registry and repository paths, container environment, Helm values, Secrets,
 credentials, and registry authorization are never returned. Its state is:
 
@@ -340,9 +340,16 @@ credentials, and registry authorization are never returned. Its state is:
 - `absent` when every allow-listed workload is confirmed absent; or
 - `unavailable` when observation or required version metadata is unavailable.
 
-Missing metadata remains unavailable and is never copied from `version`.
-Conflicting workload release labels are the safe signal for multiple installed
-release evidence; the Manager deliberately does not inspect Helm storage.
+Missing metadata or any missing expected image role remains unavailable and is
+never copied from `version`. App-version mismatch is drift; contradictory
+workload labels or version families are mixed. Workload labels are declarations,
+not authoritative installed-release evidence. `installedRelease` therefore
+remains `unavailable` with reason `helm-storage-not-observed`, including retained
+workloads, missing releases, and apparent multiple revisions. The Manager
+deliberately does not inspect Helm storage because that would require Secret or
+release-record permissions outside this observer boundary.
+Sanitized live acceptance evidence and its explicit installed-release gap are
+recorded in [Issue 147 observed-version evidence](evidence/issue-147-observed-versions.md).
 
 Each observed resource state is one of:
 

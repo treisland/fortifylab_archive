@@ -195,9 +195,11 @@ into `/var/lib/fortify-lab-manager/cluster-access` with mode `0600`. The
 runtime reads Kubernetes metadata over HTTPS and never invokes `kubectl`.
 Its namespace Role can get/list only Services, PVCs, Deployments,
 StatefulSets, and Ingresses in `fortify`. Deployment and StatefulSet reads
-project only allow-listed identity, standard release labels, and pod-template
-image tags/digests; they never expose repository paths, environment, Helm
-values, or Secret data. No additional RBAC is required for version evidence.
+project only allow-listed identity, workload-declared standard release labels,
+and pod-template image tags/digests; they never expose repository paths,
+environment, Helm values, or Secret data. These labels are not authoritative
+installed-release evidence. That evidence remains unavailable rather than
+broadening permissions to Helm release records. No additional RBAC is required.
 A separate discovery ClusterRole can get/list Nodes
 and StorageClasses and read `/version`; it cannot enumerate namespaces.
 Neither role grants Secrets, pod logs, exec, mutation, or workload access in

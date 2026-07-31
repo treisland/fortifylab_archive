@@ -38,19 +38,20 @@ class ResourceObservation:
     release_name: str | None = None
     chart_version: str | None = None
     app_version: str | None = None
-    image_versions: tuple[str, ...] = ()
+    running_images: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         if self.state not in OBSERVED_STATES:
             raise ValueError("unsupported observed resource state")
-        safe = re.compile(r"^[A-Za-z0-9._:+-]{1,160}$")
-        for value in (
-            self.release_name,
-            self.chart_version,
-            self.app_version,
-            *self.image_versions,
-        ):
-            if value is not None and not safe.fullmatch(value):
+        metadata_safe = re.compile(r"^[A-Za-z0-9._:+-]{1,128}$")
+        image_version_safe = re.compile(r"^[A-Za-z0-9._:+-]{1,160}$")
+        for value in (self.release_name, self.chart_version, self.app_version):
+            if value is not None and not metadata_safe.fullmatch(value):
+                raise ValueError("unsafe observed version metadata")
+        for name, version in self.running_images:
+            if not metadata_safe.fullmatch(name) or not image_version_safe.fullmatch(
+                version
+            ):
                 raise ValueError("unsafe observed version metadata")
 
 
@@ -143,22 +144,32 @@ class ComponentInventory:
                         "name": resource.name,
                         "namespace": resource.namespace,
                         "state": observed.state if observed else "unknown",
-                        "release": (
+                        "workloadMetadata": (
                             {
-                                "name": observed.release_name,
+                                "declaredReleaseName": observed.release_name,
                                 "chartVersion": observed.chart_version,
                                 "appVersion": observed.app_version,
                             }
                             if observed and observed.state == "present"
                             else None
                         ),
-                        "runningImageVersions": (
-                            list(observed.image_versions) if observed else []
+                        "runningImages": (
+                            [
+                                {"name": name, "version": version}
+                                for name, version in observed.running_images
+                            ]
+                            if observed
+                            else []
                         ),
                     }
                 )
             observed_deployment = self._deployment_evidence(
-                component, component_resources, observation_status
+                component,
+                self._registry.profile.document["components"][component_id][
+                    "productVersion"
+                ],
+                component_resources,
+                observation_status,
             )
             items.append(
                 {
@@ -266,9 +277,12 @@ class ComponentInventory:
 
     @staticmethod
     def _deployment_evidence(
-        component: dict, resources: list[dict], status: str
+        component: dict,
+        product_version: str,
+        resources: list[dict],
+        status: str,
     ) -> dict:
-        """Summarize independent, allow-listed release and image observations."""
+        """Compare desired pins only with complete workload-declared evidence."""
         if status != "available":
             state = "unavailable"
         elif resources and all(item["state"] == "absent" for item in resources):
@@ -277,46 +291,73 @@ class ComponentInventory:
             state = "mixed"
         else:
             releases = {
-                (item["release"] or {}).get("name")
+                (item["workloadMetadata"] or {}).get("declaredReleaseName")
                 for item in resources
-                if (item["release"] or {}).get("name")
+                if (item["workloadMetadata"] or {}).get("declaredReleaseName")
             }
             charts = {
-                (item["release"] or {}).get("chartVersion")
+                (item["workloadMetadata"] or {}).get("chartVersion")
                 for item in resources
-                if (item["release"] or {}).get("chartVersion")
+                if (item["workloadMetadata"] or {}).get("chartVersion")
             }
-            observed_images = {
-                version
+            apps = {
+                (item["workloadMetadata"] or {}).get("appVersion")
                 for item in resources
-                for version in item["runningImageVersions"]
+                if (item["workloadMetadata"] or {}).get("appVersion")
             }
-            desired_images = set(component["version"]["images"].values())
+            observed_images: dict[str, set[str]] = {}
+            for item in resources:
+                for image in item["runningImages"]:
+                    observed_images.setdefault(image["name"], set()).add(
+                        image["version"]
+                    )
+            desired_images = component["version"]["images"]
             numeric_families = {
                 ".".join(version.split(".")[:2])
-                for version in observed_images
+                for versions in observed_images.values()
+                for version in versions
                 if version[:1].isdigit() and "." in version
             }
-            if len(releases) > 1 or len(charts) > 1 or len(numeric_families) > 1:
+            complete_metadata = all(
+                item["workloadMetadata"]
+                and all(item["workloadMetadata"].values())
+                for item in resources
+            )
+            if (
+                len(releases) > 1
+                or len(charts) > 1
+                or len(apps) > 1
+                or len(numeric_families) > 1
+                or any(len(versions) > 1 for versions in observed_images.values())
+            ):
                 state = "mixed"
-            elif not charts or not observed_images:
+            elif (
+                not complete_metadata
+                or set(observed_images) != set(desired_images)
+            ):
                 state = "unavailable"
             elif (
                 charts == {component["version"]["chart"]}
-                and observed_images <= desired_images
+                and apps == {product_version}
+                and observed_images
+                == {name: {version} for name, version in desired_images.items()}
             ):
                 state = "match"
             else:
                 state = "drift"
         return {
             "state": state,
-            "source": "workload-metadata",
+            "installedRelease": {
+                "state": "unavailable",
+                "reason": "helm-storage-not-observed",
+            },
+            "comparisonSource": "workload-declared-metadata",
             "workloads": [
                 {
                     "id": item["id"],
                     "state": item["state"],
-                    "release": item["release"],
-                    "runningImageVersions": item["runningImageVersions"],
+                    "workloadMetadata": item["workloadMetadata"],
+                    "runningImages": item["runningImages"],
                 }
                 for item in resources
             ],

@@ -106,7 +106,7 @@ class KubernetesObserver:
                     error.close()
                     raise ClusterUnavailable("cluster observation failed") from error
             release_name = chart_version = app_version = None
-            image_versions: tuple[str, ...] = ()
+            running_images: tuple[tuple[str, str], ...] = ()
             if state == "present":
                 metadata = document.get("metadata", {})
                 labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
@@ -132,19 +132,27 @@ class KubernetesObserver:
                     .get("containers", [])
                 )
                 if isinstance(containers, list):
-                    image_versions = tuple(
+                    running_images = tuple(
                         sorted(
                             {
-                                version
+                                (name, version)
                                 for container in containers
                                 if isinstance(container, dict)
+                                for name in (self._safe_label(container.get("name")),)
                                 for version in (
                                     self._safe_image_version(container.get("image")),
                                 )
-                                if version
+                                if name and version
                             }
                         )
                     )
+                    if len(running_images) == 1:
+                        running_images = (
+                            (
+                                resource.resource_id.split("/", 1)[-1],
+                                running_images[0][1],
+                            ),
+                        )
             observations.append(
                 ResourceObservation(
                     resource.resource_id,
@@ -155,7 +163,7 @@ class KubernetesObserver:
                     release_name,
                     chart_version,
                     app_version,
-                    image_versions,
+                    running_images,
                 )
             )
         return tuple(observations)

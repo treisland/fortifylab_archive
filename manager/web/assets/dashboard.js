@@ -414,8 +414,10 @@ function renderComponentCards() {
       item.profile?.productVersion,
       ...Object.values(item.version?.images || {}),
       ...(item.observedDeployment?.workloads || []).flatMap(workload => [
-        workload.release?.name, workload.release?.chartVersion, workload.release?.appVersion,
-        ...(workload.runningImageVersions || [])
+        workload.workloadMetadata?.declaredReleaseName,
+        workload.workloadMetadata?.chartVersion,
+        workload.workloadMetadata?.appVersion,
+        ...(workload.runningImages || []).flatMap(image => [image.name, image.version])
       ]),
       ...(item.workloads || []).flatMap(workload => [workload.id, workload.name, workload.role])
     ].join(" ").toLowerCase();
@@ -538,14 +540,18 @@ function refreshInspector() {
       ["Images", Object.entries(item.version?.images || {}).map(([name, version]) => `${name}: ${version}`).join(" · ") || "not reported"],
       ["Comparison", item.observedDeployment?.state || "unavailable"]
     ]),
-    detailSection("Installed release and running versions (observed)", [
-      ["Evidence source", item.observedDeployment?.source === "workload-metadata" ? "Allow-listed workload metadata" : "Unavailable"],
-      ["State", item.observedDeployment?.state || "unavailable"],
+    detailSection("Installed release (independent evidence)", [
+      ["State", item.observedDeployment?.installedRelease?.state || "unavailable"],
+      ["Reason", item.observedDeployment?.installedRelease?.reason === "helm-storage-not-observed" ? "Helm storage is intentionally not observed" : "Independent release evidence unavailable"]
+    ]),
+    detailSection("Workload-declared metadata and running versions", [
+      ["Evidence source", item.observedDeployment?.comparisonSource === "workload-declared-metadata" ? "Allow-listed workload metadata; not proof of an installed Helm release" : "Unavailable"],
+      ["Comparison", item.observedDeployment?.state || "unavailable"],
       ...((item.observedDeployment?.workloads || []).map(workload => [
         workload.id,
         workload.state !== "present"
           ? workload.state
-          : `release ${workload.release?.name || "unavailable"} · chart ${workload.release?.chartVersion || "unavailable"} · app ${workload.release?.appVersion || "unavailable"} · running ${(workload.runningImageVersions || []).join(", ") || "unavailable"}`
+          : `declared release ${workload.workloadMetadata?.declaredReleaseName || "unavailable"} · declared chart ${workload.workloadMetadata?.chartVersion || "unavailable"} · declared app ${workload.workloadMetadata?.appVersion || "unavailable"} · running ${(workload.runningImages || []).map(image => `${image.name}: ${image.version}`).join(", ") || "unavailable"}`
       ]))
     ]),
     detailSection("Ingress and storage (desired metadata)", [

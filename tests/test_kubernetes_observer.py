@@ -114,7 +114,10 @@ class KubernetesObserverTests(unittest.TestCase):
         self.assertEqual(observed.release_name, "sast-26-2")
         self.assertEqual(observed.chart_version, "26.2.0-1")
         self.assertEqual(observed.app_version, "26.2")
-        self.assertEqual(observed.image_versions, ("26.2.0", "sha256:abc123"))
+        self.assertEqual(
+            observed.running_images,
+            (("controller", "26.2.0"), ("sidecar", "sha256:abc123")),
+        )
         serialized = json.dumps(observed.__dict__)
         self.assertNotIn("registry.internal", serialized)
         self.assertNotIn("private", serialized)
