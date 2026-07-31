@@ -1,0 +1,13 @@
+{
+  "apiVersion": "fortifylab.io/v1alpha1",
+  "kind": "RollbackRecoveryDrills",
+  "scope": "static-disposable-lab-procedure",
+  "liveClusterExecuted": false,
+  "drills": [
+    {"id": "ssc-migration-failure", "target": "ssc", "change": "application-and-database-migration", "failurePoint": "post-mutation health verification", "recoveryClass": "restore-required", "expectedEvidence": ["mutation-completed", "automatic-rollback-blocked"], "unsupportedClaim": "Helm rollback reversed the SSC schema"},
+    {"id": "dast-migration-timeout", "target": "scancentral-dast-core", "change": "application-migration", "failurePoint": "bounded timeout", "recoveryClass": "restore-required", "expectedEvidence": ["mutation-completed", "automatic-rollback-blocked"], "unsupportedClaim": "Cancellation reversed DAST application state"},
+    {"id": "database-upgrade-cancellation", "target": "mysql", "change": "database-migration", "failurePoint": "cooperative cancellation", "recoveryClass": "restore-required", "expectedEvidence": ["mutation-completed", "automatic-rollback-blocked"], "unsupportedClaim": "Chart rollback reversed database files or schema"},
+    {"id": "ingress-chart-failure", "target": "ssc", "change": "ingress-configuration", "failurePoint": "endpoint health verification", "recoveryClass": "reversible", "expectedEvidence": ["mutation-completed", "rollback-verified"], "unsupportedClaim": "Rollback succeeded without post-rollback health evidence"},
+    {"id": "certificate-compensation", "target": "lim", "change": "certificate-replacement", "failurePoint": "consumer health verification", "recoveryClass": "compensating-action", "expectedEvidence": ["mutation-completed"], "unsupportedClaim": "The manager reconstructed or restored private key material"}
+  ]
+}

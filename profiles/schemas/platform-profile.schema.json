@@ -74,7 +74,7 @@
                   "properties": {
                     "component": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
                     "kind": {"enum": ["database", "application"]},
-                    "rollback": {"enum": ["reversible", "restore-required", "forward-only"]},
+                    "rollback": {"enum": ["reversible", "compensating-action", "restore-required", "irreversible"]},
                     "summary": {"type": "string", "minLength": 1}
                   }
                 }

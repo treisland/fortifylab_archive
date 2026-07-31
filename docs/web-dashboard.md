@@ -7,6 +7,11 @@ safe remediation, latest deployment preflight, cluster-observation state, and
 recent sanitized manager operations and controlled typed lifecycle actions.
 ASPM remains outside project scope.
 
+Lifecycle plans label every step with its recovery class and show the strongest
+plan recovery boundary before confirmation. Failure detail retains the
+sanitized operation evidence and next action; see
+[Rollback and recovery boundaries](operations/rollback-recovery.md).
+
 ![Dashboard showing a healthy lab summary, dependency cards, health evidence, preflight, and operation history](images/web-dashboard.svg)
 
 ## Access and authentication

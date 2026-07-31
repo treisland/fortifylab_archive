@@ -24,15 +24,19 @@ from manager.profile_upgrade import (
 class Adapter:
     def __init__(self) -> None:
         self.calls: list[str] = []
-        self.fail = False
+        self.fail: bool | str = False
         self.block = False
+        self.rollbacks: list[str] = []
 
     def upgrade(self, component, version, *, deadline, cancelled):
         self.calls.append(component)
-        if self.fail:
+        if self.fail is True or self.fail == component:
             raise RuntimeError("database details must not escape")
         while self.block and not cancelled():
             time.sleep(0.001)
+
+    def rollback(self, component, version, *, deadline, cancelled):
+        self.rollbacks.append(component)
 
 
 class Verifier:
@@ -190,7 +194,7 @@ class ProfileUpgradeTests(unittest.TestCase):
             )
 
     def test_failed_migration_is_sanitized_and_stops_later_layers(self):
-        self.adapter.fail = True
+        self.adapter.fail = "ssc"
         plan = self.service.plan(self.target.id)
         operation = self.service.submit(
             plan["id"], identity=self.identity(),
@@ -200,6 +204,30 @@ class ProfileUpgradeTests(unittest.TestCase):
         self.assertEqual(result["state"], "failed")
         self.assertNotIn("database details", result["error"])
         self.assertEqual(result["rollback"], "restore-required")
+        self.assertEqual(result["recovery"]["status"], "restore-required")
+        self.assertTrue(result["recovery"]["backupVerified"])
+        self.assertEqual(self.adapter.rollbacks, [])
+        self.assertEqual(
+            result["evidence"][-1]["type"], "automatic-rollback-blocked"
+        )
+
+    def test_chart_failure_uses_safe_reversible_rollback(self):
+        self.target.document["upgrade"]["transitions"][0]["migrations"] = []
+        self.adapter.fail = True
+        plan = self.service.plan(self.target.id)
+        self.assertEqual(plan["recoveryBoundary"], "reversible")
+        self.assertTrue(all(
+            step["recoveryClass"] == "reversible" for step in plan["steps"]
+        ))
+        operation = self.service.submit(
+            plan["id"], identity=self.identity(),
+            confirmation=plan["confirmation"],
+        )
+        result = self.completed(operation["id"])
+        self.assertEqual(result["state"], "failed")
+        self.assertEqual(result["recovery"]["status"], "rolled-back")
+        self.assertEqual(self.adapter.rollbacks, ["mysql"])
+        self.assertEqual(result["evidence"][-1]["type"], "rollback-verified")
 
     def test_restart_marks_incomplete_upgrade_interrupted(self):
         with tempfile.TemporaryDirectory() as directory:

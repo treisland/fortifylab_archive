@@ -58,12 +58,14 @@ claims that already-applied migrations were reversed.
 
 ## Migration and recovery boundaries
 
-Migration rollback is classified as `reversible`, `restore-required`, or
-`forward-only`; the strictest item becomes the operation boundary. A failed,
-interrupted, cancelled, or timed-out migration is not automatically retried or
-reported as rolled back. Inspect layered health, preserve the operation and
-backup IDs, and follow the transition's recovery text. Do not use Helm rollback
-as a substitute for restoring a database migration.
+Every ordered step is classified as `reversible`, `compensating-action`,
+`restore-required`, or `irreversible`; the strictest item becomes the operation
+boundary. A chart/configuration-only failure may use its declared reverse
+adapter. Any uncertain database or application migration blocks automatic
+rollback and requires restoration and verification of the source-profile
+backup named in the operation record. A failed, interrupted, cancelled, or
+timed-out migration is not automatically retried or reported as rolled back.
+See [Rollback and recovery boundaries](rollback-recovery.md).
 
 Records and errors contain sanitized identifiers and guidance only. They do
 not contain credentials, secret values, paths, command output, or database

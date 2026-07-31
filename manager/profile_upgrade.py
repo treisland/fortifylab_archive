@@ -41,6 +41,12 @@ class UpgradeAdapter(Protocol):
         deadline: float, cancelled: Callable[[], bool],
     ) -> None: ...
 
+    def rollback(
+        self, component: str, version: dict[str, Any], *,
+        deadline: float, cancelled: Callable[[], bool],
+    ) -> None:
+        """Restore a pre-migration chart/configuration revision."""
+
 
 class UpgradeVerifier(Protocol):
     def verify_layer(
@@ -69,6 +75,29 @@ class UpgradeStore:
             "'$.error', 'Manager restarted before profile upgrade completed') "
             "WHERE state IN ('queued','running','cancelling')"
         )
+        rows = self.connection.execute(
+            "SELECT id, payload FROM profile_upgrades "
+            "WHERE kind='ProfileUpgradeOperation' AND state='interrupted'"
+        ).fetchall()
+        for row in rows:
+            document = json.loads(row["payload"])
+            recovery = document.setdefault("recovery", {})
+            recovery.update({
+                "required": True,
+                "status": "operator-review-required",
+                "action": (
+                    "Review retained evidence and verify authoritative health; "
+                    "a Manager restart does not prove rollback."
+                ),
+            })
+            document.setdefault("evidence", []).append({
+                "type": "manager-restarted",
+                "at": _timestamp(datetime.now(timezone.utc)),
+            })
+            self.connection.execute(
+                "UPDATE profile_upgrades SET payload=? WHERE id=?",
+                (json.dumps(document, sort_keys=True, separators=(",", ":")), row["id"]),
+            )
         self._lock = threading.RLock()
 
     def put(self, document: dict[str, Any]) -> None:
@@ -158,6 +187,18 @@ class ProfileUpgradeService:
         dependency_impact = list(self._registry.dependency_order())
         migrations = transition["migrations"]
         rollback = _rollback_class(migrations)
+        migration_by_component = {
+            item["component"]: item["rollback"] for item in migrations
+        }
+        steps = [
+            {
+                "number": number,
+                "component": component,
+                "changesVersion": component in changed,
+                "recoveryClass": migration_by_component.get(component, "reversible"),
+            }
+            for number, component in enumerate(dependency_impact, 1)
+        ]
         now = self._now()
         body = {
             "sourceProfile": {"id": source.id, "versions": _versions(source)},
@@ -174,6 +215,8 @@ class ProfileUpgradeService:
                 "rollback": rollback,
                 "recovery": transition["recovery"],
             },
+            "steps": steps,
+            "recoveryBoundary": rollback,
             "expectedDowntime": transition["expectedDowntime"],
             "timeoutSeconds": transition["timeoutSeconds"],
         }
@@ -223,6 +266,8 @@ class ProfileUpgradeService:
             "dependencyState": observed["dependencies"],
             "backupEvidence": observed.get("backup"),
             "migration": plan["migration"],
+            "steps": plan["steps"],
+            "recoveryBoundary": plan["recoveryBoundary"],
             "expectedDowntime": transition["expectedDowntime"],
             "timeoutSeconds": transition["timeoutSeconds"],
         }
@@ -247,6 +292,21 @@ class ProfileUpgradeService:
             "createdAt": _timestamp(now),
             "updatedAt": _timestamp(now),
             "rollback": plan["migration"]["rollback"],
+            "recovery": {
+                "required": False,
+                "boundary": plan["recoveryBoundary"],
+                "backupId": (
+                    plan["backupEvidence"].get("id")
+                    if isinstance(plan.get("backupEvidence"), dict) else None
+                ),
+                "backupVerified": bool(
+                    isinstance(plan.get("backupEvidence"), dict)
+                    and plan["backupEvidence"].get("verified")
+                ),
+                "action": None,
+                "status": "not-required",
+            },
+            "evidence": [],
         }
         self._store.put(operation)
         threading.Thread(
@@ -274,10 +334,13 @@ class ProfileUpgradeService:
         self._save(operation)
         deadline = self._monotonic() + plan["timeoutSeconds"]
         cancelled = lambda: operation_id in self._cancelled
+        mutated: list[str] = []
         try:
-            for component in plan["dependencyImpact"]:
+            for step in plan["steps"]:
+                component = step["component"]
                 if cancelled():
                     operation["state"] = "cancelled"
+                    self._recover(operation, plan, mutated, deadline)
                     return
                 operation["currentComponent"] = component
                 self._save(operation)
@@ -286,9 +349,18 @@ class ProfileUpgradeService:
                         component, target.component_version(component),
                         deadline=deadline, cancelled=cancelled,
                     )
+                    mutated.append(component)
+                    operation["evidence"].append({
+                        "type": "mutation-completed",
+                        "component": component,
+                        "recoveryClass": step["recoveryClass"],
+                        "at": _timestamp(self._now()),
+                    })
+                    self._save(operation)
                 if self._monotonic() >= deadline:
                     operation["state"] = "timed-out"
                     operation["error"] = "profile upgrade exceeded its bounded timeout"
+                    self._recover(operation, plan, mutated, deadline)
                     return
                 if not self._verifier.verify_layer(
                     component, deadline=deadline, cancelled=cancelled
@@ -297,6 +369,11 @@ class ProfileUpgradeService:
                         f"health verification failed for {component}"
                     )
                 operation["completedComponents"].append(component)
+                operation["evidence"].append({
+                    "type": "health-verified",
+                    "component": component,
+                    "at": _timestamp(self._now()),
+                })
                 self._save(operation)
             operation["state"] = "succeeded"
             operation["currentComponent"] = None
@@ -305,9 +382,95 @@ class ProfileUpgradeService:
             operation["error"] = (
                 "upgrade failed; inspect component health and follow the plan recovery boundary"
             )
+            self._recover(operation, plan, mutated, deadline)
         finally:
             self._cancelled.discard(operation_id)
             self._save(operation)
+
+    def _recover(
+        self, operation: dict[str, Any], plan: dict[str, Any],
+        mutated: list[str], deadline: float,
+    ) -> None:
+        """Apply only declared reversible rollback; retain evidence otherwise."""
+        classes = {
+            step["component"]: step["recoveryClass"] for step in plan["steps"]
+        }
+        current = operation.get("currentComponent")
+        if current in plan["components"] and current not in mutated:
+            # An adapter error cannot prove that the mutation was not applied.
+            mutated = [*mutated, current]
+        if not mutated:
+            operation["recovery"]["required"] = False
+            operation["recovery"]["status"] = "not-required"
+            operation["recovery"]["action"] = (
+                "No mutation was recorded; review authoritative health before replanning."
+            )
+            operation["evidence"].append({
+                "type": "recovery-not-required",
+                "at": _timestamp(self._now()),
+            })
+            return
+        blocked = [
+            component for component in mutated
+            if classes[component] in {"restore-required", "irreversible"}
+        ]
+        operation["recovery"]["required"] = True
+        if blocked:
+            operation["recovery"]["status"] = "restore-required"
+            operation["recovery"]["action"] = (
+                "Restore and verify the bound backup before retrying."
+                if operation["recovery"]["backupVerified"]
+                else "Stop: no verified bound backup is available for recovery."
+            )
+            operation["evidence"].append({
+                "type": "automatic-rollback-blocked",
+                "components": blocked,
+                "reason": classes[blocked[0]],
+                "at": _timestamp(self._now()),
+            })
+            return
+        rollback = getattr(self._adapter, "rollback", None)
+        if not callable(rollback):
+            operation["recovery"]["status"] = "compensating-action-required"
+            operation["recovery"]["action"] = (
+                "Review retained evidence and apply the documented compensating action."
+            )
+            return
+        restored: list[str] = []
+        try:
+            for component in reversed(mutated):
+                rollback(
+                    component,
+                    plan["sourceProfile"]["versions"][component],
+                    deadline=deadline,
+                    cancelled=lambda: False,
+                )
+                if not self._verifier.verify_layer(
+                    component, deadline=deadline, cancelled=lambda: False
+                ):
+                    raise UpgradeExecutionError(
+                        "post-rollback health verification failed"
+                    )
+                restored.append(component)
+                operation["evidence"].append({
+                    "type": "rollback-verified",
+                    "component": component,
+                    "at": _timestamp(self._now()),
+                })
+            operation["recovery"]["status"] = "rolled-back"
+            operation["recovery"]["action"] = (
+                "Review rollback health evidence before creating a fresh plan."
+            )
+        except Exception:
+            operation["recovery"]["status"] = "compensating-action-required"
+            operation["recovery"]["action"] = (
+                "Automatic rollback did not verify; stop automation and review retained evidence."
+            )
+            operation["evidence"].append({
+                "type": "rollback-failed",
+                "completedComponents": restored,
+                "at": _timestamp(self._now()),
+            })
 
     def _validated_observation(
         self, source: PlatformProfile, target: PlatformProfile,
@@ -376,10 +539,12 @@ def _versions(profile: PlatformProfile) -> dict[str, Any]:
 
 def _rollback_class(migrations: list[dict[str, Any]]) -> str:
     limitations = {item["rollback"] for item in migrations}
-    if "forward-only" in limitations:
-        return "forward-only"
+    if "irreversible" in limitations:
+        return "irreversible"
     if "restore-required" in limitations:
         return "restore-required"
+    if "compensating-action" in limitations:
+        return "compensating-action"
     return "reversible"
 
 

@@ -37,6 +37,13 @@ bypass authorization or approvals.
 
 For example, `{"operation":"start","components":["scancentral-sast"]}`
 resolves MySQL and SSC dependency steps without exposing adapter paths.
+Every lifecycle plan step includes `recoveryClass`: `reversible`,
+`compensating-action`, `restore-required`, or `irreversible`. The plan's
+`recoveryBoundary` is the strongest class across its steps. Terminal operation
+documents include `recovery.required`, `recovery.boundary`, and a sanitized
+`recovery.nextAction`; completed events remain queryable after failure,
+timeout, cancellation, or Manager restart.
+
 Dependency-blocked stop plans fail before execution. Uninstall and
 `delete-data` are separate actions. A capability is supported only when the
 component registry declares it; `configure` therefore fails closed until an
@@ -177,6 +184,9 @@ CLI commands are `upgrade-plan`, `upgrade-profile`, and `upgrade-status`.
 These routes fail closed unless the manager composition supplies the dedicated
 service. See [Profile-aware upgrades](operations/profile-upgrades.md) for the
 evidence, confirmation, Telegram, verification, and recovery contract.
+Upgrade plans also contain ordered `steps`, each step's `recoveryClass`, and
+the aggregate `recoveryBoundary`. Upgrade status retains sanitized `evidence`
+and a `recovery` object with the bound backup ID and verification state.
 
 Recent sanitized manager records are exposed at
 `GET /api/v1alpha1/history`. The response is an `OperationHistory` document

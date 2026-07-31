@@ -25,6 +25,7 @@ from manager.operation_engine import (
     OperationError,
     OperationStore,
     PreflightBlocked,
+    RECOVERY_CLASS_BY_OPERATION,
     StepCancelled,
     StepTimedOut,
 )
@@ -101,6 +102,19 @@ class OperationEngineTests(unittest.TestCase):
         Draft202012Validator(
             schema, format_checker=FormatChecker()
         ).validate(result)
+
+    def test_plan_and_failure_expose_truthful_recovery_boundaries(self) -> None:
+        start = self.engine.plan("start", ["mysql"])
+        self.assertEqual(start["steps"][0]["recoveryClass"], "reversible")
+        self.assertEqual(
+            RECOVERY_CLASS_BY_OPERATION["delete-data"], "irreversible"
+        )
+
+        self.verifier.fail_component = "mysql"
+        failed = self.engine.submit("start", ["mysql"], actor="local:test")
+        self.assertTrue(failed["recovery"]["required"])
+        self.assertEqual(failed["recovery"]["boundary"], "reversible")
+        self.assertIn("Review evidence", failed["recovery"]["nextAction"])
 
     def test_stop_blocks_until_all_reverse_dependencies_are_selected(self) -> None:
         with self.assertRaises(DependencyBlocked):

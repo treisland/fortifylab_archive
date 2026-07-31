@@ -260,6 +260,15 @@ class WebOperationAPI:
             "dependencyImpact": dependencies,
             "destructive": plan["operation"] in {"uninstall", "delete-data"},
             "deletesData": plan["operation"] == "delete-data",
+            "recoveryBoundary": max(
+                (step["recoveryClass"] for step in plan["steps"]),
+                key={
+                    "reversible": 0,
+                    "compensating-action": 1,
+                    "restore-required": 2,
+                    "irreversible": 3,
+                }.__getitem__,
+            ),
         }
 
     def _operation_plan(self, request: dict[str, Any]) -> OperationPlan:

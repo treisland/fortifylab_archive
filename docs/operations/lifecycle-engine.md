@@ -51,6 +51,11 @@ Plans whose affected component sets overlap are rejected with
 
 ## Progress, recovery, and verification
 
+Plans classify every step and present the aggregate recovery boundary before
+execution. See [Rollback and recovery boundaries](rollback-recovery.md) for
+the four classes, automatic chart/config rollback rules, migration restore
+gate, and disposable-lab drills.
+
 Each durable operation has an opaque ID, target set, actor, timestamps, state,
 current step and attempt, completed and total step counts, retry parent, and a
 sanitized error. The machine-readable response is

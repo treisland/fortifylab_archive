@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Classify lifecycle and profile-upgrade recovery as reversible,
+  compensating-action, restore-required, or irreversible; expose the boundary
+  before execution; retain failure evidence; safely reverse eligible chart
+  changes; and add static SSC, DAST, database, ingress, and certificate drills.
 - Add profile-aware, evidence-digest-bound upgrade plans with tested-transition,
   capacity, health, dependency, backup, downtime, timeout, migration,
   strong-confirmation, Telegram-exclusion, ordered verification, interruption,

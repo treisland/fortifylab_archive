@@ -25,6 +25,16 @@ TERMINAL_STATES = frozenset(
     {"succeeded", "failed", "timed-out", "cancelled", "interrupted"}
 )
 IDENTIFIER = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+RECOVERY_CLASS_BY_OPERATION = {
+    "install": "compensating-action",
+    "configure": "reversible",
+    "start": "reversible",
+    "stop": "reversible",
+    "restart": "reversible",
+    "upgrade": "restore-required",
+    "uninstall": "compensating-action",
+    "delete-data": "irreversible",
+}
 
 
 class OperationError(RuntimeError):
@@ -73,6 +83,7 @@ class Step:
     timeout_seconds: float
     verify: tuple[str, ...]
     max_attempts: int
+    recovery_class: str = "reversible"
 
 
 class OperationAdapter(Protocol):
@@ -122,6 +133,20 @@ class OperationStore:
             "'$.updatedAt', ?) WHERE state IN ('queued','running','cancelling')",
             (_timestamp(),),
         )
+        for row in self.connection.execute(
+            "SELECT id, payload FROM lifecycle_operations WHERE state='interrupted'"
+        ):
+            document = json.loads(row["payload"])
+            if not document.get("recovery", {}).get("required"):
+                self._set_interrupted_recovery(document)
+                self.connection.execute(
+                    "UPDATE lifecycle_operations SET payload=? WHERE id=?",
+                    (_payload(document), row["id"]),
+                )
+                self.event(row["id"], {
+                    "type": "manager-restarted",
+                    "at": document["updatedAt"],
+                })
 
     def close(self) -> None:
         self.connection.close()
@@ -179,6 +204,21 @@ class OperationStore:
         ):
             active.update(json.loads(row["payload"])["components"])
         return active
+
+    @staticmethod
+    def _set_interrupted_recovery(document: dict[str, Any]) -> None:
+        operation = (document.get("currentStep") or {}).get(
+            "operation", document.get("operation")
+        )
+        boundary = RECOVERY_CLASS_BY_OPERATION.get(operation, "irreversible")
+        document["recovery"] = {
+            "required": True,
+            "boundary": boundary,
+            "nextAction": (
+                "Review retained evidence and authoritative health before retrying; "
+                "a Manager restart does not prove rollback."
+            ),
+        }
 
 
 class OperationEngine:
@@ -360,6 +400,11 @@ class OperationEngine:
                 "totalSteps": len(steps),
                 "retryOf": retry_of,
                 "error": None,
+                "recovery": {
+                    "required": False,
+                    "boundary": _plan_recovery_boundary(steps),
+                    "nextAction": None,
+                },
             }
             if workflow is not None:
                 document["workflow"] = workflow
@@ -395,6 +440,7 @@ class OperationEngine:
                     "timeoutSeconds": step.timeout_seconds,
                     "maxAttempts": step.max_attempts,
                     "verificationChecks": list(step.verify),
+                    "recoveryClass": step.recovery_class,
                 }
                 for number, step in enumerate(steps, 1)
             ],
@@ -563,6 +609,7 @@ class OperationEngine:
             timeout_seconds=timeout,
             verify=tuple(capability["verify"]),
             max_attempts=self._max_attempts if capability["idempotent"] else 1,
+            recovery_class=RECOVERY_CLASS_BY_OPERATION[operation],
         )
 
     def _run(self, document: dict[str, Any], steps: tuple[Step, ...]) -> None:
@@ -588,12 +635,15 @@ class OperationEngine:
         except StepCancelled:
             document["state"] = "cancelled"
             document["error"] = "Operation was cancelled"
+            self._set_recovery(document)
         except StepTimedOut:
             document["state"] = "timed-out"
             document["error"] = "A step exceeded its bounded deadline"
+            self._set_recovery(document)
         except Exception:
             document["state"] = "failed"
             document["error"] = "A lifecycle step failed; inspect sanitized events"
+            self._set_recovery(document)
         finally:
             self._cancelled.discard(operation_id)
             self._save(document)
@@ -658,6 +708,23 @@ class OperationEngine:
         document["updatedAt"] = _timestamp(self._clock())
         self._store.update(document)
 
+    @staticmethod
+    def _set_recovery(document: dict[str, Any]) -> None:
+        current = document.get("currentStep") or {}
+        recovery_class = RECOVERY_CLASS_BY_OPERATION.get(
+            current.get("operation", document["operation"]), "irreversible"
+        )
+        document["recovery"] = {
+            "required": True,
+            "boundary": recovery_class,
+            "nextAction": {
+                "reversible": "Review evidence and retry the idempotent action or apply its declared inverse.",
+                "compensating-action": "Review completed steps and run the documented compensating action.",
+                "restore-required": "Do not claim Helm rollback; restore and verify the bound backup before retrying.",
+                "irreversible": "Stop automation and follow the documented manual recovery procedure.",
+            }[recovery_class],
+        }
+
 
 def _timestamp(value: datetime | None = None) -> str:
     return (value or datetime.now(timezone.utc)).isoformat().replace("+00:00", "Z")
@@ -666,4 +733,17 @@ def _timestamp(value: datetime | None = None) -> str:
 def _payload(document: dict[str, Any]) -> str:
     return json.dumps(
         sanitize_record(document), sort_keys=True, separators=(",", ":")
+    )
+
+
+def _plan_recovery_boundary(steps: tuple[Step, ...]) -> str:
+    precedence = {
+        "reversible": 0,
+        "compensating-action": 1,
+        "restore-required": 2,
+        "irreversible": 3,
+    }
+    return max(
+        (step.recovery_class for step in steps),
+        key=precedence.__getitem__,
     )

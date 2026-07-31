@@ -170,6 +170,8 @@ class WebOperationTests(unittest.TestCase):
         self.assertEqual(plan["dependencyImpact"], ["mysql", "ssc"])
         self.assertEqual(plan["risk"], "routine")
         self.assertFalse(plan["deletesData"])
+        self.assertEqual(plan["recoveryBoundary"], "reversible")
+        self.assertTrue(all("recoveryClass" in step for step in plan["steps"]))
         self.assertNotIn("adapter", json.dumps(plan))
 
         destructive = json.loads(
