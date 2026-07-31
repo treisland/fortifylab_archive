@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add a versioned 0.4 verified-platform-lifecycle evaluation suite covering
+  inventory, partial API failure, layered health, lifecycle and recovery,
+  browser acceptance, and secret safety, with a fail-closed fresh,
+  exact-profile live MicroK8s evidence contract.
 - Classify lifecycle and profile-upgrade recovery as reversible,
   compensating-action, restore-required, or irreversible; expose the boundary
   before execution; retain failure evidence; safely reverse eligible chart

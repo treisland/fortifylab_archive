@@ -1,0 +1,122 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "VerifiedPlatformLifecycleEvaluationSuite",
+  "suiteVersion": "0.4.0",
+  "milestoneGate": "0.4-verified-platform-lifecycle",
+  "requiredProfileId": "fortify-24.4-eval.1",
+  "scope": {
+    "platform": "single-node MicroK8s",
+    "aspm": "excluded",
+    "liveEvidence": "separate-required-artifact"
+  },
+  "scenarios": [
+    {
+      "id": "connected-inventory",
+      "area": "inventory",
+      "command": "python3 -m unittest tests.test_component_inventory_api",
+      "expectedOutcome": "Connected desired and observed components are reported without querying a live cluster.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"connection": "connected", "components": 6},
+      "expected": {"state": "healthy", "actualClusterState": "Six managed components are observed and version drift is explicit.", "primaryRootCause": "none", "blockedConsumers": [], "remediation": "No action is required.", "residualLimitation": "Fixture evidence does not prove live Kubernetes discovery."}
+    },
+    {
+      "id": "degraded-read-model",
+      "area": "inventory",
+      "command": "python3 -m unittest tests.test_component_inventory_api",
+      "expectedOutcome": "A failed resource API is isolated while available observations remain visible.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"deploymentsApi": "unavailable", "statefulSetsApi": "available"},
+      "expected": {"state": "degraded", "actualClusterState": "Stateful workload observations remain available and deployment observations are unknown.", "primaryRootCause": "deployments-api-unavailable", "blockedConsumers": ["deployment-backed-components"], "remediation": "Restore deployments API access and refresh inventory.", "residualLimitation": "Fixture evidence cannot distinguish transport failure from live RBAC denial."}
+    },
+    {
+      "id": "layered-health",
+      "area": "health",
+      "command": "python3 -m unittest tests.test_functional_health tests.test_dashboard",
+      "expectedOutcome": "The primary dependency failure is separated from downstream blocked consumers.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"mysql": "unhealthy", "ssc": "blocked", "scsast": "blocked"},
+      "expected": {"state": "degraded", "actualClusterState": "MySQL is unhealthy while SSC and ScanCentral SAST are dependency-blocked.", "primaryRootCause": "mysql-functional-check-failed", "blockedConsumers": ["ssc", "scancentral-sast"], "remediation": "Open MySQL diagnostics and restore database service before retrying consumers.", "residualLimitation": "Fixture checks do not establish live component performance."}
+    },
+    {
+      "id": "clean-install",
+      "area": "lifecycle",
+      "command": "python3 -m unittest tests.test_manager_installation tests.test_microk8s_lifecycle",
+      "expectedOutcome": "Install planning and verification are repeatable and dependency-aware.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"preflight": "passed", "target": "empty"},
+      "expected": {"state": "succeeded", "actualClusterState": "All planned layers reach verified functional health.", "primaryRootCause": "none", "blockedConsumers": [], "remediation": "Retain bounded evidence references for live execution.", "residualLimitation": "No licensed images or live installation are exercised."}
+    },
+    {
+      "id": "dependency-ordering",
+      "area": "lifecycle",
+      "command": "python3 -m unittest tests.test_operation_engine",
+      "expectedOutcome": "Providers start before consumers and unsafe provider stops are blocked.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"operation": "start-scancentral-sast"},
+      "expected": {"state": "succeeded", "actualClusterState": "MySQL and SSC become ready before ScanCentral SAST.", "primaryRootCause": "none", "blockedConsumers": [], "remediation": "Use the generated typed plan for execution.", "residualLimitation": "Fixture ordering does not prove chart readiness timing."}
+    },
+    {
+      "id": "cancellation",
+      "area": "lifecycle",
+      "command": "python3 -m unittest tests.test_operation_engine",
+      "expectedOutcome": "Cancellation stops at a safe boundary and records partial progress.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"operation": "start", "cancelAtStep": 2},
+      "expected": {"state": "cancelled", "actualClusterState": "Completed steps remain visible and later steps are not started.", "primaryRootCause": "operator-cancelled", "blockedConsumers": ["not-yet-started-consumers"], "remediation": "Review completion health and submit a fresh retry plan.", "residualLimitation": "Cancellation cannot reverse a completed mutation."}
+    },
+    {
+      "id": "retry",
+      "area": "lifecycle",
+      "command": "python3 -m unittest tests.test_operation_engine",
+      "expectedOutcome": "Only a retryable failed operation can create a fresh bounded attempt.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"firstAttempt": "failed", "retryable": true},
+      "expected": {"state": "succeeded", "actualClusterState": "The fresh attempt completes and preserves the prior failure history.", "primaryRootCause": "transient-adapter-failure", "blockedConsumers": [], "remediation": "Confirm final layered health before closing the incident.", "residualLimitation": "Synthetic retry does not measure live recovery time."}
+    },
+    {
+      "id": "backup-restore",
+      "area": "recovery",
+      "command": "python3 -m unittest tests.test_backup_restore",
+      "expectedOutcome": "Complete profile-bound artifacts restore in reverse dependency order and verify applications.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"artifact": "complete", "profile": "matching"},
+      "expected": {"state": "succeeded", "actualClusterState": "All restored scopes pass post-restore application checks.", "primaryRootCause": "none", "blockedConsumers": [], "remediation": "Retain checksum and bounded verification references.", "residualLimitation": "Fixtures do not validate live database contents or protected storage."}
+    },
+    {
+      "id": "upgrade",
+      "area": "upgrade",
+      "command": "python3 -m unittest tests.test_profile_upgrade",
+      "expectedOutcome": "Upgrade binds source and target profiles, backup, capacity, health, and dependency order.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"sourceProfile": "allowed", "backup": "verified"},
+      "expected": {"state": "succeeded", "actualClusterState": "Every upgraded dependency layer passes final health verification.", "primaryRootCause": "none", "blockedConsumers": [], "remediation": "Record live downtime and exact-profile evidence separately.", "residualLimitation": "Fixture evidence does not execute vendor migrations."}
+    },
+    {
+      "id": "rollback-boundary",
+      "area": "upgrade",
+      "command": "python3 -m unittest tests.test_rollback_recovery tests.test_profile_upgrade",
+      "expectedOutcome": "Database migration failure requires restore and is never described as Helm rollback.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"migration": "failed", "recoveryClass": "restore-required"},
+      "expected": {"state": "restore-required", "actualClusterState": "Partial migration state is explicit and automatic rollback is blocked.", "primaryRootCause": "database-migration-failed", "blockedConsumers": ["ssc", "scancentral-sast"], "remediation": "Restore the verified source-profile backup with the matching Manager version.", "residualLimitation": "Recovery duration and data loss bounds require live evidence."}
+    },
+    {
+      "id": "service-restart",
+      "area": "recovery",
+      "command": "python3 -m unittest tests.test_manager_installation tests.test_operation_engine",
+      "expectedOutcome": "Manager restart preserves terminal history and marks incomplete work interrupted.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"managerRestart": true, "operation": "running"},
+      "expected": {"state": "failed", "actualClusterState": "The interrupted operation is visible and no success is inferred.", "primaryRootCause": "manager-restarted-during-operation", "blockedConsumers": ["pending-operation-consumers"], "remediation": "Re-observe cluster state and create a fresh recovery or retry plan.", "residualLimitation": "Fixture evidence does not prove systemd or MicroK8s availability."}
+    },
+    {
+      "id": "protected-input-boundary",
+      "area": "secret",
+      "command": "python3 -m unittest tests.test_secret_workflow tests.test_license_file_contract",
+      "expectedOutcome": "Secret values remain write-only across API, browser, history, diagnostics, and operation evidence.",
+      "evidence": "deterministic-fixture",
+      "fixture": {"secretUpdate": "synthetic", "surfaces": 5},
+      "expected": {"state": "succeeded", "actualClusterState": "Only metadata, impact, and health outcomes are observable.", "primaryRootCause": "none", "blockedConsumers": [], "remediation": "Use protected inputs or existing Kubernetes Secret references for live work.", "residualLimitation": "Static scanning cannot prove operator screenshots or external storage handling."}
+    }
+  ]
+}

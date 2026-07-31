@@ -8,6 +8,7 @@ import sqlite3
 import socket
 import stat
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -230,6 +231,7 @@ class RecoveryService:
         self.destination = destination
         self._cancelled: set[str] = set()
         self._lock = threading.RLock()
+        self._workers: set[threading.Thread] = set()
 
     def backup_plan(self) -> dict[str, Any]:
         return {
@@ -273,9 +275,7 @@ class RecoveryService:
         backup_id = "backup-" + uuid.uuid4().hex
         document = self._new_operation("backup", backup_id, actor)
         self.store.put_operation(document)
-        threading.Thread(
-            target=self._run_backup, args=(document["id"], backup_id), daemon=True
-        ).start()
+        self._start_worker(self._run_backup, document["id"], backup_id)
         return document
 
     def submit_restore(
@@ -288,10 +288,34 @@ class RecoveryService:
             raise IncompatibleBackup("backup platform profile is incompatible")
         document = self._new_operation("restore", backup_id, actor)
         self.store.put_operation(document)
-        threading.Thread(
-            target=self._run_restore, args=(document["id"], backup_id), daemon=True
-        ).start()
+        self._start_worker(self._run_restore, document["id"], backup_id)
         return document
+
+    def wait_for_idle(self, timeout_seconds: float = 10.0) -> bool:
+        """Bound shutdown/tests without closing SQLite under active workers."""
+        deadline = time.monotonic() + max(0.0, min(float(timeout_seconds), 3600.0))
+        while True:
+            with self._lock:
+                workers = tuple(self._workers)
+            if not workers:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            workers[0].join(remaining)
+
+    def _start_worker(self, target: Callable[..., None], *args: str) -> None:
+        def run() -> None:
+            try:
+                target(*args)
+            finally:
+                with self._lock:
+                    self._workers.discard(threading.current_thread())
+
+        worker = threading.Thread(target=run, daemon=True)
+        with self._lock:
+            self._workers.add(worker)
+        worker.start()
 
     def cancel(self, operation_id: str) -> dict[str, Any]:
         document = self.store.operation(operation_id)

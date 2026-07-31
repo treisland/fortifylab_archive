@@ -116,3 +116,64 @@ recorded separately and must never be copied into these fixtures. Rollback is
 also intentionally limited: cancellation, timeout, manager restart, and failed
 health verification can follow partial mutation, and neither Helm rollback nor
 manager recovery is represented as reversing database or schema changes.
+
+## 0.4 verified-platform-lifecycle milestone gate
+
+`evaluations/verified-platform-lifecycle-v0.4` is the final 0.4 milestone
+gate. Its twelve deterministic scenarios cover connected inventory, partial
+Kubernetes API failure, layered health, clean installation, dependency
+ordering, cancellation, retry, backup/restore, profile upgrade, the database
+rollback boundary, Manager service restart, and secret safety. Each scenario
+records a reproducible local command, expected outcome, browser-facing actual
+state, primary root cause, blocked consumers, remediation, and a residual
+limitation.
+
+Run the deterministic gate with:
+
+```bash
+python3 -m unittest tests.test_verified_lifecycle_evaluation
+```
+
+That command does not contact MicroK8s. The checked-in deterministic
+observations pass, while the overall milestone intentionally fails because
+`live-evidence.json` is `not-run`. Missing, changed, or unexpected fixture
+observations also fail. A live record passes only when it is for
+`fortify-24.4-eval.1`, marks that profile verified, names single-node
+MicroK8s, includes every required lifecycle and browser check, and is
+evaluated between its `recordedAt` and `expiresAt` instants.
+
+### Authorized live evidence
+
+Live evaluation is a separate operator activity on a disposable, licensed
+lab. It is not part of repository validation. Starting from
+`live-evidence.schema.json`, record only bounded classifications and these
+reproducible command labels:
+
+- repository gate: `./scripts/validate-repository.sh`;
+- connected inventory and browser acceptance:
+  `python3 -m unittest tests.test_component_inventory_api tests.test_dashboard`;
+- layered health: `python3 -m unittest tests.test_functional_health`;
+- clean install and ordering:
+  `python3 -m unittest tests.test_manager_installation tests.test_operation_engine`;
+- cancellation and retry:
+  `python3 -m unittest tests.test_operation_engine`;
+- backup and restore: `python3 -m unittest tests.test_backup_restore`;
+- upgrade and recovery boundary:
+  `python3 -m unittest tests.test_profile_upgrade tests.test_rollback_recovery`;
+- restart: `python3 -m unittest tests.test_manager_installation`;
+- secret safety:
+  `python3 -m unittest tests.test_secret_workflow tests.test_license_file_contract`.
+
+The local commands establish contract behavior; the operator must separately
+exercise the equivalent Manager operations and browser views against the
+exact live profile. Browser acceptance requires the displayed cluster state
+to match sanitized observations, the earliest primary cause to be identified,
+all dependency-blocked consumers to be named, and remediation to link to a
+safe typed action or operator procedure.
+
+Do not store screenshots, raw logs, credentials, license material, Secret
+values, private keys, protected locations, internal hostnames, or environment
+dumps. Store only `passed` classifications, bounded command labels, UTC
+validity instants, and residual limitations. The suite cannot establish
+multi-node behavior, production hardening, vendor workload performance, or
+ASPM support.

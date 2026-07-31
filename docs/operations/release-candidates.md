@@ -39,12 +39,18 @@ not a backup.
 | Artifact signature | Approved signer result for the exact checksum |
 | Licensed lifecycle | Exact-profile clean install, supported upgrade, and backup/restore all passed |
 | Installation and upgrade docs | Candidate-linked documentation verification |
+| 0.4 evaluation suite | All deterministic scenarios plus fresh, verified, exact-profile live lifecycle and browser evidence |
 
 The repository has no configured offline vulnerability scanner or signing
 workflow. The local builder records those gates as `not-run`; it does not
 download tooling or fabricate a signature. An approved publication workflow
 may replace those results while retaining the candidate checksum and
 scanner/signer identity.
+
+The 0.4 evaluation gate is documented in the
+[evaluation corpus](../evaluation-corpus.md#04-verified-platform-lifecycle-milestone-gate).
+Its checked-in live record is deliberately `not-run`; repository validation
+must not turn static fixture success into live MicroK8s evidence.
 
 ## Current 0.4 candidate
 

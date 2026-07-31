@@ -1,0 +1,19 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "VerifiedPlatformLifecycleFixtureObservations",
+  "suiteVersion": "0.4.0",
+  "observedOutcomeDigests": {
+    "backup-restore": "e1633f55e748937e8d04f547995a00973efaa5ed6d49b4d72bc5d0e00a3cd911",
+    "cancellation": "2172cee930b8b9669a33232f5264343a1eebea002d7fcd866d1961e68f60a2a7",
+    "clean-install": "bb7b75c3fc2ad7206813b8b2fa7df0eacbc84f76584879f25d3ca779dcc7ed3b",
+    "connected-inventory": "939e8bfbed907535165916a66fcf85c1e22553b9ac05104858ec1ebc525d4ab6",
+    "dependency-ordering": "ce9d8503822309e7b512a9b05657b0e335ac7cb6c28fa05ef8ea4977bd7d7666",
+    "layered-health": "2b2fe3a92fdf819e78e68141f7e52193bc1dc933493d732b20acb3a94b0a0bfc",
+    "degraded-read-model": "aeeeaa3cafd24e69ec0a85c083eba41b668e5297fac8a3cd640d6b7bb56b7199",
+    "retry": "a8011e38d99f23261192d8952d7045784ef8270f3f91566770ec42ea76819752",
+    "rollback-boundary": "c953f72c0c4d71ea4b66254b46cd0389008692bdc03b87d8fff2094fb88754e3",
+    "protected-input-boundary": "e2df29b7401e7b90753e17305f608387c995190ea60da591817895cdfd5999f1",
+    "service-restart": "6ef23c623ae78b58985741a6e38cde9113a019b4a9ea7c1b11295cecb7b3fdb0",
+    "upgrade": "83fcffa12bd5b16a6cc323bdefd7078e865c52bebd5228250b8f5b3f5d34a8d9"
+  }
+}

@@ -44,6 +44,19 @@ class ReleaseCandidateTests(unittest.TestCase):
                 next(item for item in gates["gates"] if item["id"] == "licensed-lifecycle")["status"],
                 "not-run",
             )
+            evaluation_gate = next(
+                item for item in gates["gates"]
+                if item["id"] == "verified-platform-lifecycle-evaluation"
+            )
+            self.assertEqual(evaluation_gate["status"], "failed")
+            evaluation = json.loads(
+                (
+                    first.directory
+                    / "verified-platform-lifecycle-evaluation.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(evaluation["deterministicEvidence"]["status"], "passed")
+            self.assertEqual(evaluation["liveEvidence"]["status"], "failed")
 
     def test_sensitive_content_is_rejected_without_echoing_it(self):
         with tempfile.TemporaryDirectory() as directory_name:
