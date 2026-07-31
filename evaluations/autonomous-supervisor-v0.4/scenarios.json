@@ -1,0 +1,20 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "AutonomousSupervisorSuite",
+  "suiteVersion": "1.0.0",
+  "scope": {"platform": "MicroK8s-first", "aspm": "excluded", "liveMutation": false},
+  "scenarios": [
+    {"id": "eligible-exact-head", "expected": "automatic-merge-once"},
+    {"id": "missing-required-check", "expected": "blocked"},
+    {"id": "merge-conflict", "expected": "blocked"},
+    {"id": "changes-requested", "expected": "blocked"},
+    {"id": "secret-scan-finding", "expected": "blocked"},
+    {"id": "sensitive-scope", "expected": "blocked"},
+    {"id": "changed-head-race", "expected": "complete-reevaluation"},
+    {"id": "restart-active-lease", "expected": "same-absolute-expiry"},
+    {"id": "expired-lease", "expected": "revert-before-action"},
+    {"id": "telegram-outage", "expected": "authority-unchanged-delivery-pending"},
+    {"id": "emergency-hold", "expected": "immediate-block"},
+    {"id": "duplicate-merge-progression", "expected": "single-effective-transition"}
+  ]
+}

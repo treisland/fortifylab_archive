@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add time-bounded Autonomous supervisor leases with automatic Assisted
+  reversion, immediate emergency hold, exact-head required-check and secret-
+  scan enforcement, issue/milestone and sensitive-scope merge gates, durable
+  notifications, and deterministic failure/race/restart fixtures.
+
 - Prevent dashboard API payloads from shadowing the browser DOM, and execute
   populated panel documents against both source and staged release assets.
 

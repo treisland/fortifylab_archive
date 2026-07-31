@@ -117,6 +117,16 @@ also intentionally limited: cancellation, timeout, manager restart, and failed
 health verification can follow partial mutation, and neither Helm rollback nor
 manager recovery is represented as reversing database or schema changes.
 
+## 0.4 autonomous-supervisor gate
+
+`evaluations/autonomous-supervisor-v0.4/scenarios.json` versions the bounded
+unattended-operation fixtures. It covers eligible and ineligible exact-head
+merges, missing checks, conflicts, requested changes, secret findings,
+sensitive scope, changed-head races, restart without lease extension, expiry
+before action, Telegram outage, emergency hold, and idempotent merge/queue
+progression. The suite is deterministic and never contacts GitHub, Telegram,
+or MicroK8s; ASPM is explicitly excluded.
+
 ## 0.4 verified-platform-lifecycle milestone gate
 
 `evaluations/verified-platform-lifecycle-v0.4` is the final 0.4 milestone

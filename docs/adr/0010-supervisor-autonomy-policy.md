@@ -63,8 +63,9 @@ CI, review, secret scanning, dependency, or milestone checks.
 - Status and audit records can identify policy changes without exposing a path
   or source values.
 - Operators must deliberately maintain generation and autonomous expiry.
-- An invalid, expired, inconsistent, unknown, unreadable, or insecurely
-  permissioned policy prevents the process from starting.
+- An expired autonomous lease is atomically replaced by a new Assisted
+  generation before any action. Invalid, inconsistent, unknown, unreadable,
+  or insecurely permissioned policy still prevents action.
 - Schema evolution requires an explicit version and migration.
 
 ## Security and operational implications

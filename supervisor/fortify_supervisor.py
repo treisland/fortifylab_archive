@@ -143,6 +143,8 @@ class Config:
     runner_stop_command: tuple[str, ...] = ()
     heartbeat_root: Path | None = None
     autonomy_policy_file: Path | None = None
+    required_merge_checks: tuple[str, ...] = ("repository", "secrets")
+    secret_scan_check: str = "secrets"
     notifications: NotificationPreferences = NotificationPreferences()
 
     @classmethod
@@ -208,6 +210,12 @@ class Config:
                 if values.get("autonomy_policy_file")
                 else None
             ),
+            required_merge_checks=tuple(
+                str(item) for item in values.get(
+                    "required_merge_checks", ["repository", "secrets"]
+                )
+            ),
+            secret_scan_check=str(values.get("secret_scan_check", "secrets")),
             notifications=NotificationPreferences(
                 mode=str(notification_values.get("mode", "all")),
                 quiet_start=str(notification_values.get("quiet_start", "")),
@@ -236,6 +244,15 @@ class Config:
             validate_runner(config.runner_command[0])
         if config.runner_stop_command:
             validate_runner(config.runner_stop_command[0])
+        if (
+            not config.required_merge_checks
+            or len(set(config.required_merge_checks)) != len(config.required_merge_checks)
+            or any(not value.strip() for value in config.required_merge_checks)
+            or config.secret_scan_check not in config.required_merge_checks
+        ):
+            raise SupervisorError(
+                "required_merge_checks must be unique and include secret_scan_check"
+            )
         return config
 
 
@@ -741,12 +758,13 @@ class GitHubPort(Protocol):
         self, milestone: str, excluded: set[int] | None = None
     ) -> dict[str, Any] | None: ...
     def milestone(self, title: str) -> dict[str, Any]: ...
+    def issue_details(self, number: int) -> dict[str, Any]: ...
 
 
 class GitHub:
     PR_FIELDS = (
         "number,state,isDraft,headRefOid,headRefName,mergeable,mergeStateStatus,"
-        "reviewDecision,statusCheckRollup,url,mergedAt"
+        "reviewDecision,statusCheckRollup,url,mergedAt,files,labels"
     )
 
     def __init__(
@@ -946,6 +964,14 @@ class GitHub:
             raise SupervisorError(f"Milestone is unavailable or ambiguous: {title}")
         return matches[0]
 
+    def issue_details(self, number: int) -> dict[str, Any]:
+        return self._json(
+            [
+                "issue", "view", str(number), "--repo", self.repository,
+                "--json", "number,state,milestone,labels",
+            ]
+        )
+
 
 class TelegramPort(Protocol):
     def updates(self, offset: int, timeout: int) -> list[dict[str, Any]]: ...
@@ -1079,6 +1105,16 @@ def checks_state(pr: dict[str, Any]) -> str:
     return "pending" if pending else "passed"
 
 
+SENSITIVE_AUTOMERGE_LABELS = {
+    "approval-required",
+    "destructive-operation",
+    "scope-change",
+    "secret-change",
+    "sensitive-operation",
+}
+SENSITIVE_AUTOMERGE_PATHS = ("secrets/input/",)
+
+
 def sanitize_diagnostics(value: Any, limit: int = 120) -> Any:
     """Return bounded scalar diagnostics without logs, paths, or secret-like data."""
 
@@ -1141,12 +1177,59 @@ class Supervisor:
             config.telegram_chat_file, "Telegram chat ID"
         )
         self.audit_policy()
-        if self.policy.expires_at and datetime.datetime.fromisoformat(
+        self.revert_expired_lease()
+
+    def revert_expired_lease(self) -> bool:
+        """Atomically restore Assisted at the original absolute lease boundary."""
+
+        if not self.policy.expires_at:
+            return False
+        expiry = datetime.datetime.fromisoformat(
             self.policy.expires_at.replace("Z", "+00:00")
-        ) <= datetime.datetime.fromtimestamp(
-            self.store.now(), datetime.timezone.utc
-        ):
+        )
+        now = datetime.datetime.fromtimestamp(self.store.now(), datetime.timezone.utc)
+        if expiry > now:
+            return False
+        expired_profile = self.policy.profile
+        expired_generation = self.policy.generation
+        expired_at = self.policy.expires_at
+        if self.config.autonomy_policy_file is None:
             self.store.set("autonomy_configuration_state", "expired-lease")
+            raise SupervisorError("autonomous lease expired; Assisted reversion unavailable")
+        try:
+            self.policy = replace_policy(
+                self.config.autonomy_policy_file,
+                profile="assisted",
+                generation=expired_generation + 1,
+                now=now,
+            )
+        except AutonomyPolicyError as error:
+            self.store.set("autonomy_configuration_state", "expired-lease")
+            raise SupervisorError("autonomous lease expired; Assisted reversion failed") from error
+        self.audit_policy()
+        self.store.set("autonomy_configuration_state", "active")
+        payload = {
+            "expired_profile": expired_profile,
+            "expired_generation": expired_generation,
+            "expired_at": expired_at,
+            "profile": "assisted",
+            "generation": self.policy.generation,
+        }
+        self.notify_once(
+            f"autonomy:expiry:{expired_generation}:{expired_at}",
+            "autonomy.lease_expired",
+            f"⏱ Autonomous lease expired at {expired_at}.",
+            payload,
+            meaningful=True,
+        )
+        self.notify_once(
+            f"autonomy:reverted:{self.policy.generation}",
+            "autonomy.reverted",
+            "↩ Autonomy reverted to Assisted; automatic PR merging is disabled.",
+            payload,
+            meaningful=True,
+        )
+        return True
 
     def reload_policy(self, role: str) -> None:
         """Atomically adopt one complete policy generation and attest it."""
@@ -1173,6 +1256,8 @@ class Supervisor:
             raise SupervisorError("configuration mismatch; actions are blocked")
         self.policy = policy
         self.audit_policy()
+        if self.revert_expired_lease():
+            policy = self.policy
         self.store.set(
             f"process_policy:{role}",
             json.dumps(
@@ -1184,13 +1269,6 @@ class Supervisor:
                 sort_keys=True,
             ),
         )
-        if policy.expires_at and datetime.datetime.fromisoformat(
-            policy.expires_at.replace("Z", "+00:00")
-        ) <= datetime.datetime.fromtimestamp(
-            self.store.now(), datetime.timezone.utc
-        ):
-            self.store.set("autonomy_configuration_state", "expired-lease")
-            raise SupervisorError("autonomous lease expired; actions are blocked")
         self.store.set("autonomy_configuration_state", "active")
 
     def configuration_state(self) -> str:
@@ -1618,6 +1696,23 @@ class Supervisor:
             },
         )
         self.reload_policy("listener")
+        if operation == "profile":
+            self.notify_once(
+                f"autonomy:activated:{self.policy.generation}:{self.policy.digest}",
+                "autonomy.activated",
+                (
+                    f"🤖 Autonomous mode activated until {self.policy.expires_at}."
+                    if self.policy.profile == "autonomous"
+                    else f"Autonomy changed to {self.policy.profile}."
+                ),
+                {
+                    "actor": actor,
+                    "profile": self.policy.profile,
+                    "generation": self.policy.generation,
+                    "expires_at": self.policy.expires_at,
+                },
+                meaningful=True,
+            )
         return f"{result}. {self.autonomy_text()}"
 
     def autonomy_text(self) -> str:
@@ -1662,6 +1757,24 @@ class Supervisor:
     def handle_command(self, text: str, actor: str) -> str:
         parts = shlex.split(text)
         command = parts[0].split("@", 1)[0].lower()
+        if command == "/hold":
+            if len(parts) != 1:
+                raise SupervisorError("Usage: /hold")
+            self.store.set("paused", "true")
+            self.store.event(
+                f"emergency-hold:{int(self.store.now())}",
+                "supervisor.emergency_hold",
+                {"actor": actor},
+            )
+            self.notify_once(
+                f"emergency-hold-notice:{int(self.store.now())}",
+                "supervisor.emergency_hold_notice",
+                "🛑 Emergency hold active. Monitoring continues; no automatic action may start.",
+                {"actor": actor},
+                severity="failure",
+                meaningful=True,
+            )
+            return "Emergency hold active"
         try:
             self.reload_policy("listener")
         except SupervisorError:
@@ -1705,7 +1818,7 @@ class Supervisor:
             elif len(parts) != 2:
                 raise SupervisorError(f"Usage: /autonomy {profile}")
             return self.request_confirmation("autonomy-change", payload, actor)
-        if command in {"/hold", "/resume", "/approve-once"}:
+        if command in {"/resume", "/approve-once"}:
             if len(parts) != 1:
                 raise SupervisorError(f"Usage: {command}")
             return self.request_confirmation(
@@ -1916,6 +2029,8 @@ class Supervisor:
         payload = json.loads(row["payload"])
         pr = self.github.pull_request(int(payload["pull_request"]))
         self.verify_merge_plan(pr, payload, allow_draft=True)
+        if actor == "autonomy-policy":
+            self.verify_autonomous_merge(pr, payload)
         self.store.decide(approval_id, "approved", actor)
         try:
             if pr.get("isDraft"):
@@ -1926,6 +2041,18 @@ class Supervisor:
         except Exception:
             self.store.set("last_error", f"Merge failed for PR #{payload['pull_request']}")
             raise
+        if actor == "autonomy-policy":
+            self.notify_once(
+                f"pr:{payload['pull_request']}:automatic-merge:{payload['head_sha']}",
+                "pull_request.automatic_merge",
+                f"🤖 PR #{payload['pull_request']} automatically merged at "
+                f"{str(payload['head_sha'])[:12]}.",
+                {
+                    "pull_request": int(payload["pull_request"]),
+                    "head_sha": str(payload["head_sha"]),
+                },
+                meaningful=True,
+            )
         self.store.event(
             f"approval:{approval_id}:merge",
             "pull_request.merge_approved",
@@ -2216,6 +2343,63 @@ class Supervisor:
                 f"PR merge state is {pr.get('mergeStateStatus', 'unknown')}"
             )
 
+    def verify_autonomous_merge(self, pr: dict[str, Any], payload: dict[str, Any]) -> None:
+        """Apply every fail-closed gate unique to unattended merging."""
+
+        self.verify_merge_plan(pr, payload)
+        if self.policy.profile != "autonomous" or self.policy.expires_at is None:
+            raise SupervisorError("Autonomous lease is not active")
+        if self.store.get("paused", "false") == "true":
+            raise SupervisorError("Emergency hold or pause is active")
+        if self.configuration_state() != "active":
+            raise SupervisorError("Autonomy configuration is not consistent")
+        if self.store.get("last_error"):
+            raise SupervisorError("An unresolved workflow failure exists")
+        if str(pr.get("reviewDecision") or "") == "CHANGES_REQUESTED":
+            raise SupervisorError("Changes are requested")
+
+        checks: dict[str, list[dict[str, Any]]] = {}
+        for check in pr.get("statusCheckRollup") or []:
+            name = str(check.get("name") or check.get("context") or "")
+            if name:
+                checks.setdefault(name, []).append(check)
+        for name in self.config.required_merge_checks:
+            matches = checks.get(name, [])
+            if len(matches) != 1:
+                raise SupervisorError(f"Required check is missing or ambiguous: {name}")
+            check = matches[0]
+            if (
+                str(check.get("status") or "").upper() != "COMPLETED"
+                or str(check.get("conclusion") or "").upper() != "SUCCESS"
+            ):
+                raise SupervisorError(f"Required check did not pass: {name}")
+
+        branch = str(pr.get("headRefName") or "")
+        match = re.fullmatch(r"agent/issue-(\d+)", branch)
+        if match is None:
+            raise SupervisorError("PR branch is not bound to an issue")
+        issue_number = int(match.group(1))
+        if self.store.get("current_issue") != str(issue_number):
+            raise SupervisorError("PR branch does not match the active issue")
+        issue = self.github.issue_details(issue_number)
+        milestone = issue.get("milestone") or {}
+        if (
+            int(issue.get("number", 0)) != issue_number
+            or issue.get("state") != "OPEN"
+            or str(milestone.get("title") or "") != self.active_milestone()
+        ):
+            raise SupervisorError("Issue is not open in the active authorized milestone")
+
+        labels = {
+            str(item.get("name") or "")
+            for item in [*(pr.get("labels") or []), *(issue.get("labels") or [])]
+        }
+        if labels & SENSITIVE_AUTOMERGE_LABELS:
+            raise SupervisorError("Sensitive-operation policy requires approval")
+        paths = [str(item.get("path") or "") for item in pr.get("files") or []]
+        if any(path.startswith(SENSITIVE_AUTOMERGE_PATHS) for path in paths):
+            raise SupervisorError("Sensitive file scope requires approval")
+
     def monitor_once(self) -> None:
         self.require_consistent_policy("monitor")
         self.deliver_digest()
@@ -2372,7 +2556,30 @@ class Supervisor:
                 "merge_pr", payload, self.config.approval_ttl_seconds
             )
         if merge_decision == "auto":
-            self.approve(str(approval["id"]), "autonomy-policy")
+            try:
+                self.verify_autonomous_merge(pr, payload)
+                self.approve(str(approval["id"]), "autonomy-policy")
+            except SupervisorError as error:
+                merged = self.store.notification(
+                    f"pr:{number}:automatic-merge:{sha}"
+                ) is not None
+                self.notify_once(
+                    f"pr:{number}:autonomous-exception:{sha}:{hashlib.sha256(str(error).encode()).hexdigest()[:12]}",
+                    "pull_request.autonomous_exception",
+                    (
+                        f"⚠ Automatic post-merge progression failed for PR #{number}: {error}"
+                        if merged
+                        else f"⚠ Automatic merge blocked for PR #{number}: {error}"
+                    ),
+                    {
+                        "pull_request": int(number),
+                        "head_sha": sha,
+                        "reason": str(error),
+                        "merged": merged,
+                    },
+                    severity="failure",
+                    meaningful=True,
+                )
             return
         if self.store.get("autonomy_approve_once") == "true":
             self.store.set("autonomy_approve_once", "false")
