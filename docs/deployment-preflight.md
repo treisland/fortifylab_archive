@@ -24,6 +24,13 @@ use `Cache-Control: no-store`, and every request makes fresh adapter calls.
 Repeating the request after remediation therefore reports recovery without
 retaining a previous failure.
 
+The twelve independent checks run through a fixed pool of six workers and
+share a 30-second aggregate deadline. Unfinished or queued checks are cancelled
+at the boundary and reported as sanitized blockers; adapter exception text is
+never copied into the report. Adapters remain responsible for honoring the
+smaller per-check timeout because a worker thread cannot forcibly stop an
+adapter implementation.
+
 ## Clean-install gate
 
 The authenticated clean-install plan (`POST

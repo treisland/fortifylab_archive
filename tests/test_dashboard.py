@@ -190,9 +190,10 @@ class DashboardTests(unittest.TestCase):
 
     def test_browser_partial_503_retains_successful_panels_and_sanitizes_errors(self):
         script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
-        self.assertIn("Promise.allSettled", script)
+        self.assertIn("await Promise.all(requests)", script)
+        self.assertIn("panel.render(document)", script)
         self.assertIn("panelDocuments.has(name)", script)
-        self.assertIn('panelDocuments.set(name, result.value)', script)
+        self.assertIn("panelDocuments.set(panel.name, document)", script)
         self.assertIn('response.status === 503 ? "unavailable" : "error"', script)
         self.assertIn("errorCodePattern", script)
         self.assertNotIn("document.message", script)
@@ -220,11 +221,17 @@ class DashboardTests(unittest.TestCase):
         html = (WEB / "index.html").read_text(encoding="utf-8")
         for marker in (
             "autoRefreshMilliseconds = 30000",
+            "readDeadlineMilliseconds = 8000",
+            "AbortController",
+            'controller.abort("deadline")',
             "refreshInFlight",
+            "refreshGeneration",
             "visibilitychange",
             "document.hidden",
+            'controller.abort("hidden")',
             "scheduleAutoRefresh",
             "AUTHENTICATION_REQUIRED",
+            "const operation = await readModel({",
         ):
             self.assertIn(marker, script)
         self.assertIn('id="auto-refresh"', html)
@@ -233,9 +240,17 @@ class DashboardTests(unittest.TestCase):
 
     def test_each_dashboard_panel_has_an_independent_live_state_region(self):
         html = (WEB / "index.html").read_text(encoding="utf-8")
-        for panel in ("components", "health", "preflight", "history", "operations"):
+        for panel in ("components", "health", "preflight", "history", "capabilities", "operations"):
             self.assertIn(f'id="{panel}-panel-state"', html)
         self.assertGreaterEqual(html.count('aria-live="polite"'), 7)
+
+    def test_panel_count_and_freshness_are_derived_from_panel_definitions(self):
+        script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
+        html = (WEB / "index.html").read_text(encoding="utf-8")
+        self.assertIn("${panels.length} panels settled", script)
+        self.assertIn("${panels.length} panels refreshed", script)
+        self.assertIn("Observed ${observed} · refreshed", script)
+        self.assertNotIn("Loading five independent dashboard panels", html)
 
     def test_every_durable_record_kind_has_a_bounded_history_projection(self):
         examples = json.loads((CONTRACT_ROOT / "examples.json").read_text())

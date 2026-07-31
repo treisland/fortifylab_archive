@@ -123,8 +123,23 @@ class HealthEngineTests(unittest.TestCase):
         root = document["items"][0]
         self.assertEqual(root["state"], "unknown")
         self.assertEqual(
-            root["evidence"][0]["summary"], "Check exceeded its bounded deadline"
+            root["evidence"][0]["summary"],
+            "Check exceeded the aggregate bounded deadline",
         )
+
+    def test_checks_within_a_subject_use_controlled_concurrency(self):
+        engine = HealthEngine(
+            self.registry,
+            SlowProbe(),
+            clock=lambda: NOW,
+            max_probe_timeout=2.0,
+            max_workers=4,
+        )
+        started = time.monotonic()
+        document = engine.document()
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 1.5)
+        self.assertEqual(document["state"], "healthy")
 
     def test_stale_evidence_is_distinct_and_blocks_dependents(self):
         self.probe.states["dns"] = (

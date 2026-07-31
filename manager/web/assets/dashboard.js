@@ -1,8 +1,16 @@
 "use strict";
-const endpoints = ["components", "health", "preflight", "history"];
-const stateNames = new Set(["healthy", "degraded", "unhealthy", "unknown", "blocked", "stale", "starting", "misconfigured", "stopped", "unreachable", "loading", "unavailable", "unauthorized", "error"]);
+const panels = [
+  {name: "components", path: "/api/v1alpha1/components", render: renderInventory},
+  {name: "health", path: "/api/v1alpha1/health", render: renderHealth},
+  {name: "preflight", path: "/api/v1alpha1/preflight", render: renderPreflight},
+  {name: "history", path: "/api/v1alpha1/history", render: renderHistory},
+  {name: "capabilities", path: "/api/v1alpha1/platform-profile", render: renderCapabilities},
+  {name: "operations", path: () => activeOperationId ? `/api/v1alpha1/operations/${activeOperationId}` : null, render: renderOperationsRead}
+];
+const stateNames = new Set(["healthy", "degraded", "unhealthy", "unknown", "blocked", "stale", "starting", "misconfigured", "stopped", "unreachable", "loading", "unavailable", "unauthorized", "timed-out", "error"]);
 const errorCodePattern = /^[A-Z][A-Z0-9_]{2,63}$/;
 const autoRefreshMilliseconds = 30000;
+const readDeadlineMilliseconds = 8000;
 const cleanState = value => stateNames.has(String(value).toLowerCase()) ? String(value).toLowerCase() : "unknown";
 const text = (element, value) => { element.textContent = value == null || value === "" ? "—" : String(value); };
 const byId = id => document.getElementById(id);
@@ -22,32 +30,49 @@ let activeOperationId = sessionStorage.getItem("fortifylab.activeOperation");
 let progressTimer = null;
 let autoRefreshTimer = null;
 let refreshInFlight = false;
+let refreshGeneration = 0;
 let sessionExpired = false;
 const panelDocuments = new Map();
+const activeReadControllers = new Set();
 
-async function readModel(name) {
-  let response;
+async function readModel(panel) {
+  const path = typeof panel.path === "function" ? panel.path() : panel.path;
+  if (!path) return null;
+  const controller = new AbortController();
+  activeReadControllers.add(controller);
+  const deadline = setTimeout(() => controller.abort("deadline"), readDeadlineMilliseconds);
   try {
-    response = await fetch(`/api/v1alpha1/${name}`, {headers: {"Accept": "application/json"}});
-  } catch (_) {
+    const response = await fetch(path, {
+      headers: {"Accept": "application/json"},
+      signal: controller.signal
+    });
+    let document = {};
+    try { document = await response.json(); } catch (_) { document = {}; }
+    if (response.status === 401 || response.status === 403) {
+      throw {kind: "unauthorized", code: "AUTHENTICATION_REQUIRED"};
+    }
+    if (!response.ok) {
+      const code = errorCodePattern.test(String(document.code || "")) ? document.code : `HTTP_${response.status}`;
+      throw {kind: response.status === 503 ? "unavailable" : "error", code};
+    }
+    return document;
+  } catch (error) {
+    if (error?.kind) throw error;
+    if (controller.signal.reason === "deadline") {
+      throw {kind: "timed-out", code: "READ_TIMED_OUT"};
+    }
     throw {kind: "unavailable", code: "OBSERVER_DISCONNECTED"};
+  } finally {
+    clearTimeout(deadline);
+    activeReadControllers.delete(controller);
   }
-  let document = {};
-  try { document = await response.json(); } catch (_) { document = {}; }
-  if (response.status === 401 || response.status === 403) {
-    throw {kind: "unauthorized", code: "AUTHENTICATION_REQUIRED"};
-  }
-  if (!response.ok) {
-    const code = errorCodePattern.test(String(document.code || "")) ? document.code : `HTTP_${response.status}`;
-    throw {kind: response.status === 503 ? "unavailable" : "error", code};
-  }
-  return document;
 }
 
-function panelState(name, state, detail) {
+function panelState(name, state, detail, observedAt = null) {
   const element = byId(`${name}-panel-state`);
   element.className = `panel-state ${state}`;
-  element.textContent = detail;
+  const observed = observedAt ? safeDate(observedAt) : "not reported";
+  element.textContent = `${detail} · Observed ${observed} · refreshed ${safeDate(new Date().toISOString())}`;
 }
 
 function failureMessage(name, failure, retained) {
@@ -56,12 +81,23 @@ function failureMessage(name, failure, retained) {
   const next = failure.kind === "unauthorized"
     ? "Sign in again; no additional permissions are required."
     : "Refresh to retry. Do not broaden observer permissions.";
-  return `${label} ${retained ? "is stale" : "is unavailable"} · ${code}. ${next}`;
+  const condition = failure.kind === "timed-out" ? "timed out" : (retained ? "is stale" : "is unavailable");
+  return `${label} ${condition} · ${code}. ${next}`;
 }
 
 function markPanelFailure(name, failure) {
   const retained = panelDocuments.has(name);
-  panelState(name, failure.kind === "unauthorized" ? "unauthorized" : (retained ? "stale" : failure.kind), failureMessage(name, failure, retained));
+  const retainedDocument = panelDocuments.get(name);
+  const observedAt = retainedDocument?.generatedAt
+    || retainedDocument?.observation?.observedAt
+    || retainedDocument?.items?.[0]?.occurredAt
+    || retainedDocument?.updatedAt;
+  panelState(
+    name,
+    failure.kind === "unauthorized" ? "unauthorized" : (retained ? "stale" : failure.kind),
+    failureMessage(name, failure, retained),
+    observedAt
+  );
   if (name === "components" && !retained) {
     text(byId("cluster-state"), "Unavailable");
     byId("cluster-state").className = "status unavailable";
@@ -78,7 +114,9 @@ function setOperationsAvailable(available, code = "") {
     available ? "available" : "unavailable",
     available
       ? "Available · Plans are validated before any action runs."
-      : `Unavailable · ${errorCodePattern.test(String(code)) ? code : "OPERATIONS_UNAVAILABLE"}. Restore manager composition or observer connectivity, then refresh.`
+      : `Unavailable · ${errorCodePattern.test(String(code)) ? code : "OPERATIONS_UNAVAILABLE"}. Restore manager composition or observer connectivity, then refresh.`,
+    panelDocuments.get("components")?.generatedAt
+      || panelDocuments.get("components")?.observation?.observedAt
   );
 }
 
@@ -118,7 +156,8 @@ function renderInventory(document) {
     items.length ? (disconnected ? "unavailable" : "available") : "empty",
     items.length
       ? (disconnected ? "Desired inventory is available; live observation is unavailable. Reconnect the allow-listed observer, then refresh." : `Current · ${items.length} components observed on ${observation.node || "the connected node"} · evidence ${formatAge(observation.ageSeconds)}`)
-      : "Empty · No managed components are registered. Add components through the project registry, then refresh."
+      : "Empty · No managed components are registered. Add components through the project registry, then refresh.",
+    document.generatedAt || document.observation?.observedAt
   );
   setOperationsAvailable(items.length > 0 && !disconnected, disconnected ? "OBSERVER_DISCONNECTED" : "");
   const choices = byId("operation-components");
@@ -180,7 +219,8 @@ function renderHealth(document) {
       ? "Empty · No health subjects are configured. Verify the component registry."
       : unavailable
         ? "Unavailable · Live health adapter is disconnected. Review the first safe remediation; do not grant Secret access."
-        : `${age.stale ? "Stale" : "Current"} · Evidence ${age.label}. ${degraded.length} degraded; ${blocked.length} blocked consumers.`
+        : `${age.stale ? "Stale" : "Current"} · Evidence ${age.label}. ${degraded.length} degraded; ${blocked.length} blocked consumers.`,
+    document.generatedAt
   );
 }
 
@@ -217,7 +257,8 @@ function renderPreflight(document) {
       ? "Empty · No preflight checks are configured. Verify the component registry."
       : unavailable
         ? "Unavailable · The read-only preflight adapter is disconnected. Restore it, then refresh."
-        : `${age.stale ? "Stale" : "Current"} · Evidence ${age.label}. ${document.ready ? "No blockers." : "Open the listed safe remediation before deployment."}`
+        : `${age.stale ? "Stale" : "Current"} · Evidence ${age.label}. ${document.ready ? "No blockers." : "Open the listed safe remediation before deployment."}`,
+    document.generatedAt
   );
 }
 
@@ -242,8 +283,33 @@ function renderHistory(document) {
   panelState(
     "history",
     items.length ? "available" : "empty",
-    items.length ? `Current · Showing ${items.length} sanitized manager records.` : "Empty · No recent operations have been recorded. No action is required."
+    items.length ? `Current · Showing ${items.length} sanitized manager records.` : "Empty · No recent operations have been recorded. No action is required.",
+    items[0]?.occurredAt
   );
+}
+
+function renderCapabilities(document) {
+  text(byId("capability-profile"), document.id || "Profile not reported");
+  const components = document.components && typeof document.components === "object"
+    ? Object.keys(document.components).length : 0;
+  text(byId("capability-detail"), `${document.maturity || "maturity not reported"} · ${components} component capability sets`);
+  panelState("capabilities", "available", "Current · Tested platform capability metadata is available.");
+}
+
+function renderOperationsRead(document) {
+  if (document) {
+    renderOperation(document);
+    panelState("operations", "available", "Current · Durable operation progress restored.", document.updatedAt || document.startedAt);
+    if (!document.terminal) scheduleProgress();
+    return;
+  }
+  const inventory = panelDocuments.get("components");
+  if (inventory) {
+    const available = Array.isArray(inventory.items) && inventory.items.length > 0 && inventory.observation?.state === "available";
+    setOperationsAvailable(available, available ? "" : "OBSERVER_DISCONNECTED");
+  } else {
+    panelState("operations", "unavailable", "Unavailable · operation prerequisites have not settled.");
+  }
 }
 
 function documentNode(tag, className, content) {
@@ -271,26 +337,35 @@ function evidenceAge(value) {
 async function load() {
   if (refreshInFlight || sessionExpired) return;
   refreshInFlight = true;
+  const generation = ++refreshGeneration;
   byId("loading").hidden = false;
-  const results = await Promise.allSettled(endpoints.map(readModel));
-  const renderers = [renderInventory, renderHealth, renderPreflight, renderHistory];
-  results.forEach((result, index) => {
-    const name = endpoints[index];
-    if (result.status === "fulfilled") {
-      panelDocuments.set(name, result.value);
-      renderers[index](result.value);
-    } else {
-      markPanelFailure(name, result.reason || {kind: "error", code: "READ_FAILED"});
+  const settled = {count: 0, available: 0, unauthorized: false};
+  text(byId("refresh-summary"), `0 of ${panels.length} panels settled`);
+  const requests = panels.map(async panel => {
+    try {
+      const document = await readModel(panel);
+      if (generation !== refreshGeneration) return;
+      if (document) panelDocuments.set(panel.name, document);
+      panel.render(document);
+      settled.available += 1;
+    } catch (failure) {
+      if (generation !== refreshGeneration) return;
+      markPanelFailure(panel.name, failure || {kind: "error", code: "READ_FAILED"});
+      if (failure?.kind === "unauthorized") settled.unauthorized = true;
+    } finally {
+      if (generation === refreshGeneration) {
+        settled.count += 1;
+        text(byId("refresh-summary"), `${settled.count} of ${panels.length} panels settled`);
+      }
     }
   });
+  await Promise.all(requests);
+  if (generation !== refreshGeneration) return;
   byId("loading").hidden = true;
-  const fulfilled = results.filter(result => result.status === "fulfilled").length;
-  const unauthorized = results.some(result => result.status === "rejected" && result.reason?.kind === "unauthorized");
-  sessionExpired = unauthorized;
-  byId("session-expired").hidden = !unauthorized;
+  sessionExpired = settled.unauthorized;
+  byId("session-expired").hidden = !settled.unauthorized;
   text(byId("last-refresh"), `Last refresh ${safeDate(new Date().toISOString())}`);
-  text(byId("refresh-summary"), `${fulfilled} of ${endpoints.length} read models available${unauthorized ? " · session expired" : ""}`);
-  if (activeOperationId && !unauthorized) await refreshOperation();
+  text(byId("refresh-summary"), `${settled.available} of ${panels.length} panels refreshed${settled.unauthorized ? " · session expired" : ""}`);
   refreshInFlight = false;
   scheduleAutoRefresh();
 }
@@ -423,18 +498,29 @@ function renderOperation(operation) {
 
 async function refreshOperation() {
   try {
-    const response = await fetch(`/api/v1alpha1/operations/${activeOperationId}`, {headers: {"Accept": "application/json"}});
-    if (response.status === 401 || response.status === 403) {
+    const operation = await readModel({
+      path: `/api/v1alpha1/operations/${activeOperationId}`
+    });
+    renderOperation(operation);
+    panelDocuments.set("operations", operation);
+    panelState("operations", "available", "Current · Durable operation progress refreshed.", operation.updatedAt || operation.startedAt);
+    if (!operation.terminal) scheduleProgress();
+  } catch (failure) {
+    if (failure?.kind === "unauthorized") {
       sessionExpired = true;
       byId("session-expired").hidden = false;
       panelState("operations", "unauthorized", "Unauthorized · AUTHENTICATION_REQUIRED. Sign in again to resume operation progress.");
-      throw new Error("Session expired. Sign in again to resume.");
+      showOperationMessage("Session expired. Sign in again to resume.", true);
+      return;
     }
-    if (!response.ok) throw new Error("operation state unavailable");
-    const operation = await response.json();
-    renderOperation(operation);
-    if (!operation.terminal) scheduleProgress();
-  } catch (error) { showOperationMessage(error.message, true); }
+    markPanelFailure("operations", failure || {kind: "error", code: "READ_FAILED"});
+    showOperationMessage(
+      failure?.kind === "timed-out"
+        ? "Operation progress timed out. Retained progress remains visible."
+        : "Operation progress is unavailable. Retained progress remains visible.",
+      true
+    );
+  }
 }
 
 function scheduleProgress() {
@@ -472,8 +558,10 @@ function showOperationMessage(message, danger) {
 byId("refresh").addEventListener("click", load);
 byId("auto-refresh").addEventListener("change", scheduleAutoRefresh);
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && byId("auto-refresh").checked && !sessionExpired) load();
-  else scheduleAutoRefresh();
+  if (document.hidden) {
+    activeReadControllers.forEach(controller => controller.abort("hidden"));
+    scheduleAutoRefresh();
+  } else if (byId("auto-refresh").checked && !sessionExpired) load();
 });
 byId("logout").addEventListener("click", async () => {
   await fetch("/api/v1alpha1/session", {method: "DELETE"});
