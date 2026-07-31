@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import socket
 import stat
 import time
@@ -26,8 +27,20 @@ class UnixFunctionalHealthProbe:
 
     _MAX_RESPONSE = 4096
 
-    def __init__(self, socket_path: Path, *, expected_gid: int | None = None) -> None:
+    def __init__(
+        self,
+        socket_path: Path,
+        *,
+        expected_uid: int | None = None,
+        expected_gid: int | None = None,
+    ) -> None:
         self._path = socket_path
+        if expected_uid is None:
+            try:
+                expected_uid = pwd.getpwnam("fortify-health-probe").pw_uid
+            except KeyError:
+                expected_uid = os.geteuid()
+        self._expected_uid = expected_uid
         self._expected_gid = os.getegid() if expected_gid is None else expected_gid
 
     def handshake(self, timeout_seconds: float = 1.0) -> bool:
@@ -96,6 +109,7 @@ class UnixFunctionalHealthProbe:
         if (
             not stat.S_ISSOCK(mode)
             or stat.S_IMODE(mode) != 0o660
+            or metadata.st_uid != self._expected_uid
             or metadata.st_gid != self._expected_gid
         ):
             raise FunctionalProbeError("functional probe socket is not protected")

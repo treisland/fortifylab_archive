@@ -114,6 +114,23 @@ class UnixFunctionalHealthProbeTests(unittest.TestCase):
         self.assertTrue(UnixFunctionalHealthProbe(self.path).handshake())
         server.thread.join(1)
 
+    def test_socket_with_unexpected_owner_is_rejected(self):
+        server = ProbeServer(
+            self.path,
+            {
+                "apiVersion": "fortifylab.io/v1alpha1",
+                "kind": "FunctionalHealthProbeHandshakeResult",
+                "protocolVersion": "1.0",
+                "status": "ready",
+            },
+        ).start()
+        with self.assertRaisesRegex(FunctionalProbeError, "not protected"):
+            UnixFunctionalHealthProbe(
+                self.path,
+                expected_uid=os.geteuid() + 1,
+            ).handshake()
+        server.thread.join(1)
+
     def test_malformed_or_oversized_response_is_rejected_without_detail(self):
         for response in (b"not-json\n", b"x" * 4097):
             with self.subTest(size=len(response)):

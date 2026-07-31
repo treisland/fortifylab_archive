@@ -686,6 +686,7 @@ probe_diagnose() {
     health_socket="$(sed -n 's/^[[:space:]]*health_probe_socket[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CONFIG_ROOT/manager.toml")"
     [ -S "$health_socket" ] &&
         [ "$(stat -c '%a' "$health_socket")" = 660 ] &&
+        [ "$(stat -c '%U' "$health_socket")" = fortify-health-probe ] &&
         [ "$(stat -c '%G' "$health_socket")" = fortify-manager ] ||
         { printf 'ERROR: functional probe socket owner/group/mode is invalid\n' >&2; return 1; }
     runuser -u fortify-manager -- \
