@@ -27,6 +27,11 @@ registry. A component can use an operation only when it declares that
 capability. Upgrade therefore fails closed until a tested platform profile
 adds a bounded `upgrade` capability to every affected component.
 
+Whole-platform transitions use the stricter
+[profile-aware upgrade workflow](profile-upgrades.md). Its digest additionally
+binds exact profile versions, capacity, health, dependency state, backup
+evidence, migrations, rollback limits, downtime, and timeout.
+
 `delete-data` remains distinct from `uninstall`. Persistent data is never
 deleted as an implicit uninstall or retry side effect.
 

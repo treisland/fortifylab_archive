@@ -49,6 +49,23 @@ class RecoveryAdapter:
     def verify(self, backup_id, checks):
         return [{"check": check, "state": "passed", "code": "OK"} for check in checks]
 
+class ProfileUpgrades:
+    def __init__(self):
+        self.submission = None
+
+    def plan(self, target):
+        return {"kind": "ProfileUpgradePlan", "id": "plan-1", "target": target}
+
+    def submit(self, plan_id, *, identity, confirmation):
+        self.submission = (plan_id, identity.source, confirmation)
+        return {"kind": "ProfileUpgradeOperation", "id": "upgrade-1", "state": "queued"}
+
+    def get(self, document_id):
+        return {"kind": "ProfileUpgradeOperation", "id": document_id, "state": "succeeded"}
+
+    def cancel(self, document_id):
+        return {"kind": "ProfileUpgradeOperation", "id": document_id, "state": "cancelling"}
+
 
 def request(app, path, method="GET", body=None, cookie=None):
     raw = json.dumps(body).encode() if body is not None else b""
@@ -85,6 +102,7 @@ class WebOperationTests(unittest.TestCase):
         )
         self.authorization = AuthorizationService(self.approval_store)
         self.adapter = Adapter()
+        self.profile_upgrades = ProfileUpgrades()
         registry = ComponentRegistry.load()
         self.engine = OperationEngine(
             registry,
@@ -104,6 +122,7 @@ class WebOperationTests(unittest.TestCase):
             self.authorization,
             lambda targets: {target: "running" for target in targets},
             recovery=self.recovery,
+            profile_upgrades=self.profile_upgrades,
         )
         self.app = DashboardApp(
             accounts={"operator": password_verifier("password", iterations=1)},
@@ -198,6 +217,26 @@ class WebOperationTests(unittest.TestCase):
                 {"backupId": "backup-" + "0" * 32, field: "protected"},
             )
             self.assertEqual(response["status"], "400 Bad Request")
+
+    def test_profile_upgrade_web_routes_preserve_strong_source_and_exact_plan(self):
+        planned = self.post(
+            "/api/v1alpha1/profile-upgrades/plans",
+            {"targetProfileId": "fortify-target"},
+        )
+        self.assertEqual(planned["status"], "200 OK")
+        submitted = self.post(
+            "/api/v1alpha1/profile-upgrades",
+            {"planId": "plan-1", "confirmation": "exact"},
+        )
+        self.assertEqual(submitted["status"], "202 Accepted")
+        self.assertEqual(
+            self.profile_upgrades.submission, ("plan-1", "web", "exact")
+        )
+        rejected = self.post(
+            "/api/v1alpha1/profile-upgrades/plans",
+            {"targetProfileId": "fortify-target", "command": "unsafe"},
+        )
+        self.assertEqual(rejected["status"], "400 Bad Request")
 
     def test_success_and_refresh_return_progress_health_and_sanitized_events(self):
         created = self.post(

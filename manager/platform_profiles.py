@@ -91,6 +91,22 @@ class PlatformProfile:
             != ("validated" if self.maturity in {"validated", "recommended"} else "experimental")
         ):
             raise PlatformProfileError("platform profile evidence does not match profile")
+        transitions = self.document["upgrade"].get("transitions", [])
+        transition_sources = [item["source"] for item in transitions]
+        if transitions and (
+            set(transition_sources) != set(self.document["upgrade"]["allowedSources"])
+            or len(transition_sources) != len(set(transition_sources))
+        ):
+            raise PlatformProfileError(
+                "allowed upgrade sources require one explicit transition each"
+            )
+        if transitions and (
+            self.document["evidence"]["level"] != "licensed-live"
+            or evidence["checks"].get("upgrade") != "passed"
+        ):
+            raise PlatformProfileError(
+                "declared upgrade transitions require passed licensed-live evidence"
+            )
 
     def public_document(self) -> dict[str, Any]:
         """Return the safe API/CLI/UI contract without local paths or claims."""

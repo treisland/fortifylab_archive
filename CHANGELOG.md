@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add profile-aware, evidence-digest-bound upgrade plans with tested-transition,
+  capacity, health, dependency, backup, downtime, timeout, migration,
+  strong-confirmation, Telegram-exclusion, ordered verification, interruption,
+  and rollback-boundary gates.
 - Add durable, profile-bound component-aware backup and restore planning,
   strong restore confirmation, protected helper isolation, sanitized recovery
   evidence, and application-level verification.

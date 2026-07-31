@@ -52,7 +52,37 @@
       "type": "object", "additionalProperties": false, "required": ["allowedSources", "forwardMigration"],
       "properties": {
         "allowedSources": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}},
-        "forwardMigration": {"type": "string", "minLength": 1}
+        "forwardMigration": {"type": "string", "minLength": 1},
+        "transitions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["source", "timeoutSeconds", "expectedDowntime", "backupRequired", "migrations", "recovery"],
+            "properties": {
+              "source": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+              "timeoutSeconds": {"type": "integer", "minimum": 60, "maximum": 14400},
+              "expectedDowntime": {"type": "string", "minLength": 1},
+              "backupRequired": {"type": "boolean"},
+              "migrations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["component", "kind", "rollback"],
+                  "properties": {
+                    "component": {"type": "string", "pattern": "^[a-z][a-z0-9-]{0,63}$"},
+                    "kind": {"enum": ["database", "application"]},
+                    "rollback": {"enum": ["reversible", "restore-required", "forward-only"]},
+                    "summary": {"type": "string", "minLength": 1}
+                  }
+                }
+              },
+              "recovery": {"type": "string", "minLength": 1}
+            }
+          }
+        }
       }
     },
     "replacement": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}

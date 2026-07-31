@@ -169,6 +169,15 @@ interpretation are documented in
 [Deployment preflight](deployment-preflight.md); its schema is
 [`registry/schemas/preflight-report.schema.json`](../registry/schemas/preflight-report.schema.json).
 
+Profile transition planning uses
+`POST /api/v1alpha1/profile-upgrades/plans`; submission and status use
+`POST /api/v1alpha1/profile-upgrades` and
+`GET /api/v1alpha1/profile-upgrades/{operationId}`. The corresponding local
+CLI commands are `upgrade-plan`, `upgrade-profile`, and `upgrade-status`.
+These routes fail closed unless the manager composition supplies the dedicated
+service. See [Profile-aware upgrades](operations/profile-upgrades.md) for the
+evidence, confirmation, Telegram, verification, and recovery contract.
+
 Recent sanitized manager records are exposed at
 `GET /api/v1alpha1/history`. The response is an `OperationHistory` document
 with at most 20 newest-first items. Each item is limited to `id`, `kind`,
