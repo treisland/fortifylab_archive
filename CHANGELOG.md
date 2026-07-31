@@ -20,6 +20,10 @@ platform profiles.
 
 ### Added
 
+- Verified clean-install orchestration for the complete selected profile with
+  fresh fail-closed preflight, workload/PVC collision detection, dependency
+  ordering, durable resume evidence, functional completion gates, and shared
+  Web/API/CLI/history/Telegram-visible progress.
 - A bounded local MicroK8s lifecycle adapter that revalidates exact
   registry-declared actions, fixes namespace/root/environment, cooperatively
   cancels and times out child actions, discards action output, verifies only

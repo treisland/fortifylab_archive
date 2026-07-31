@@ -106,6 +106,12 @@ class OperationClient:
     def profile(self) -> dict[str, Any]:
         return self._request("GET", "/api/v1alpha1/platform-profile")
 
+    def clean_install_plan(self) -> dict[str, Any]:
+        return self._request("POST", "/api/v1alpha1/clean-install/plan", {})
+
+    def clean_install(self) -> dict[str, Any]:
+        return self._request("POST", "/api/v1alpha1/clean-install", {})
+
     def cancel(self, operation_id: str) -> dict[str, Any]:
         return self._request(
             "POST", f"/api/v1alpha1/operations/{operation_id}/cancel", {}
@@ -227,6 +233,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("profile", help="show the selected tested platform profile")
+    clean_plan = subparsers.add_parser(
+        "clean-install-plan", help="run read-only clean-install gates"
+    )
+    clean = subparsers.add_parser(
+        "clean-install", help="install the complete selected platform profile"
+    )
+    clean.add_argument("--wait", type=float, metavar="SECONDS")
     for name in ("plan", "submit", "approval-request"):
         command = subparsers.add_parser(name)
         command.add_argument("operation")
@@ -267,6 +280,12 @@ def main(argv: list[str] | None = None) -> int:
         password = ""
         if args.command == "profile":
             result = client.profile()
+        elif args.command == "clean-install-plan":
+            result = client.clean_install_plan()
+        elif args.command == "clean-install":
+            result = client.clean_install()
+            if args.wait is not None:
+                result = client.wait(result["id"], timeout=args.wait)
         elif args.command == "plan":
             result = client.plan(args.operation, args.components)
         elif args.command == "approval-request":

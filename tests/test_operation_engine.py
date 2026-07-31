@@ -18,11 +18,13 @@ from manager.authorization import (
 )
 from manager.operation_engine import (
     DependencyBlocked,
+    ExistingInstallation,
     InvalidOperation,
     OperationConflict,
     OperationEngine,
     OperationError,
     OperationStore,
+    PreflightBlocked,
     StepCancelled,
     StepTimedOut,
 )
@@ -189,6 +191,71 @@ class OperationEngineTests(unittest.TestCase):
         retried = self.engine.retry(failed["id"], actor="local:retry")
         self.assertEqual(retried["state"], "succeeded")
         self.assertEqual(retried["retryOf"], failed["id"])
+
+    def test_clean_install_gates_existing_data_and_preflight_before_execution(self) -> None:
+        footprint = {item: "absent" for item in self.registry.component_ids}
+        ready = {"ready": True, "items": []}
+        engine = OperationEngine(
+            self.registry, self.store, self.adapter, self.verifier,
+            preflight_provider=lambda: ready,
+            footprint_provider=lambda components: {
+                item: footprint[item] for item in components
+            },
+        )
+        plan = engine.clean_install_plan()
+        self.assertTrue(plan["ready"])
+        self.assertEqual(
+            plan["components"], list(self.registry.dependency_order())
+        )
+
+        ready["ready"] = False
+        with self.assertRaises(PreflightBlocked):
+            engine.submit_clean_install_async(actor="local:test")
+        self.assertEqual(self.adapter.calls, [])
+
+        ready["ready"] = True
+        footprint["mysql"] = "present"
+        with self.assertRaises(ExistingInstallation):
+            engine.submit_clean_install_async(actor="local:test")
+        self.assertEqual(self.adapter.calls, [])
+
+    def test_clean_install_retry_resumes_after_verified_steps(self) -> None:
+        footprint = {item: "absent" for item in self.registry.component_ids}
+        engine = OperationEngine(
+            self.registry, self.store, self.adapter, self.verifier,
+            preflight_provider=lambda: {"ready": True, "items": []},
+            footprint_provider=lambda components: {
+                item: footprint[item] for item in components
+            },
+        )
+        self.verifier.fail_component = "ssc"
+        failed = engine.submit_clean_install_async(actor="local:test")
+        worker_deadline = threading.Event()
+        for _ in range(1000):
+            failed = self.store.get(failed["id"])
+            if failed["state"] in {"failed", "succeeded"}:
+                break
+            worker_deadline.wait(0.001)
+        self.assertEqual(failed["state"], "failed")
+        mysql_calls = self.adapter.calls.count(("mysql", "install"))
+
+        self.verifier.fail_component = None
+        resumed = engine.retry_async(failed["id"], actor="local:retry")
+        for _ in range(1000):
+            resumed = self.store.get(resumed["id"])
+            if resumed["state"] in {"failed", "succeeded"}:
+                break
+            worker_deadline.wait(0.001)
+        self.assertEqual(resumed["state"], "succeeded")
+        self.assertEqual(
+            self.adapter.calls.count(("mysql", "install")), mysql_calls
+        )
+        self.assertTrue(
+            any(
+                event["type"] == "step-resumed"
+                for event in self.store.events(resumed["id"])
+            )
+        )
 
     def test_concurrent_conflicts_are_rejected(self) -> None:
         self.adapter.block = True

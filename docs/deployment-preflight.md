@@ -24,6 +24,30 @@ use `Cache-Control: no-store`, and every request makes fresh adapter calls.
 Repeating the request after remediation therefore reports recovery without
 retaining a previous failure.
 
+## Clean-install gate
+
+The authenticated clean-install plan (`POST
+/api/v1alpha1/clean-install/plan` with `{}`) embeds a fresh copy of this
+report and adds a metadata-only scan for every registry-declared workload and
+retained PVC. `ready` is false if either evidence source is incomplete, any
+preflight item is a blocker, or an existing footprint is found. Submission
+repeats both checks immediately before durable work is queued.
+
+Do not delete a reported footprint merely to satisfy this gate. Determine
+whether it is an active installation or retained lab data and use the
+documented uninstall and separately approved data-deletion workflows. Only a
+retry of the original interrupted clean-install operation may resume partial
+work; it uses durable successful-step evidence and never treats arbitrary
+existing resources as resumable ownership.
+
+Completion evidence is stronger than pod readiness. Each dependency-ordered
+component install must pass every verification check declared in the
+component registry, including application endpoints, authenticated database
+queries, connectivity, and registration checks where applicable. A fresh
+single-node run is live evidence only when its sanitized operation document
+is successful and the documented HTTPS endpoints are independently
+accessible. Repository validation does not make that claim.
+
 The manager core passes only typed, allow-listed check IDs and safe logical
 targets to its runtime adapter. The adapter returns only a typed state; all
 display text is fixed by the manager. License contents, license paths, passwords,

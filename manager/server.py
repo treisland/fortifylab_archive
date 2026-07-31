@@ -28,6 +28,7 @@ from manager.microk8s_lifecycle import (
     RegistryHealthVerifier,
 )
 from manager.operation_engine import OperationEngine, OperationStore
+from manager.preflight import PreflightEngine
 from manager.web_operations import WebOperationAPI
 
 
@@ -104,6 +105,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     cluster = config.get("cluster", {})
     observer = None
     operation_api = None
+    operation_store = None
     if cluster:
         try:
             functional_probe = (
@@ -162,6 +164,10 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
             RegistryHealthVerifier(registry, observer),
             authorization=authorization,
             state_provider=component_states,
+            preflight_provider=lambda: PreflightEngine(
+                registry, observer
+            ).document(),
+            footprint_provider=getattr(observer, "installation_footprint", None),
         )
         operation_api = WebOperationAPI(
             engine, operation_store, authorization, component_states
@@ -172,7 +178,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         observer=observer,
         health_probe=observer,
         preflight_probe=observer,
-        history_reader=StoreHistoryReader(store),
+        history_reader=StoreHistoryReader(store, operation_store),
     )
     return DashboardApp(
         accounts=accounts,
