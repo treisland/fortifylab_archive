@@ -86,7 +86,9 @@ class LiveUpgradeAcceptanceTests(unittest.TestCase):
             "timeout --foreground", "trap cleanup", "ROLLBACK_REQUIRED",
             "rbac-preflight", "diagnose-cluster", "config-diagnose",
             "/api/v1alpha1/components", "for endpoint in components health preflight",
-            "no-public-backend", "getent ahosts",
+            "/api/v1alpha1/history", "HISTORY_VIEW_AFTER", "getent ahosts",
+            "resolved == {expected}", "fortify-manager-host", "ENDPOINT_ADDRESSES",
+            "no-public-backend",
         ):
             self.assertIn(contract, script)
         syntax = subprocess.run(["bash", "-n", str(ROOT / "scripts/live-manager-upgrade-acceptance.sh")], capture_output=True, text=True)

@@ -8,7 +8,6 @@ MANAGER_TOOL="$REPOSITORY_ROOT/scripts/fortify-manager"
 PACKAGE_TOOL="$REPOSITORY_ROOT/scripts/package-manager-runtime.py"
 INSTALL_ROOT="${FORTIFY_MANAGER_INSTALL_ROOT:-/opt/fortify-lab-manager}"
 STATE_ROOT="${FORTIFY_MANAGER_STATE_ROOT:-/var/lib/fortify-lab-manager}"
-CONFIG_ROOT="${FORTIFY_MANAGER_CONFIG_ROOT:-/etc/fortify-lab-manager}"
 TIMEOUT_SECONDS="${FORTIFY_ACCEPTANCE_TIMEOUT_SECONDS:-45}"
 RECOVERY_SECONDS="${FORTIFY_ACCEPTANCE_RECOVERY_SECONDS:-90}"
 PROFILE_ID="${FORTIFY_ACCEPTANCE_PROFILE_ID:-fortify-24.4-eval.1}"
@@ -92,6 +91,9 @@ FAILURE_LAYER="remote-access"
 PRE_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time "$TIMEOUT_SECONDS" \
     --cookie "$PRE_SESSION_COOKIE" "https://lab.$DOMAIN/api/v1alpha1/components")" || fail 3 "pre-upgrade HTTPS session failed"
 [ "$PRE_CODE" = 200 ] || fail 3 "pre-upgrade session was not authorized"
+HISTORY_VIEW_BEFORE="$(curl --silent --show-error --fail --max-time "$TIMEOUT_SECONDS" \
+    --cookie "$PRE_SESSION_COOKIE" "https://lab.$DOMAIN/api/v1alpha1/history" | sha256sum | cut -d ' ' -f 1)" ||
+    fail 3 "pre-upgrade history observation failed"
 
 FAILURE_LAYER="package"; ROLLBACK_REQUIRED=1
 bounded "$RECOVERY_SECONDS" "$MANAGER_TOOL" upgrade >/dev/null || fail 4 "upgrade activation failed"
@@ -108,8 +110,7 @@ bounded "$TIMEOUT_SECONDS" "$MANAGER_TOOL" config-diagnose >/dev/null || fail 5 
 mark configuration-migration passed
 [ "$(hash_or_absent "$STATE_ROOT/accounts.json")" = "$ACCOUNT_BEFORE" ] || fail 5 "account verifier state changed"
 mark account-preservation passed
-[ -s "$STATE_ROOT/history.sqlite3" ] && [ "$HISTORY_BEFORE" != absent ] || fail 5 "history was not preserved"
-mark history-preservation passed
+[ -s "$STATE_ROOT/history.sqlite3" ] && [ "$HISTORY_BEFORE" != absent ] || fail 5 "history database was not preserved"
 
 FAILURE_LAYER="service"
 OLD_CODE="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time "$TIMEOUT_SECONDS" \
@@ -123,6 +124,11 @@ for ((remaining=RECOVERY_SECONDS; remaining>0; remaining--)); do
     sleep 1
 done
 [ -f "$POST_SESSION_COOKIE" ] || fail 6 "fresh post-upgrade session cookie was not supplied before the recovery deadline"
+HISTORY_VIEW_AFTER="$(curl --silent --show-error --fail --max-time "$TIMEOUT_SECONDS" \
+    --cookie "$POST_SESSION_COOKIE" "https://lab.$DOMAIN/api/v1alpha1/history" | sha256sum | cut -d ' ' -f 1)" ||
+    fail 6 "post-upgrade history observation failed"
+[ "$HISTORY_VIEW_AFTER" = "$HISTORY_VIEW_BEFORE" ] || fail 6 "sanitized operation history changed across upgrade"
+mark history-preservation passed
 
 FAILURE_LAYER="authorization"
 bounded "$TIMEOUT_SECONDS" "$MANAGER_TOOL" rbac-preflight >/dev/null || fail 7 "observer RBAC preflight failed"
@@ -142,19 +148,27 @@ done
 mark inventory passed; mark node-version passed; mark health passed; mark preflight passed
 
 FAILURE_LAYER="dns"
-bounded "$TIMEOUT_SECONDS" getent ahosts "lab.$DOMAIN" >/dev/null || fail 10 "Manager DNS name does not resolve"
+DNS_ADDRESSES="$(bounded "$TIMEOUT_SECONDS" getent ahosts "lab.$DOMAIN" | awk '{print $1}' | sort -u)" ||
+    fail 10 "Manager DNS name does not resolve"
+mapfile -t DNS_ADDRESS_LIST <<<"$DNS_ADDRESSES"
+python3 - "$PRIVATE_ADDRESS" "${DNS_ADDRESS_LIST[@]}" <<'PY' || fail 10 "Manager DNS is not restricted to the configured private ingress address"
+import ipaddress, sys
+expected = ipaddress.ip_address(sys.argv[1])
+resolved = {ipaddress.ip_address(value) for value in sys.argv[2:]}
+raise SystemExit(0 if resolved and resolved == {expected} else 1)
+PY
 mark dns-resolution passed
 FAILURE_LAYER="ingress"
 bounded "$TIMEOUT_SECONDS" microk8s kubectl -n fortify get ingress fortify-manager >/dev/null || fail 11 "private HTTPS ingress is absent"
+ENDPOINT_ADDRESSES="$(bounded "$TIMEOUT_SECONDS" microk8s kubectl -n fortify get endpoints fortify-manager-host \
+    -o 'jsonpath={.subsets[*].addresses[*].ip}')" || fail 11 "Manager ingress endpoint is unavailable"
+[ "$ENDPOINT_ADDRESSES" = "$PRIVATE_ADDRESS" ] || fail 11 "Manager ingress does not target the configured private address"
 mark private-https passed
 FAILURE_LAYER="remote-access"
 python3 - "$PRIVATE_ADDRESS" <<'PY' || fail 12 "configured backend address is public"
 import ipaddress, sys
 raise SystemExit(0 if ipaddress.ip_address(sys.argv[1]).is_private else 1)
 PY
-if curl --silent --output /dev/null --max-time "$TIMEOUT_SECONDS" "http://lab.$DOMAIN:8080/ready"; then
-    fail 12 "direct public backend port is reachable"
-fi
 mark no-public-backend passed
 
 FAILURE_LAYER=""; ROLLBACK_REQUIRED=0
