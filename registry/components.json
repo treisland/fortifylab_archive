@@ -8,6 +8,7 @@
     {
       "id": "mysql",
       "displayName": "MySQL",
+      "helmRelease": "mysql",
       "web": null,
       "version": {"chart": "9.19.0", "images": {"database": "8.0.36-debian-11-r2"}},
       "dependencies": [],
@@ -47,6 +48,7 @@
     {
       "id": "ssc",
       "displayName": "Software Security Center",
+      "helmRelease": "ssc",
       "web": {"hostLabel": "ssc"},
       "version": {"chart": "24.4.2-1", "images": {"webapp": "24.4.2.0009"}},
       "dependencies": ["mysql"],
@@ -86,6 +88,7 @@
     {
       "id": "scancentral-sast",
       "displayName": "ScanCentral SAST",
+      "helmRelease": "scancentral-sast",
       "web": {"hostLabel": "sast"},
       "version": {"chart": "24.4.0-2", "images": {"controller": "24.4.0.0060", "sensor": "24.4.1"}},
       "dependencies": ["ssc"],
@@ -133,6 +136,7 @@
     {
       "id": "postgresql",
       "displayName": "PostgreSQL",
+      "helmRelease": "postgresql",
       "web": null,
       "version": {"chart": "18.6.2", "images": {"database": "17.6.0-debian-12-r4"}},
       "dependencies": [],
@@ -173,6 +177,7 @@
     {
       "id": "lim",
       "displayName": "License and Infrastructure Manager",
+      "helmRelease": "lim",
       "web": {"hostLabel": "lim"},
       "version": {"chart": "24.4.0-3", "images": {"server": "chart-24.4.0-3-default"}},
       "dependencies": [],
@@ -214,6 +219,7 @@
     {
       "id": "scancentral-dast-core",
       "displayName": "ScanCentral DAST Core",
+      "helmRelease": "sdast-core",
       "web": {"hostLabel": "dast"},
       "version": {"chart": "24.4.0-2", "images": {"api": "24.4.ubi.9", "config": "24.4.ubi.9", "connect": "24.4.ubi.9", "global-service": "24.4.ubi.9", "two-factor": "24.4.ubi.9"}},
       "dependencies": ["postgresql", "lim", "ssc"],
@@ -269,6 +275,7 @@
     {
       "id": "scancentral-dast-scanner",
       "displayName": "ScanCentral DAST Scanner",
+      "helmRelease": "sdast-scanner",
       "web": null,
       "version": {"chart": "24.4.0-2", "images": {"scanner": "24.4.ubi.9", "wise": "24.4.ubi.9"}},
       "dependencies": ["scancentral-dast-core"],

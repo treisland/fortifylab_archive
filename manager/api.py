@@ -7,6 +7,7 @@ from http import HTTPStatus
 from typing import Any, Callable, Iterable, Protocol
 
 from manager.component_inventory import ClusterObserver, ComponentInventory
+from manager.helm_release_evidence import ProtectedHelmSnapshot
 from manager.availability import AvailabilityMonitor
 from manager.component_registry import ComponentRegistry, RegistryError
 from manager.health import HealthEngine, HealthProbe
@@ -45,6 +46,7 @@ class ManagerAPI:
         preflight_capability_provider: Callable[[], dict[str, Any]] | None = None,
         history_reader: HistoryReader | None = None,
         availability_monitor: AvailabilityMonitor | None = None,
+        helm_evidence: ProtectedHelmSnapshot | None = None,
     ) -> None:
         self._registry_loader = registry_loader
         self._observer = observer
@@ -53,6 +55,7 @@ class ManagerAPI:
         self._preflight_capability_provider = preflight_capability_provider
         self._history_reader = history_reader or EmptyHistoryReader()
         self._availability_monitor = availability_monitor
+        self._helm_evidence = helm_evidence
 
     def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         method = environ.get("REQUEST_METHOD", "GET").upper()
@@ -102,7 +105,9 @@ class ManagerAPI:
             elif path == PROFILE_PATH:
                 document = registry.profile.public_document()
             elif path == COMPONENTS_PATH:
-                document = ComponentInventory(registry, self._observer).document()
+                document = ComponentInventory(
+                    registry, self._observer, self._helm_evidence
+                ).document()
         except (RegistryError, RuntimeError, ValueError, TypeError):
             return self._response(
                 start_response,

@@ -413,6 +413,12 @@ function renderComponentCards() {
       item.identity?.id, item.identity?.displayName, item.version?.chart,
       item.profile?.productVersion,
       ...Object.values(item.version?.images || {}),
+      ...(item.observedDeployment?.workloads || []).flatMap(workload => [
+        workload.workloadMetadata?.declaredReleaseName,
+        workload.workloadMetadata?.chartVersion,
+        workload.workloadMetadata?.appVersion,
+        ...(workload.runningImages || []).flatMap(image => [image.name, image.version])
+      ]),
       ...(item.workloads || []).flatMap(workload => [workload.id, workload.name, workload.role])
     ].join(" ").toLowerCase();
     return (!query || searchable.includes(query))
@@ -442,7 +448,8 @@ function renderComponentCards() {
       heading,
       documentNode("span", "component-meta", `${id} · observed ${runtime}`),
       documentNode("span", "component-meta", componentSummary(id)),
-      documentNode("span", "version", `Product ${item.profile?.productVersion || "not declared"} · chart ${item.version?.chart || "not declared"}`),
+      documentNode("span", "version", `Desired ${item.profile?.productVersion || "not declared"} / chart ${item.version?.chart || "not declared"}`),
+      documentNode("span", "version", `Observed deployment: ${item.observedDeployment?.state || "unavailable"}`),
       documentNode("span", "dependencies", `Depends on: ${(item.dependencies || []).join(", ") || "Lab foundation"}`)
     );
     if (componentHasActiveOperation(item)) button.append(documentNode("span", "active-operation", "Active operation"));
@@ -531,7 +538,25 @@ function refreshInspector() {
       ["Product", item.profile?.productVersion || "not reported"],
       ["Chart", item.version?.chart || "not reported"],
       ["Images", Object.entries(item.version?.images || {}).map(([name, version]) => `${name}: ${version}`).join(" · ") || "not reported"],
-      ["Update status", item.updateAvailable === true ? "Update available" : "No observed image/version comparison is available"]
+      ["Comparison", item.observedDeployment?.state || "unavailable"]
+    ]),
+    detailSection("Installed release (independent evidence)", [
+      ["State", item.observedDeployment?.installedRelease?.state || "unavailable"],
+      ["Reason", item.observedDeployment?.installedRelease?.reason || "Independent release evidence unavailable"],
+      ["Latest", item.observedDeployment?.installedRelease?.latest
+        ? `${item.observedDeployment.installedRelease.latest.name} revision ${item.observedDeployment.installedRelease.latest.revision} · ${item.observedDeployment.installedRelease.latest.status} · chart ${item.observedDeployment.installedRelease.latest.chartVersion} · app ${item.observedDeployment.installedRelease.latest.appVersion}`
+        : "No installed release observed"],
+      ["History", (item.observedDeployment?.installedRelease?.revisions || []).map(revision => `r${revision.revision} ${revision.status}`).join(", ") || "No retained revision metadata"]
+    ]),
+    detailSection("Workload-declared metadata and running versions", [
+      ["Evidence source", item.observedDeployment?.comparisonSource === "workload-declared-metadata" ? "Allow-listed workload metadata; not proof of an installed Helm release" : "Unavailable"],
+      ["Comparison", item.observedDeployment?.state || "unavailable"],
+      ...((item.observedDeployment?.workloads || []).map(workload => [
+        workload.id,
+        workload.state !== "present"
+          ? workload.state
+          : `declared release ${workload.workloadMetadata?.declaredReleaseName || "unavailable"} · declared chart ${workload.workloadMetadata?.chartVersion || "unavailable"} · declared app ${workload.workloadMetadata?.appVersion || "unavailable"} · running ${(workload.runningImages || []).map(image => `${image.name}: ${image.version}`).join(", ") || "unavailable"}`
+      ]))
     ]),
     detailSection("Ingress and storage (desired metadata)", [
       ["Ingress", (item.ingress || []).map(value => `${value.protocol.toUpperCase()} ${value.id}`).join(", ") || "None declared"],

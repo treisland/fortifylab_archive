@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import ssl
 import time
 import urllib.error
@@ -90,7 +91,7 @@ class KubernetesObserver:
         for resource in resources:
             self._validate_resource(resource)
             try:
-                self._get(
+                document = self._get(
                     _WORKLOAD_PATHS[resource.kind].format(
                         namespace=self._namespace,
                         name=urllib.parse.quote(resource.name, safe=""),
@@ -104,6 +105,54 @@ class KubernetesObserver:
                 else:
                     error.close()
                     raise ClusterUnavailable("cluster observation failed") from error
+            release_name = chart_version = app_version = None
+            running_images: tuple[tuple[str, str], ...] = ()
+            if state == "present":
+                metadata = document.get("metadata", {})
+                labels = metadata.get("labels", {}) if isinstance(metadata, dict) else {}
+                annotations = (
+                    metadata.get("annotations", {}) if isinstance(metadata, dict) else {}
+                )
+                if not isinstance(labels, dict):
+                    labels = {}
+                if not isinstance(annotations, dict):
+                    annotations = {}
+                release_name = self._safe_label(
+                    labels.get("app.kubernetes.io/instance")
+                    or annotations.get("meta.helm.sh/release-name")
+                )
+                chart = self._safe_label(labels.get("helm.sh/chart"))
+                chart_match = re.search(r"-(\d[0-9A-Za-z.+_-]*)$", chart or "")
+                chart_version = chart_match.group(1) if chart_match else None
+                app_version = self._safe_label(labels.get("app.kubernetes.io/version"))
+                containers = (
+                    document.get("spec", {})
+                    .get("template", {})
+                    .get("spec", {})
+                    .get("containers", [])
+                )
+                if isinstance(containers, list):
+                    running_images = tuple(
+                        sorted(
+                            {
+                                (name, version)
+                                for container in containers
+                                if isinstance(container, dict)
+                                for name in (self._safe_label(container.get("name")),)
+                                for version in (
+                                    self._safe_image_version(container.get("image")),
+                                )
+                                if name and version
+                            }
+                        )
+                    )
+                    if len(running_images) == 1:
+                        running_images = (
+                            (
+                                resource.resource_id.split("/", 1)[-1],
+                                running_images[0][1],
+                            ),
+                        )
             observations.append(
                 ResourceObservation(
                     resource.resource_id,
@@ -111,9 +160,37 @@ class KubernetesObserver:
                     resource.kind,
                     resource.name,
                     self._namespace,
+                    release_name,
+                    chart_version,
+                    app_version,
+                    running_images,
                 )
             )
         return tuple(observations)
+
+    @staticmethod
+    def _safe_label(value: Any) -> str | None:
+        if not isinstance(value, str) or not value or len(value) > 128:
+            return None
+        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
+        return value if set(value) <= allowed else None
+
+    @staticmethod
+    def _safe_image_version(image: Any) -> str | None:
+        """Return only a tag or digest; never disclose a registry/repository path."""
+        if not isinstance(image, str) or not image or len(image) > 512:
+            return None
+        leaf = image.rsplit("/", 1)[-1]
+        if "@" in leaf:
+            value = leaf.split("@", 1)[1]
+        elif ":" in leaf:
+            value = leaf.rsplit(":", 1)[1]
+        else:
+            return None
+        if not value or len(value) > 160:
+            return None
+        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-:+")
+        return value if set(value) <= allowed else None
 
     def evidence(self) -> ClusterEvidence:
         started = time.monotonic()
