@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import socket
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -254,6 +255,29 @@ class ManagerInstallationTests(unittest.TestCase):
             wrong_mode = digest(candidates[1])
             self.assertNotEqual(wrong_mode.returncode, 0)
             self.assertIn("mode is invalid", wrong_mode.stderr)
+
+            shutil.rmtree(candidates[1])
+            shutil.copytree(candidates[0], candidates[1])
+            candidates[1].chmod(0o700)
+            wrong_root_mode = digest(candidates[1])
+            self.assertNotEqual(wrong_root_mode.returncode, 0)
+            self.assertIn("root mode is invalid", wrong_root_mode.stderr)
+
+    def test_runtime_staging_normalizes_root_mode_despite_umask(self):
+        with tempfile.TemporaryDirectory() as directory:
+            candidate = Path(directory) / "candidate"
+            staged = subprocess.run(
+                [
+                    "bash", "-c", "umask 077; exec python3 \"$@\"", "stage",
+                    "scripts/package-manager-runtime.py", "stage", "--source",
+                    str(ROOT), "--target", str(candidate),
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(staged.returncode, 0, staged.stderr)
+            self.assertEqual(stat.S_IMODE(candidate.stat().st_mode), 0o755)
 
     def test_immutable_release_reinstall_collision_and_atomic_rollback(self):
         with tempfile.TemporaryDirectory() as directory:

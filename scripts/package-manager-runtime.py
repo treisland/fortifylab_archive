@@ -116,6 +116,7 @@ def stage(source: Path, target: Path) -> None:
             os.chmod(launcher, 0o755)
         for directory in (path for path in target.rglob("*") if path.is_dir()):
             os.chmod(directory, 0o755)
+        os.chmod(target, 0o755)
         files = sorted(
             str(path.relative_to(target))
             for path in target.rglob("*")
@@ -135,6 +136,8 @@ def stage(source: Path, target: Path) -> None:
 
 def validate(root: Path) -> None:
     root = root.resolve()
+    if not root.is_dir() or stat.S_IMODE(root.stat().st_mode) != 0o755:
+        raise PackagingError("staged runtime root mode is invalid")
     manifest = _load_manifest(root)
     try:
         inventory = json.loads((root / INVENTORY).read_text(encoding="utf-8"))
