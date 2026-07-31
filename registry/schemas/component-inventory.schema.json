@@ -30,7 +30,12 @@
         "required": [
           "identity",
           "version",
+          "profile",
           "dependencies",
+          "workloads",
+          "supportedOperations",
+          "storage",
+          "ingress",
           "desiredState",
           "observedResources"
         ],
@@ -56,10 +61,76 @@
               }
             }
           },
+          "profile": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "maturity", "productVersion"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"},
+              "maturity": {"enum": ["experimental", "validated", "recommended", "deprecated", "unsupported"]},
+              "productVersion": {"type": "string", "minLength": 1}
+            }
+          },
           "dependencies": {
             "type": "array",
             "uniqueItems": true,
             "items": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"}
+          },
+          "workloads": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "kind", "name", "role", "scalable"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+                "kind": {"enum": ["StatefulSet", "Deployment"]},
+                "name": {"type": "string", "minLength": 1},
+                "role": {"enum": ["database", "application", "controller", "worker", "license-server"]},
+                "scalable": {"type": "boolean"}
+              }
+            }
+          },
+          "supportedOperations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "disruptive", "destructive", "idempotent"],
+              "properties": {
+                "id": {"enum": ["install", "start", "stop", "scale", "uninstall", "delete-data"]},
+                "disruptive": {"type": "boolean"},
+                "destructive": {"type": "boolean"},
+                "idempotent": {"type": "boolean"}
+              }
+            }
+          },
+          "storage": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "purpose", "retainedOnUninstall"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+                "purpose": {"enum": ["database", "application-data", "controller-data"]},
+                "retainedOnUninstall": {"type": "boolean"}
+              }
+            }
+          },
+          "ingress": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "protocol"],
+              "properties": {
+                "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+                "protocol": {"const": "https"}
+              }
+            }
           },
           "desiredState": {
             "type": "object",

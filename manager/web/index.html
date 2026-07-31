@@ -44,12 +44,30 @@
       <div id="capabilities-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading capability evidence…</div>
       <div id="capability-list" class="capability-list" aria-live="polite"></div>
     </section>
-    <section class="panel">
-      <div class="section-heading"><div><p class="eyebrow">SYSTEM MAP</p><h2>Dependencies and versions</h2></div><p class="muted">Upstream services appear before their consumers.</p></div>
+    <section class="panel component-workspace">
+      <div class="section-heading"><div><p class="eyebrow">COMPONENT EXPLORER</p><h2>Dependencies and versions</h2></div><p class="muted">Select a card to inspect it. Upstream services appear before their consumers.</p></div>
+      <form id="component-filters" class="component-filters" role="search">
+        <label for="component-search">Search components</label>
+        <input id="component-search" type="search" autocomplete="off" placeholder="Name, ID, workload, or version">
+        <label for="health-filter">Health</label>
+        <select id="health-filter"><option value="">All health</option><option>healthy</option><option>degraded</option><option>unhealthy</option><option>blocked</option><option>unknown</option><option>stale</option></select>
+        <label for="state-filter">State</label>
+        <select id="state-filter"><option value="">All states</option><option>present</option><option>partial</option><option>absent</option><option>unknown</option></select>
+        <label class="filter-check"><input id="updates-filter" type="checkbox"> Updates</label>
+        <label class="filter-check"><input id="operations-filter" type="checkbox"> Active operations</label>
+        <button id="clear-component-filters" class="ghost" type="button">Clear</button>
+      </form>
       <div id="components-panel-state" class="panel-state loading" role="status" aria-live="polite">Loading component inventory…</div>
       <div id="dependency-graph" class="graph" aria-live="polite"></div>
-      <p id="inventory-empty" class="empty" hidden>No managed components are registered.</p>
+      <p id="inventory-empty" class="empty" hidden>No managed components match the current view.</p>
     </section>
+    <dialog id="component-inspector" class="component-inspector" aria-labelledby="inspector-title">
+      <div class="inspector-heading">
+        <div><p class="eyebrow">COMPONENT INSPECTOR</p><h2 id="inspector-title">Component</h2><p id="inspector-subtitle" class="muted"></p></div>
+        <button id="close-component-inspector" class="ghost inspector-close" type="button" aria-label="Close component inspector">Close</button>
+      </div>
+      <div id="inspector-content"></div>
+    </dialog>
     <section class="two-column">
       <article class="panel">
         <div class="section-heading"><div><p class="eyebrow">ROOT CAUSE</p><h2>Health evidence</h2></div></div>

@@ -35,6 +35,8 @@ let refreshGeneration = 0;
 let sessionExpired = false;
 let lifecycleCapability = null;
 let capabilityExpiresAt = 0;
+let selectedComponentId = null;
+let componentOpener = null;
 const panelDocuments = new Map();
 const activeReadControllers = new Set();
 
@@ -158,21 +160,7 @@ function renderInventory(document) {
       ? "Observer adapter disconnected · evidence unavailable"
       : `${observation.node || "Node not reported"} · Kubernetes ${observation.kubernetesVersion || "version not reported"} · evidence ${formatAge(observation.ageSeconds)}`
   );
-  const graph = byId("dependency-graph");
-  graph.replaceChildren();
-  for (const item of items) {
-    const card = documentNode("article", "component-card");
-    const heading = documentNode("div", "component-title");
-    heading.append(documentNode("strong", "", item.identity?.displayName), status(
-      disconnected ? "unknown" : ((item.observedResources || []).every(resource => resource.state === "present") ? "healthy" : "stopped")
-    ));
-    const versions = Object.entries(item.version?.images || {}).map(([name, version]) => `${name}: ${version}`).join(" · ");
-    card.append(heading, documentNode("p", "version", versions || item.version?.chart || "Version not declared"));
-    const dependencies = (item.dependencies || []).join(", ") || "Lab foundation";
-    card.append(documentNode("p", "dependencies", `Depends on: ${dependencies}`));
-    graph.append(card);
-  }
-  byId("inventory-empty").hidden = items.length !== 0;
+  renderComponentCards();
   panelState(
     "components",
     items.length ? (disconnected ? "unavailable" : "available") : "empty",
@@ -190,6 +178,8 @@ function renderInventory(document) {
     option.selected = selected.has(option.value);
     choices.append(option);
   }
+  const linked = new URLSearchParams(window.location.search).get("component");
+  if (linked && items.some(item => item.identity?.id === linked)) selectComponent(linked, null, false);
 }
 
 function renderHealth(document) {
@@ -243,6 +233,8 @@ function renderHealth(document) {
         : `${age.stale ? "Stale" : "Current"} · Evidence ${age.label}. ${degraded.length} degraded; ${blocked.length} blocked consumers.`,
     document.generatedAt
   );
+  renderComponentCards();
+  refreshInspector();
 }
 
 function renderPreflight(document) {
@@ -307,6 +299,179 @@ function renderHistory(document) {
     items.length ? `Current · Showing ${items.length} sanitized manager records.` : "Empty · No recent operations have been recorded. No action is required.",
     items[0]?.occurredAt
   );
+  renderComponentCards();
+  refreshInspector();
+}
+
+function componentHealth(componentId) {
+  const item = (panelDocuments.get("health")?.items || []).find(candidate => candidate.id === componentId);
+  return cleanState(item?.state || "unknown");
+}
+
+function componentRuntime(item) {
+  const states = (item.observedResources || []).map(resource => resource.state);
+  if (!states.length || states.every(value => value === "unknown")) return "unknown";
+  if (states.every(value => value === "present")) return "present";
+  if (states.every(value => value === "absent")) return "absent";
+  return "partial";
+}
+
+function componentHasActiveOperation(item) {
+  const terminal = new Set(["completed", "failed", "cancelled", "timed-out", "interrupted", "recorded"]);
+  const names = new Set([item.identity?.id, item.identity?.displayName]);
+  const operation = panelDocuments.get("operations");
+  if (
+    operation
+    && !operation.terminal
+    && (operation.components || []).includes(item.identity?.id)
+  ) return true;
+  return (panelDocuments.get("history")?.items || []).some(record =>
+    names.has(record.subject) && !terminal.has(String(record.state).toLowerCase())
+  );
+}
+
+function componentConsumers(componentId, items) {
+  return items.filter(item => (item.dependencies || []).includes(componentId));
+}
+
+function renderComponentCards() {
+  const inventory = panelDocuments.get("components");
+  if (!inventory) return;
+  const items = Array.isArray(inventory.items) ? inventory.items : [];
+  const query = byId("component-search").value.trim().toLowerCase();
+  const healthFilter = byId("health-filter").value;
+  const stateFilter = byId("state-filter").value;
+  const updatesOnly = byId("updates-filter").checked;
+  const operationsOnly = byId("operations-filter").checked;
+  const graph = byId("dependency-graph");
+  graph.replaceChildren();
+  const visible = items.filter(item => {
+    const searchable = [
+      item.identity?.id, item.identity?.displayName, item.version?.chart,
+      item.profile?.productVersion,
+      ...Object.values(item.version?.images || {}),
+      ...(item.workloads || []).flatMap(workload => [workload.id, workload.name, workload.role])
+    ].join(" ").toLowerCase();
+    return (!query || searchable.includes(query))
+      && (!healthFilter || componentHealth(item.identity?.id) === healthFilter)
+      && (!stateFilter || componentRuntime(item) === stateFilter)
+      && (!updatesOnly || item.updateAvailable === true)
+      && (!operationsOnly || componentHasActiveOperation(item));
+  });
+  for (const item of visible) {
+    const id = item.identity?.id;
+    const button = documentNode("button", "component-card");
+    button.type = "button";
+    button.dataset.componentId = id;
+    button.setAttribute("aria-pressed", String(selectedComponentId === id));
+    if (selectedComponentId === id) button.classList.add("selected");
+    const selected = items.find(candidate => candidate.identity?.id === selectedComponentId);
+    if ((selected?.dependencies || []).includes(id)) button.classList.add("dependency-highlight");
+    if (
+      selectedComponentId
+      && (item.dependencies || []).includes(selectedComponentId)
+      && ["blocked", "degraded", "unhealthy"].includes(componentHealth(id))
+    ) button.classList.add("blocked-consumer-highlight");
+    const heading = documentNode("span", "component-title");
+    heading.append(documentNode("strong", "", item.identity?.displayName), status(componentHealth(id)));
+    const runtime = componentRuntime(item);
+    button.append(
+      heading,
+      documentNode("span", "component-meta", `${id} · observed ${runtime}`),
+      documentNode("span", "version", `Product ${item.profile?.productVersion || "not declared"} · chart ${item.version?.chart || "not declared"}`),
+      documentNode("span", "dependencies", `Depends on: ${(item.dependencies || []).join(", ") || "Lab foundation"}`)
+    );
+    if (componentHasActiveOperation(item)) button.append(documentNode("span", "active-operation", "Active operation"));
+    button.addEventListener("click", () => selectComponent(id, button));
+    graph.append(button);
+  }
+  byId("inventory-empty").hidden = visible.length !== 0;
+}
+
+function detailSection(title, rows) {
+  const section = documentNode("section", "inspector-section");
+  section.append(documentNode("h3", "", title));
+  const list = documentNode("dl", "inspector-list");
+  for (const [term, value] of rows) {
+    list.append(documentNode("dt", "", term), documentNode("dd", "", value));
+  }
+  section.append(list);
+  return section;
+}
+
+function selectComponent(componentId, opener = null, updateUrl = true) {
+  const items = panelDocuments.get("components")?.items || [];
+  if (!items.some(item => item.identity?.id === componentId)) return;
+  selectedComponentId = componentId;
+  componentOpener = opener || Array.from(document.querySelectorAll("[data-component-id]"))
+    .find(button => button.dataset.componentId === componentId);
+  if (updateUrl) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("component", componentId);
+    history.replaceState(null, "", url);
+  }
+  renderComponentCards();
+  refreshInspector();
+  if (!byId("component-inspector").open) byId("component-inspector").showModal();
+  byId("close-component-inspector").focus();
+}
+
+function refreshInspector() {
+  if (!selectedComponentId) return;
+  const items = panelDocuments.get("components")?.items || [];
+  const item = items.find(candidate => candidate.identity?.id === selectedComponentId);
+  if (!item) return;
+  const health = (panelDocuments.get("health")?.items || []).find(candidate => candidate.id === selectedComponentId);
+  const consumers = componentConsumers(selectedComponentId, items);
+  const blockedConsumers = consumers.filter(candidate => {
+    const candidateHealth = (panelDocuments.get("health")?.items || []).find(value => value.id === candidate.identity?.id);
+    return candidateHealth?.blockedBy === selectedComponentId || candidateHealth?.state === "blocked";
+  });
+  const recent = (panelDocuments.get("history")?.items || []).filter(record =>
+    new Set([item.identity?.id, item.identity?.displayName]).has(record.subject)
+  ).slice(0, 5);
+  text(byId("inspector-title"), item.identity?.displayName);
+  text(byId("inspector-subtitle"), `${item.identity?.id} · desired configuration and sanitized observed state`);
+  const content = byId("inspector-content");
+  content.replaceChildren(
+    detailSection("Overview", [
+      ["Desired state", item.desiredState?.state || "not reported"],
+      ["Observed state", componentRuntime(item)],
+      ["Health", componentHealth(selectedComponentId)],
+      ["Evidence", panelDocuments.get("components")?.observation?.state === "available" ? "connected" : "disconnected"]
+    ]),
+    detailSection("Health and root cause", [
+      ["Root cause", health?.rootCause || "No root cause reported"],
+      ["Blocked by", health?.blockedBy || "No upstream block reported"],
+      ["Evidence", (health?.evidence || []).map(value => `${value.state}: ${value.summary}`).join(" · ") || "Partially observed or unavailable"]
+    ]),
+    detailSection("Dependencies and consumers", [
+      ["Upstream dependencies", (item.dependencies || []).join(", ") || "None"],
+      ["Downstream consumers", consumers.map(value => value.identity?.displayName).join(", ") || "None"],
+      ["Blocked consumers", blockedConsumers.map(value => value.identity?.displayName).join(", ") || "None"]
+    ]),
+    detailSection("Workloads (desired / observed)", (item.workloads || []).map(workload => {
+      const observed = (item.observedResources || []).find(resource => resource.id.endsWith(`/${workload.id}`));
+      return [workload.id, `${workload.kind} ${workload.name} · ${workload.role} · observed ${observed?.state || "unknown"}${workload.scalable ? " · scalable" : ""}`];
+    })),
+    detailSection("Profile and versions (desired)", [
+      ["Profile", `${item.profile?.id || "not reported"} · ${item.profile?.maturity || "unknown"}`],
+      ["Product", item.profile?.productVersion || "not reported"],
+      ["Chart", item.version?.chart || "not reported"],
+      ["Images", Object.entries(item.version?.images || {}).map(([name, version]) => `${name}: ${version}`).join(" · ") || "not reported"],
+      ["Update status", item.updateAvailable === true ? "Update available" : "No observed image/version comparison is available"]
+    ]),
+    detailSection("Ingress and storage (desired metadata)", [
+      ["Ingress", (item.ingress || []).map(value => `${value.protocol.toUpperCase()} ${value.id}`).join(", ") || "None declared"],
+      ["Storage", (item.storage || []).map(value => `${value.id}: ${value.purpose} · ${value.retainedOnUninstall ? "retained" : "not retained"} on uninstall`).join(" · ") || "None declared"]
+    ]),
+    detailSection("Supported operations", [
+      ["Operations", (item.supportedOperations || []).map(value => `${value.id}${value.destructive ? " (destructive)" : value.disruptive ? " (disruptive)" : ""}`).join(", ") || "None"]
+    ]),
+    detailSection("Recent history", recent.length
+      ? recent.map(record => [safeDate(record.occurredAt), `${record.state} · ${record.summary}`])
+      : [["History", "No recent sanitized records for this component"]])
+  );
 }
 
 function renderCapabilities(document) {
@@ -354,6 +519,8 @@ function renderCapabilities(document) {
 function renderOperationsRead(document) {
   if (document) {
     renderOperation(document);
+    renderComponentCards();
+    refreshInspector();
     panelState("operations", "available", "Current · Durable operation progress restored.", document.updatedAt || document.startedAt);
     if (!document.terminal) scheduleProgress();
     return;
@@ -561,6 +728,8 @@ function renderOperation(operation) {
     clearTimeout(progressTimer);
     sessionStorage.removeItem("fortifylab.activeOperation");
   }
+  renderComponentCards();
+  refreshInspector();
 }
 
 async function refreshOperation() {
@@ -623,6 +792,28 @@ function showOperationMessage(message, danger) {
 }
 
 byId("refresh").addEventListener("click", load);
+for (const id of ["component-search", "health-filter", "state-filter", "updates-filter", "operations-filter"]) {
+  byId(id).addEventListener(id === "component-search" ? "input" : "change", renderComponentCards);
+}
+byId("clear-component-filters").addEventListener("click", () => {
+  byId("component-search").value = "";
+  byId("health-filter").value = "";
+  byId("state-filter").value = "";
+  byId("updates-filter").checked = false;
+  byId("operations-filter").checked = false;
+  renderComponentCards();
+  byId("component-search").focus();
+});
+byId("close-component-inspector").addEventListener("click", () => byId("component-inspector").close());
+byId("component-inspector").addEventListener("close", () => {
+  selectedComponentId = null;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("component");
+  history.replaceState(null, "", url);
+  renderComponentCards();
+  if (componentOpener?.isConnected) componentOpener.focus();
+  componentOpener = null;
+});
 byId("auto-refresh").addEventListener("change", scheduleAutoRefresh);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {

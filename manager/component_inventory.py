@@ -138,7 +138,46 @@ class ComponentInventory:
                         "displayName": component["displayName"],
                     },
                     "version": component["version"],
+                    "profile": {
+                        "id": self._registry.profile.id,
+                        "maturity": self._registry.profile.maturity,
+                        "productVersion": self._registry.profile.document["components"][
+                            component_id
+                        ]["productVersion"],
+                    },
                     "dependencies": list(component["dependencies"]),
+                    "workloads": [
+                        {
+                            "id": workload["id"],
+                            "kind": workload["kind"],
+                            "name": workload["name"],
+                            "role": workload["role"],
+                            "scalable": workload["scalable"],
+                        }
+                        for workload in component["workloads"]
+                    ],
+                    "supportedOperations": [
+                        {
+                            "id": operation["id"],
+                            "disruptive": operation["disruptive"],
+                            "destructive": operation["destructive"],
+                            "idempotent": operation["idempotent"],
+                        }
+                        for operation in component["operations"]
+                    ],
+                    "storage": [
+                        {
+                            "id": item["id"],
+                            "purpose": item["purpose"],
+                            "retainedOnUninstall": item["retainedOnUninstall"],
+                        }
+                        for item in component["persistence"]
+                    ],
+                    "ingress": [
+                        {"id": check["target"], "protocol": "https"}
+                        for check in component["health"]["checks"]
+                        if check["type"] == "https"
+                    ],
                     "desiredState": {
                         "state": "present",
                         "resources": [
