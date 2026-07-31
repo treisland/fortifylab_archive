@@ -66,7 +66,7 @@ authorize direct browser access to 8080.
 
 | Path | Purpose | Reinstall behavior |
 | --- | --- | --- |
-| `/etc/fortify-lab-manager/manager.toml` | Protected listener and state references | Created once, then preserved |
+| `/etc/fortify-lab-manager/manager.toml` | Versioned protected listener, state, observer, and lifecycle references | Created once; operator values are preserved while missing safe defaults are migrated |
 | `/var/lib/fortify-lab-manager/accounts.json` | PBKDF2 password verifiers only | Preserved |
 | `/var/lib/fortify-lab-manager/history.sqlite3` | Schema-versioned manager history | Migrated in place and preserved |
 | `/var/lib/fortify-lab-manager/cluster-access/lifecycle.kubeconfig` | Dedicated namespace lifecycle credential; mode `0600` | Created only by verified activation; never committed or returned to the browser |
@@ -84,7 +84,48 @@ session. Cookies are always `HttpOnly`, `SameSite=Strict`, and `Secure`.
 Accounts and history survive service and host restarts. In-memory sessions
 are deliberately invalidated by a manager restart, so users sign in again.
 Re-running `install` does not overwrite external configuration, accounts, or
-history.
+history. It does validate and, when necessary, migrate the configuration as
+described below.
+
+### Protected configuration migration
+
+`manager.toml` uses the top-level `schema_version` field. The current version
+is `1`; an existing unversioned file is the supported version `0`. Installation
+and upgrade reject malformed, ambiguous, invalid, or newer unknown schemas
+before replacing the configuration.
+
+A migration preserves all existing listener, storage, authentication,
+observer, lifecycle, recovery, custom values, and comments. It only adds
+missing safe defaults. `lifecycle.enabled` is added as `false`. The `[cluster]`
+observer defaults are added only when both
+`cluster-access/token` and `cluster-access/ca.crt` are nonempty regular files,
+the directory and files are owned by `fortify-manager:fortify-manager`, the
+directory is mode `0700`, and both files are mode `0600`. Existing cluster
+values are never replaced.
+
+Before a changed candidate becomes active, the command parses and validates
+it and writes a mode-`0600` backup below
+`/var/lib/fortify-lab-manager/config-backups`. The candidate is then written
+with owner `root:fortify-manager`, mode `0640`, and atomically renamed over the
+active file. A failed validation or replacement leaves the original active.
+Re-running migration after success makes no further change or backup.
+
+Use the local, sanitized configuration operations:
+
+```bash
+sudo ./scripts/fortify-manager config-inspect
+sudo ./scripts/fortify-manager config-migrate
+sudo ./scripts/fortify-manager config-diagnose
+sudo ./scripts/fortify-manager config-rollback \
+  /var/lib/fortify-lab-manager/config-backups/manager.toml.schema-0.TIMESTAMP.bak
+```
+
+Inspection and diagnostics report only schema and capability status. They do
+not print configuration values, tokens, CA content, passwords, verifiers, or
+database content. Rollback accepts only a regular mode-`0600` backup owned by
+`root:fortify-manager` within the protected configuration-backup directory;
+it validates that document before atomic replacement. Restart and diagnose
+the Manager after an explicit rollback.
 
 ### Verified runtime packaging
 
@@ -122,6 +163,9 @@ and StorageClasses and read `/version`; it cannot enumerate namespaces.
 Neither role grants Secrets, pod logs, exec, mutation, or workload access in
 another namespace. Re-running the command refreshes only the observer
 credential and CA; it does not read application Secrets.
+After protecting the credential and CA, the command invokes the same
+configuration migration. If candidate validation or replacement fails, it
+disconnects the new token and leaves the prior configuration active.
 
 ### Protected lifecycle activation
 
@@ -294,8 +338,11 @@ The supported upgrade first stages and validates the complete runtime while
 the current Manager remains active. Only a valid candidate permits the writer
 to stop. The upgrade then creates a timestamped, mode-0600 SQLite online backup
 plus copies of the verifier/configuration files below
-`/var/lib/fortify-lab-manager/backups`. It then installs the immutable
-release, runs forward migrations at startup, and restarts:
+`/var/lib/fortify-lab-manager/backups`. The protected `manager.toml` migration
+runs before the runtime is replaced and also creates its own configuration
+backup when a schema or safe-default change is required. The upgrade then
+installs the immutable release, runs forward migrations at startup, and
+restarts:
 
 ```bash
 sudo ./scripts/fortify-manager upgrade

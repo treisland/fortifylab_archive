@@ -36,6 +36,7 @@ from manager.web_operations import WebOperationAPI
 from manager.backup_restore import (
     Destination, RecoveryService, RecoveryStore, UnixRecoveryAdapter,
 )
+from manager.config_migration import MigrationError, schema_version
 
 
 LOG = logging.getLogger("fortify-manager")
@@ -55,6 +56,10 @@ def load_config(path: Path) -> dict:
         document = tomllib.loads(path.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         raise ConfigurationError("manager configuration is missing or invalid") from error
+    try:
+        schema_version(document)
+    except MigrationError as error:
+        raise ConfigurationError(str(error)) from error
     server = document.get("server", {})
     storage = document.get("storage", {})
     authentication = document.get("authentication", {})

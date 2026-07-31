@@ -1,3 +1,5 @@
+schema_version = 1
+
 [server]
 # The MicroK8s ingress reaches this private host listener. Do not expose it in
 # the AWS Security Group.
