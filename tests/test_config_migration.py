@@ -146,6 +146,20 @@ class ConfigMigrationTests(unittest.TestCase):
         with self.assertRaises(ConfigurationError):
             load_config(self.config)
 
+    def test_runtime_invalid_candidates_fail_closed(self) -> None:
+        cases = (
+            LEGACY.replace('host = "0.0.0.0"', 'host = "127.0.0.1"'),
+            LEGACY + "\n[recovery]\nenabled = true\n",
+            LEGACY + "\n[recovery]\ntimeout_seconds = 7201\n",
+        )
+        for text in cases:
+            with self.subTest(text=text[-48:]):
+                self.write_config(text)
+                original = self.config.read_bytes()
+                with self.assertRaises(MigrationError):
+                    self.run_migration()
+                self.assertEqual(self.config.read_bytes(), original)
+
     def test_failed_atomic_replacement_leaves_original_active(self) -> None:
         self.write_config()
         original = self.config.read_bytes()

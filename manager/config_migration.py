@@ -63,13 +63,15 @@ def validate_document(document: dict) -> int:
     authentication = _section(document, "authentication")
     cluster = _section(document, "cluster")
     lifecycle = _section(document, "lifecycle")
-    _section(document, "recovery")
+    recovery = _section(document, "recovery")
     if not server or not storage or not authentication:
         raise MigrationError(
             "manager configuration requires server, storage, and authentication sections"
         )
     if "host" in server and not isinstance(server["host"], str):
         raise MigrationError("manager configuration server.host is invalid")
+    if server.get("host", "0.0.0.0") != "0.0.0.0":
+        raise MigrationError("manager configuration server.host must be 0.0.0.0")
     port = server.get("port")
     if port is not None and (
         isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535
@@ -93,6 +95,20 @@ def validate_document(document: dict) -> int:
         raise MigrationError("manager configuration cluster.timeout_seconds is invalid")
     if "enabled" in lifecycle and not isinstance(lifecycle["enabled"], bool):
         raise MigrationError("manager configuration lifecycle.enabled is invalid")
+    lifecycle_enabled = lifecycle.get("enabled", False)
+    if "enabled" in recovery and not isinstance(recovery["enabled"], bool):
+        raise MigrationError("manager configuration recovery.enabled is invalid")
+    if recovery.get("enabled", False) and not lifecycle_enabled:
+        raise MigrationError(
+            "manager configuration recovery.enabled requires lifecycle.enabled"
+        )
+    recovery_timeout = recovery.get("timeout_seconds")
+    if recovery_timeout is not None and (
+        isinstance(recovery_timeout, bool)
+        or not isinstance(recovery_timeout, (int, float))
+        or not 1 <= recovery_timeout <= 7200
+    ):
+        raise MigrationError("manager configuration recovery.timeout_seconds is invalid")
     return version
 
 
