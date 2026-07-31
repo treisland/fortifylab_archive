@@ -447,6 +447,34 @@ class SupervisorTest(unittest.TestCase):
         )
         self.assertIn("Lease expiry:", result)
 
+    def test_expired_lease_survives_restart_and_allows_policy_recovery(self) -> None:
+        path = self.configure_policy_file()
+        pending = self.supervisor.handle_command(
+            "/autonomy autonomous 30m", "101"
+        )
+        self.supervisor.handle_command(
+            f"/confirm {self.confirmation_token(pending)}", "101"
+        )
+        self.clock[0] += 1801
+
+        restarted = Supervisor(
+            self.config, self.store, self.github, self.telegram
+        )
+        self.assertIn(
+            "Configuration: expired-lease",
+            restarted.handle_command("/autonomy", "101"),
+        )
+        with self.assertRaisesRegex(SupervisorError, "lease expired"):
+            restarted.handle_command("/start-next", "101")
+
+        pending = restarted.handle_command("/autonomy assisted", "101")
+        result = restarted.handle_command(
+            f"/confirm {self.confirmation_token(pending)}", "101"
+        )
+        self.assertIn("Autonomy changed to assisted", result)
+        self.assertEqual(json.loads(path.read_text())["profile"], "assisted")
+        self.assertEqual(restarted.configuration_state(), "active")
+
     def test_mixed_process_generation_blocks_actions_and_is_reported(self) -> None:
         self.configure_policy_file()
         self.store.set(

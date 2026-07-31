@@ -1125,7 +1125,13 @@ class Supervisor:
         self.telegram = telegram
         self.run = run
         try:
-            self.policy = load_policy(config.autonomy_policy_file)
+            self.policy = load_policy(
+                config.autonomy_policy_file,
+                now=datetime.datetime.fromtimestamp(
+                    self.store.now(), datetime.timezone.utc
+                ),
+                allow_expired=True,
+            )
         except AutonomyPolicyError as error:
             raise SupervisorError(str(error)) from error
         self.allowed_user = read_protected(
@@ -1135,6 +1141,12 @@ class Supervisor:
             config.telegram_chat_file, "Telegram chat ID"
         )
         self.audit_policy()
+        if self.policy.expires_at and datetime.datetime.fromisoformat(
+            self.policy.expires_at.replace("Z", "+00:00")
+        ) <= datetime.datetime.fromtimestamp(
+            self.store.now(), datetime.timezone.utc
+        ):
+            self.store.set("autonomy_configuration_state", "expired-lease")
 
     def reload_policy(self, role: str) -> None:
         """Atomically adopt one complete policy generation and attest it."""
@@ -1145,13 +1157,9 @@ class Supervisor:
                 now=datetime.datetime.fromtimestamp(
                     self.store.now(), datetime.timezone.utc
                 ),
+                allow_expired=True,
             )
         except AutonomyPolicyError as error:
-            if "expired" in str(error).lower():
-                self.store.set("autonomy_configuration_state", "expired-lease")
-                raise SupervisorError(
-                    "autonomous lease expired; actions are blocked"
-                ) from error
             self.store.set("autonomy_configuration_state", "restart-required")
             raise SupervisorError("configuration restart required") from error
         if (
@@ -1165,7 +1173,6 @@ class Supervisor:
             raise SupervisorError("configuration mismatch; actions are blocked")
         self.policy = policy
         self.audit_policy()
-        self.store.set("autonomy_configuration_state", "active")
         self.store.set(
             f"process_policy:{role}",
             json.dumps(
@@ -1177,6 +1184,14 @@ class Supervisor:
                 sort_keys=True,
             ),
         )
+        if policy.expires_at and datetime.datetime.fromisoformat(
+            policy.expires_at.replace("Z", "+00:00")
+        ) <= datetime.datetime.fromtimestamp(
+            self.store.now(), datetime.timezone.utc
+        ):
+            self.store.set("autonomy_configuration_state", "expired-lease")
+            raise SupervisorError("autonomous lease expired; actions are blocked")
+        self.store.set("autonomy_configuration_state", "active")
 
     def configuration_state(self) -> str:
         persisted = self.store.get("autonomy_configuration_state", "active")
@@ -1200,8 +1215,18 @@ class Supervisor:
                 return "mismatch"
         return "active" if len(identities) == 1 else "mismatch"
 
-    def require_consistent_policy(self, role: str) -> None:
-        self.reload_policy(role)
+    def require_consistent_policy(
+        self, role: str, *, allow_expired_recovery: bool = False
+    ) -> None:
+        try:
+            self.reload_policy(role)
+        except SupervisorError:
+            if (
+                allow_expired_recovery
+                and self.configuration_state() == "expired-lease"
+            ):
+                return
+            raise
         if self.configuration_state() != "active":
             self.store.set("autonomy_configuration_state", "mismatch")
             raise SupervisorError("configuration mismatch; actions are blocked")
@@ -1375,13 +1400,22 @@ class Supervisor:
         ).fetchone()
         if not candidate:
             raise SupervisorError("This action is invalid or no longer available")
-        if str(candidate["action"]) not in {
+        candidate_action = str(candidate["action"])
+        candidate_payload = json.loads(str(candidate["payload"] or "{}"))
+        expired_policy_recovery = (
+            candidate_action == "autonomy-change"
+            and candidate_payload.get("operation") == "profile"
+        )
+        if candidate_action not in {
             "status",
             "refresh",
             "workflow-details",
             "details",
         }:
-            self.require_consistent_policy("listener")
+            self.require_consistent_policy(
+                "listener",
+                allow_expired_recovery=expired_policy_recovery,
+            )
         if candidate["approval_id"]:
             approval = self.store.approval(str(candidate["approval_id"]))
             approval_payload = json.loads(approval["payload"])
@@ -1400,7 +1434,10 @@ class Supervisor:
         action = str(row["action"])
         callback_payload = json.loads(str(row["payload"] or "{}"))
         if action == "autonomy-change":
-            self.require_consistent_policy("listener")
+            self.require_consistent_policy(
+                "listener",
+                allow_expired_recovery=callback_payload.get("operation") == "profile",
+            )
             return self.apply_autonomy_change(callback_payload, actor)
         if action in {"status", "refresh"}:
             return self.status_text()
@@ -1628,9 +1665,15 @@ class Supervisor:
         try:
             self.reload_policy("listener")
         except SupervisorError:
-            if command == "/autonomy" and len(parts) == 1:
-                return self.autonomy_text()
-            raise
+            if self.configuration_state() == "expired-lease":
+                if command == "/autonomy" and len(parts) == 1:
+                    return self.autonomy_text()
+                if command in {"/autonomy", "/confirm"}:
+                    pass
+                else:
+                    raise
+            else:
+                raise
         if command == "/autonomy":
             if len(parts) == 1:
                 return self.autonomy_text()

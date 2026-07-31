@@ -103,6 +103,7 @@ def _effective(
     expires_at: str | None,
     configured: bool,
     now: datetime.datetime,
+    allow_expired: bool = False,
 ) -> EffectivePolicy:
     if profile not in PROFILE_DEFAULTS:
         raise AutonomyPolicyError(f"Unknown autonomy profile: {profile}")
@@ -145,7 +146,7 @@ def _effective(
             ) from error
         if expiry.tzinfo is None:
             raise AutonomyPolicyError("Autonomous expires_at must include a timezone")
-        if expiry <= now:
+        if expiry <= now and not allow_expired:
             raise AutonomyPolicyError("Autonomous policy has expired")
         normalized_expiry = expiry.astimezone(datetime.timezone.utc).isoformat().replace(
             "+00:00", "Z"
@@ -188,6 +189,7 @@ def load_policy(
     path: Path | None,
     *,
     now: datetime.datetime | None = None,
+    allow_expired: bool = False,
 ) -> EffectivePolicy:
     """Load one protected external policy file, or the compatible migration default."""
 
@@ -230,6 +232,7 @@ def load_policy(
         expires_at=document.get("expires_at"),
         configured=True,
         now=now or datetime.datetime.now(datetime.timezone.utc),
+        allow_expired=allow_expired,
     )
 
 
