@@ -66,6 +66,7 @@ def validate_document(document: dict) -> int:
     network = _section(document, "network")
     lifecycle = _section(document, "lifecycle")
     recovery = _section(document, "recovery")
+    preflight = _section(document, "preflight")
     if not server or not storage or not authentication:
         raise MigrationError(
             "manager configuration requires server, storage, and authentication sections"
@@ -143,6 +144,13 @@ def validate_document(document: dict) -> int:
         or not 1 <= recovery_timeout <= 7200
     ):
         raise MigrationError("manager configuration recovery.timeout_seconds is invalid")
+    for key in ("license_file", "registry_auth_file", "tls_certificate_file"):
+        if key in preflight and (
+            not isinstance(preflight[key], str) or not Path(preflight[key]).is_absolute()
+        ):
+            raise MigrationError(
+                f"manager configuration preflight.{key} must be an absolute path"
+            )
     return version
 
 

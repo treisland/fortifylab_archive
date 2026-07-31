@@ -4,7 +4,7 @@
   "title": "Read-only deployment preflight report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "kind", "generatedAt", "ready", "platformReadiness", "mutationAuthorization", "readiness", "profile", "summary", "evidence", "items", "capacity", "host"],
+  "required": ["apiVersion", "kind", "generatedAt", "ready", "readiness", "profile", "summary", "evidence", "items"],
   "properties": {
     "apiVersion": {"const": "fortifylab.io/v1alpha1"},
     "kind": {"const": "DeploymentPreflight"},

@@ -723,7 +723,10 @@ validate_public_address "$PUBLIC" 172.31.30.41
                 f"[authentication]\naccounts = \"{accounts}\"\n"
             )
             config = load_config(config_path)
-            app, store = build_app(config)
+            # A clean host may not have created the service group yet. App
+            # composition remains available; evidence reads fail closed later.
+            with patch("manager.host_preflight.grp.getgrnam", side_effect=KeyError):
+                app, store = build_app(config)
             try:
                 self.assertTrue(app._secure_cookies)
                 self.assertEqual(store.migration_version(), 2)

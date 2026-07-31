@@ -79,8 +79,13 @@ manager_config() {
 collect_host_preflight() {
     require_root
     manager_config inspect >/dev/null
+    local staging_root="/var/lib/fortify-lab-manager-preflight-staging"
+    install -d -m 0700 -o root -g root "$staging_root"
     PYTHONPATH="$REPOSITORY_ROOT" python3 -m manager.host_preflight \
-        --output "$STATE_ROOT/host-preflight.json"
+        --output "$STATE_ROOT/host-preflight.json" \
+        --staging "$staging_root" \
+        --config "$CONFIG_ROOT/manager.toml" \
+        --repository-root "$REPOSITORY_ROOT"
     printf 'Collected sanitized host preflight evidence; no host or cluster settings were changed.\n'
 }
 

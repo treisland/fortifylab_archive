@@ -7,8 +7,12 @@ available memory/disk, OS/kernel/architecture, MicroK8s version/state/addons,
 storage/ingress presence, local ingress ports, DNS agreement, and protected
 input presence. It never records hostnames, addresses, paths, command output,
 certificate or license contents, registry credentials, or authorization
-material. Evidence is atomically installed as `root:fortify-manager` mode
-`0640`; invalid type, ownership, permissions, size, keys, values, or evidence
+material. Collection uses the fixed `/snap/bin/microk8s` executable rather
+than `PATH`. Network expectations come from validated `manager.toml`, never
+sudo-stripped environment variables. Evidence is created with an unpredictable
+name in a root-owned mode-`0700` staging directory, validated, fsynced, and
+atomically installed as `root:fortify-manager` mode `0640`; invalid type,
+ownership, permissions, size, keys, values, or evidence
 older than 15 minutes fails closed. TLS checks decode only the public
 certificate metadata, require the managed names and more than seven days of
 remaining validity, and never inspect the private key.
@@ -137,7 +141,7 @@ rerun preflight.
 
 ### storage
 
-Confirm a writable default storage class exists and has sufficient capacity
+Confirm a default storage class with a declared provisioner exists and has sufficient capacity
 for MySQL, PostgreSQL, SSC, LIM, and DAST data. Correct provisioning or
 capacity problems without deleting existing persistent claims.
 
@@ -164,8 +168,14 @@ evidence.
 
 ### external-license
 
-Configure the Fortify license through `FORTIFY_LICENSE_FILE` or the documented
-repository-local default. The adapter may verify existence, regular-file
+Configure the Fortify license with the optional absolute
+`preflight.license_file` reference in protected `manager.toml`, or use the
+repository-local `secrets/input/fortify.license` default. The registry
+credentials and public TLS certificate may similarly use
+`preflight.registry_auth_file` and `preflight.tls_certificate_file`. External
+references let protected inputs remain outside the checkout. Referenced files
+must be regular, nonempty, mode `0600`, and owned by root or the sudo operator;
+symlinks fail closed. The adapter may verify existence, regular-file
 type, readability, and protected permissions; it must not read content into
 the report or disclose the path. Fix ownership or permissions using the
 operator's protected secret workflow, then rerun preflight.
