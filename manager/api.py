@@ -42,6 +42,7 @@ class ManagerAPI:
         observer: ClusterObserver | None = None,
         health_probe: HealthProbe | None = None,
         preflight_probe: PreflightProbe | None = None,
+        preflight_capability_provider: Callable[[], dict[str, Any]] | None = None,
         history_reader: HistoryReader | None = None,
         availability_monitor: AvailabilityMonitor | None = None,
     ) -> None:
@@ -49,6 +50,7 @@ class ManagerAPI:
         self._observer = observer
         self._health_probe = health_probe
         self._preflight_probe = preflight_probe
+        self._preflight_capability_provider = preflight_capability_provider
         self._history_reader = history_reader or EmptyHistoryReader()
         self._availability_monitor = availability_monitor
 
@@ -93,7 +95,10 @@ class ManagerAPI:
             elif path == HEALTH_PATH:
                 document = HealthEngine(registry, self._health_probe).document()
             elif path == PREFLIGHT_PATH:
-                document = PreflightEngine(registry, self._preflight_probe).document()
+                document = PreflightEngine(
+                    registry, self._preflight_probe,
+                    capability_provider=self._preflight_capability_provider,
+                ).document()
             elif path == PROFILE_PATH:
                 document = registry.profile.public_document()
             elif path == COMPONENTS_PATH:

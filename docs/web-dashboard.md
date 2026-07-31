@@ -147,6 +147,13 @@ timeouts, verification count, risk, and destructive/data-deletion
 classification. Requests contain only operation and component identifiers,
 never commands, paths, adapter names, environment values, or secrets.
 
+The selected action consumes its matching preflight readiness entry. **Review
+plan** and **Run operation** stay disabled unless both effective lifecycle
+capability and selected deployment/start/suspend readiness are current and
+available. Changing the action recalculates the controls. Panels still load
+independently; retained inspection data remains visible, while missing
+capability or preflight evidence always fails mutation controls closed.
+
 Routine supported actions can start after review. Disruptive actions require
 a single-use approval bound to the actor, browser session, exact plan, current
 target state, and expiry. High-risk actions additionally require

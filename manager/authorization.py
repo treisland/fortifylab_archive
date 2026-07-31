@@ -112,6 +112,11 @@ class ApprovalStore:
         with self._lock:
             self.connection.close()
 
+    def available(self) -> bool:
+        """Check the approval ledger through its serialized database boundary."""
+        with self._lock:
+            return self.connection.execute("SELECT 1").fetchone() is not None
+
     def approval(self, approval_id: str) -> dict[str, Any]:
         with self._lock:
             row = self.connection.execute(

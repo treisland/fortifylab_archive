@@ -4,12 +4,23 @@
   "title": "Read-only deployment preflight report",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "kind", "generatedAt", "ready", "profile", "summary", "evidence", "items"],
+  "required": ["apiVersion", "kind", "generatedAt", "ready", "readiness", "profile", "summary", "evidence", "items"],
   "properties": {
     "apiVersion": {"const": "fortifylab.io/v1alpha1"},
     "kind": {"const": "DeploymentPreflight"},
     "generatedAt": {"type": "string", "format": "date-time"},
     "ready": {"type": "boolean"},
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observation", "deployment", "start", "suspend"],
+      "properties": {
+        "observation": {"$ref": "#/$defs/readiness"},
+        "deployment": {"$ref": "#/$defs/readiness"},
+        "start": {"$ref": "#/$defs/readiness"},
+        "suspend": {"$ref": "#/$defs/readiness"}
+      }
+    },
     "profile": {
       "type": "object",
       "additionalProperties": false,
@@ -71,6 +82,21 @@
             "else": {"not": {"required": ["remediation"]}}
           }
         ]
+      }
+    }
+  },
+  "$defs": {
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ready", "blockers"],
+      "properties": {
+        "ready": {"type": "boolean"},
+        "blockers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"}
+        }
       }
     }
   }

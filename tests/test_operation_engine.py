@@ -73,7 +73,11 @@ class OperationEngineTests(unittest.TestCase):
         self.adapter = RecordingAdapter()
         self.verifier = RecordingVerifier()
         self.engine = OperationEngine(
-            self.registry, self.store, self.adapter, self.verifier
+            self.registry, self.store, self.adapter, self.verifier,
+            preflight_provider=lambda: {"readiness": {
+                action: {"ready": True, "blockers": []}
+                for action in ("deployment", "start", "suspend")
+            }},
         )
 
     def tearDown(self) -> None:
@@ -138,6 +142,9 @@ class OperationEngineTests(unittest.TestCase):
         )
 
     def test_lab_plans_expand_the_authoritative_graph_and_preserve_data(self) -> None:
+        deploy = self.engine.lab_plan("deploy")
+        self.assertEqual(deploy["action"], "deploy")
+
         start = self.engine.lab_plan("start", "scancentral-sast")
         self.assertEqual(
             start["executionOrder"], ["mysql", "ssc", "scancentral-sast"]

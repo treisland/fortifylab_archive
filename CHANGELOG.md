@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Derive Manager capabilities from current observer, probe, credential,
+  adapter, store, helper, upgrade, secret, and notification evidence; add
+  action-specific observation/deployment/start/suspend preflight gates and
+  fail-closed Web lifecycle controls.
+
 - Package a hardened, separately credentialed functional-health probe with a
   protected versioned Unix-socket protocol, handshake-gated capabilities,
   sanitized bounded failures, safe service workflows, tests, and operator

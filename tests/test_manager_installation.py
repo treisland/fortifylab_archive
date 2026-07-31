@@ -368,6 +368,11 @@ class ManagerInstallationTests(unittest.TestCase):
             try:
                 self.assertIsNotNone(app._operation_api)
                 self.assertEqual(len(store._lifecycle_stores), 2)
+                preflight = app._operation_api._engine._preflight_provider()
+                self.assertNotIn(
+                    "LIFECYCLE_EVIDENCE_UNAVAILABLE",
+                    preflight["readiness"]["deployment"]["blockers"],
+                )
             finally:
                 for lifecycle_store in store._lifecycle_stores:
                     lifecycle_store.close()

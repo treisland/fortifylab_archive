@@ -8,6 +8,7 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
+from types import SimpleNamespace
 
 from manager.component_registry import ComponentRegistry
 from manager.health import ProbeResult
@@ -146,6 +147,21 @@ class MicroK8sLifecycleTests(unittest.TestCase):
             adapter.execute(
                 self.step, deadline=float("inf"), cancelled=lambda: False
             )
+
+    def test_credential_requires_positive_permission_and_mandatory_denial(self):
+        adapter = MicroK8sLifecycleAdapter(self.registry)
+        results = iter((
+            SimpleNamespace(returncode=0, stdout="yes\n"),
+            SimpleNamespace(returncode=0, stdout="no\n"),
+        ))
+        with patch("manager.microk8s_lifecycle.subprocess.run", side_effect=lambda *args, **kwargs: next(results)) as run:
+            self.assertTrue(adapter.credential_authorized())
+        self.assertEqual(run.call_count, 2)
+        self.assertTrue(all(call.kwargs["timeout"] == 3 for call in run.call_args_list))
+
+        denied = SimpleNamespace(returncode=0, stdout="yes\n")
+        with patch("manager.microk8s_lifecycle.subprocess.run", return_value=denied):
+            self.assertFalse(adapter.credential_authorized())
 
     def test_verifier_accepts_only_declared_check_and_bounds_timeout(self):
         probe = Probe()
