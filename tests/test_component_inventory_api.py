@@ -55,6 +55,24 @@ class UnavailableObserver:
         raise ClusterUnavailable("details must not leave the adapter")
 
 
+class VersionObserver:
+    def observe(self, resources):
+        return tuple(
+            ResourceObservation(
+                resource.resource_id,
+                "present",
+                resource.kind,
+                resource.name,
+                resource.namespace,
+                "sast-26-2" if resource.component_id == "scancentral-sast" else resource.component_id,
+                "26.2.0" if resource.component_id == "scancentral-sast" else "9.19.0",
+                "26.2",
+                (("25.2",) if resource.resource_id.endswith("/sensor") else ("26.2",)),
+            )
+            for resource in resources
+        )
+
+
 def request(app, method="GET"):
     response = {}
 
@@ -134,6 +152,22 @@ class ComponentInventoryAPIContractTests(unittest.TestCase):
         ]
         self.assertIn("absent", {resource["state"] for resource in resources})
         self.assertNotIn("unknown", {resource["state"] for resource in resources})
+
+    def test_observed_versions_are_independent_and_mixed_workloads_are_visible(self):
+        document = request(ManagerAPI(observer=VersionObserver()))["json"]
+        Draft202012Validator(INVENTORY_SCHEMA).validate(document)
+        sast = next(item for item in document["items"] if item["identity"]["id"] == "scancentral-sast")
+        self.assertEqual(sast["version"]["chart"], "24.4.0-2")
+        self.assertEqual(sast["observedDeployment"]["state"], "mixed")
+        self.assertTrue(sast["updateAvailable"])
+        running = {
+            workload["id"]: workload["runningImageVersions"]
+            for workload in sast["observedDeployment"]["workloads"]
+        }
+        self.assertEqual(running, {"scancentral-sast/controller": ["26.2"], "scancentral-sast/sensor": ["25.2"]})
+        serialized = json.dumps(document)
+        self.assertNotIn("registry.internal", serialized)
+        self.assertNotIn("helmValues", serialized)
 
     def test_unavailable_cluster_returns_unknown_resources_without_details(self):
         response = request(ManagerAPI(observer=UnavailableObserver()))

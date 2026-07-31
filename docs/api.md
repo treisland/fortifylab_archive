@@ -327,6 +327,23 @@ claim that a running resource has that version. `dependencies` contains stable
 component IDs and represents the complete MySQL → SSC → ScanCentral SAST and
 PostgreSQL/LIM (plus SSC) → ScanCentral DAST paths.
 
+`observedDeployment` is a separate projection of current workload metadata.
+For each allow-listed Deployment or StatefulSet it reports only the standard
+Helm release/chart/app labels and image tag or digest from the pod template.
+Registry and repository paths, container environment, Helm values, Secrets,
+credentials, and registry authorization are never returned. Its state is:
+
+- `match` when observed chart and running versions agree with profile intent;
+- `drift` when one coherent observed deployment differs from profile intent;
+- `mixed` when workloads are partly present or report conflicting releases,
+  charts, or numeric version families (including controller/worker skew);
+- `absent` when every allow-listed workload is confirmed absent; or
+- `unavailable` when observation or required version metadata is unavailable.
+
+Missing metadata remains unavailable and is never copied from `version`.
+Conflicting workload release labels are the safe signal for multiple installed
+release evidence; the Manager deliberately does not inspect Helm storage.
+
 Each observed resource state is one of:
 
 - `present`: the allow-listed resource was observed;

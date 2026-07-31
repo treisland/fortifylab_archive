@@ -92,6 +92,34 @@ class KubernetesObserverTests(unittest.TestCase):
         self.assertNotIn("secrets", serialized)
         self.assertNotIn("log", serialized)
 
+    def test_release_labels_and_running_image_versions_exclude_repository_paths(self):
+        resource = (ResourceIdentity(
+            "scancentral-sast", "scancentral-sast/controller", "StatefulSet",
+            "scancentral-sast-controller",
+        ),)
+        document = {
+            "metadata": {"labels": {
+                "app.kubernetes.io/instance": "sast-26-2",
+                "helm.sh/chart": "scancentral-sast-26.2.0-1",
+                "app.kubernetes.io/version": "26.2",
+                "credential": "must-not-project",
+            }},
+            "spec": {"template": {"spec": {"containers": [
+                {"name": "controller", "image": "registry.internal/private/controller:26.2.0"},
+                {"name": "sidecar", "image": "registry.internal/private/sidecar@sha256:abc123"},
+            ]}}},
+        }
+        with patch("manager.kubernetes_observer.urllib.request.urlopen", return_value=Response(document)):
+            observed = self.observer.observe(resource)[0]
+        self.assertEqual(observed.release_name, "sast-26-2")
+        self.assertEqual(observed.chart_version, "26.2.0-1")
+        self.assertEqual(observed.app_version, "26.2")
+        self.assertEqual(observed.image_versions, ("26.2.0", "sha256:abc123"))
+        serialized = json.dumps(observed.__dict__)
+        self.assertNotIn("registry.internal", serialized)
+        self.assertNotIn("private", serialized)
+        self.assertNotIn("credential", serialized)
+
     def test_legacy_ca_compatibility_preserves_tls_verification(self):
         strict = getattr(ssl, "VERIFY_X509_STRICT", 0)
         retained = getattr(ssl, "VERIFY_X509_TRUSTED_FIRST", 0x8000)

@@ -363,11 +363,13 @@ class DashboardTests(unittest.TestCase):
             "Dependencies and consumers",
             "Workloads (desired / observed)",
             "Profile and versions (desired)",
+            "Installed release and running versions (observed)",
+            "Allow-listed workload metadata",
             "Ingress and storage (desired metadata)",
             "Supported operations",
             "Recent history",
             "Partially observed or unavailable",
-            "No observed image/version comparison is available",
+            "Observed deployment:",
         ):
             self.assertIn(marker, script)
         for forbidden in ("kubernetesSecret", ".adapter", "environmentVariables", "helmValues", "manifest"):

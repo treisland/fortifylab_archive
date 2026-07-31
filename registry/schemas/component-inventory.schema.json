@@ -37,7 +37,9 @@
           "storage",
           "ingress",
           "desiredState",
-          "observedResources"
+          "observedResources",
+          "observedDeployment",
+          "updateAvailable"
         ],
         "properties": {
           "identity": {
@@ -151,7 +153,7 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["id", "kind", "name", "namespace", "state"],
+              "required": ["id", "kind", "name", "namespace", "state", "release", "runningImageVersions"],
               "properties": {
                 "id": {
                   "type": "string",
@@ -160,10 +162,49 @@
                 "kind": {"enum": ["StatefulSet", "Deployment"]},
                 "name": {"type": "string", "minLength": 1},
                 "namespace": {"const": "fortify"},
-                "state": {"enum": ["present", "absent", "unknown"]}
+                "state": {"enum": ["present", "absent", "unknown"]},
+                "release": {
+                  "type": ["object", "null"],
+                  "additionalProperties": false,
+                  "required": ["name", "chartVersion", "appVersion"],
+                  "properties": {
+                    "name": {"type": ["string", "null"]},
+                    "chartVersion": {"type": ["string", "null"]},
+                    "appVersion": {"type": ["string", "null"]}
+                  }
+                },
+                "runningImageVersions": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {"type": "string", "minLength": 1, "maxLength": 160}
+                }
               }
             }
-          }
+          },
+          "observedDeployment": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["state", "source", "workloads"],
+            "properties": {
+              "state": {"enum": ["match", "drift", "mixed", "absent", "unavailable"]},
+              "source": {"const": "workload-metadata"},
+              "workloads": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "state", "release", "runningImageVersions"],
+                  "properties": {
+                    "id": {"type": "string"},
+                    "state": {"enum": ["present", "absent", "unknown"]},
+                    "release": {"type": ["object", "null"]},
+                    "runningImageVersions": {"type": "array", "items": {"type": "string"}}
+                  }
+                }
+              }
+            }
+          },
+          "updateAvailable": {"type": "boolean"}
         }
       }
     }

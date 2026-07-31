@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import re
 from typing import Protocol, Sequence
 
 from manager.component_registry import ComponentRegistry
@@ -34,10 +35,23 @@ class ResourceObservation:
     kind: str
     name: str
     namespace: str = NAMESPACE
+    release_name: str | None = None
+    chart_version: str | None = None
+    app_version: str | None = None
+    image_versions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.state not in OBSERVED_STATES:
             raise ValueError("unsupported observed resource state")
+        safe = re.compile(r"^[A-Za-z0-9._:+-]{1,160}$")
+        for value in (
+            self.release_name,
+            self.chart_version,
+            self.app_version,
+            *self.image_versions,
+        ):
+            if value is not None and not safe.fullmatch(value):
+                raise ValueError("unsafe observed version metadata")
 
 
 class ClusterUnavailable(RuntimeError):
@@ -129,8 +143,23 @@ class ComponentInventory:
                         "name": resource.name,
                         "namespace": resource.namespace,
                         "state": observed.state if observed else "unknown",
+                        "release": (
+                            {
+                                "name": observed.release_name,
+                                "chartVersion": observed.chart_version,
+                                "appVersion": observed.app_version,
+                            }
+                            if observed and observed.state == "present"
+                            else None
+                        ),
+                        "runningImageVersions": (
+                            list(observed.image_versions) if observed else []
+                        ),
                     }
                 )
+            observed_deployment = self._deployment_evidence(
+                component, component_resources, observation_status
+            )
             items.append(
                 {
                     "identity": {
@@ -191,6 +220,9 @@ class ComponentInventory:
                         ],
                     },
                     "observedResources": component_resources,
+                    "observedDeployment": observed_deployment,
+                    "updateAvailable": observed_deployment["state"]
+                    in {"drift", "mixed"},
                 }
             )
         return {
@@ -231,6 +263,64 @@ class ComponentInventory:
                     )
                 )
         return resources
+
+    @staticmethod
+    def _deployment_evidence(
+        component: dict, resources: list[dict], status: str
+    ) -> dict:
+        """Summarize independent, allow-listed release and image observations."""
+        if status != "available":
+            state = "unavailable"
+        elif resources and all(item["state"] == "absent" for item in resources):
+            state = "absent"
+        elif any(item["state"] != "present" for item in resources):
+            state = "mixed"
+        else:
+            releases = {
+                (item["release"] or {}).get("name")
+                for item in resources
+                if (item["release"] or {}).get("name")
+            }
+            charts = {
+                (item["release"] or {}).get("chartVersion")
+                for item in resources
+                if (item["release"] or {}).get("chartVersion")
+            }
+            observed_images = {
+                version
+                for item in resources
+                for version in item["runningImageVersions"]
+            }
+            desired_images = set(component["version"]["images"].values())
+            numeric_families = {
+                ".".join(version.split(".")[:2])
+                for version in observed_images
+                if version[:1].isdigit() and "." in version
+            }
+            if len(releases) > 1 or len(charts) > 1 or len(numeric_families) > 1:
+                state = "mixed"
+            elif not charts or not observed_images:
+                state = "unavailable"
+            elif (
+                charts == {component["version"]["chart"]}
+                and observed_images <= desired_images
+            ):
+                state = "match"
+            else:
+                state = "drift"
+        return {
+            "state": state,
+            "source": "workload-metadata",
+            "workloads": [
+                {
+                    "id": item["id"],
+                    "state": item["state"],
+                    "release": item["release"],
+                    "runningImageVersions": item["runningImageVersions"],
+                }
+                for item in resources
+            ],
+        }
 
     @staticmethod
     def _validated_observations(
