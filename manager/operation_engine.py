@@ -261,6 +261,43 @@ class OperationEngine:
         self._footprint_provider = footprint_provider
         self._cancelled: set[str] = set()
         self._lock = threading.RLock()
+        self._workers: set[threading.Thread] = set()
+        self._workers_idle = threading.Condition(self._lock)
+
+    def wait_for_idle(self, timeout: float) -> bool:
+        """Wait until every background operation has completed its final save."""
+        if timeout < 0:
+            raise ValueError("idle wait timeout cannot be negative")
+        deadline = time.monotonic() + timeout
+        with self._workers_idle:
+            while self._workers:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._workers_idle.wait(remaining)
+            return True
+
+    def _start_worker(
+        self, document: dict[str, Any], steps: tuple[Step, ...]
+    ) -> None:
+        worker = threading.Thread(
+            target=self._run_worker,
+            args=(document, steps),
+            daemon=True,
+        )
+        with self._workers_idle:
+            self._workers.add(worker)
+        worker.start()
+
+    def _run_worker(
+        self, document: dict[str, Any], steps: tuple[Step, ...]
+    ) -> None:
+        try:
+            self._run(document, steps)
+        finally:
+            with self._workers_idle:
+                self._workers.discard(threading.current_thread())
+                self._workers_idle.notify_all()
 
     def submit(
         self,
@@ -294,7 +331,7 @@ class OperationEngine:
             operation, component_ids, actor=actor, retry_of=retry_of,
             identity=identity, approval_id=approval_id,
         )
-        threading.Thread(target=self._run, args=(document, steps), daemon=True).start()
+        self._start_worker(document, steps)
         return self._store.get(document["id"])
 
     def clean_install_plan(self) -> dict[str, Any]:
@@ -340,7 +377,7 @@ class OperationEngine:
             "install", tuple(plan["requestedTargets"]), actor=actor, retry_of=None,
             identity=identity, approval_id=None, workflow="clean-install",
         )
-        threading.Thread(target=self._run, args=(document, steps), daemon=True).start()
+        self._start_worker(document, steps)
         return self._store.get(document["id"])
 
     def lab_plan(
@@ -443,9 +480,7 @@ class OperationEngine:
                     )
             prepared = remaining
         self._store.update(document)
-        threading.Thread(
-            target=self._run, args=(document, prepared), daemon=True
-        ).start()
+        self._start_worker(document, prepared)
         return self._store.get(document["id"])
 
     def _prepare(
@@ -688,9 +723,7 @@ class OperationEngine:
                             "at": _timestamp(self._clock()),
                         },
                     )
-            threading.Thread(
-                target=self._run, args=(document, remaining), daemon=True
-            ).start()
+            self._start_worker(document, remaining)
             return self._store.get(document["id"])
         return self.submit_async(
             previous["operation"], previous["requestedTargets"], actor=actor,
