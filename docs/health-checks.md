@@ -39,8 +39,10 @@ checks. Workload checks depend only on the MicroK8s node; persistence checks
 depend on the node and storage; internal-service/application checks depend on
 in-cluster DNS and their declared application dependencies. Ingress, TLS, and
 public reachability never gate database workloads or internal application
-dependencies. When a relevant dependency is not healthy, only its affected
-checks become derived `unknown`; independent workload and persistence checks
+dependencies. Only evidence-proven blocking states (`unhealthy`,
+`misconfigured`, `stopped`, `unreachable`, `unknown`, `stale`, `starting`, or
+`blocked`) suppress affected consumer checks. A warning or `degraded` upstream
+does not block consumers. Blocked checks become derived `unknown`; independent workload and persistence checks
 still run. This preserves the upstream cause without hiding an absent workload
 or a desired-versus-ready replica mismatch. Eligible checks for one subject use a
 fixed worker pool; the whole report shares a 30-second aggregate deadline.
@@ -59,13 +61,14 @@ adapter that ignores cancellation.
 | `unreachable` | The authoritative endpoint could not be reached. |
 | `unhealthy` | A required check produced authoritative failure evidence. |
 | `unknown` | A check timed out, failed safely, or could not be observed. |
-| `blocked` | A dependency is not healthy; independent workload evidence remains visible. |
+| `blocked` | A relevant dependency has an evidence-proven blocking state; independent workload evidence remains visible. |
 | `stale` | Evidence is older than the five-minute freshness threshold. |
 
 Each item includes timestamps, bounded latency, sanitized summaries,
 root-cause fields, compatible `dimensions`, explicit `domains`, and a safe
-documentation link. `directState` excludes dependency-derived and external
-access evidence. `affectedDomains` names only non-healthy domains, while
+documentation link. `directState` excludes only evidence explicitly marked as
+derived (including composed availability evidence); local ingress-routing and
+TLS probe failures remain direct. `affectedDomains` names only non-healthy domains, while
 `downstreamImpact` lists consumers whose relevant checks are currently
 blocked. The domain states are:
 
@@ -74,12 +77,14 @@ blocked. The domain states are:
 - `persistence`: PVC and storage evidence;
 - `internalService`: cluster DNS, service, TCP/HTTPS, and declared connectivity;
 - `application`: authenticated readiness, query, configuration, and registration;
-- `ingressTls`: ingress and certificate evidence;
+- `ingressRouting`: local ingress routing evidence;
+- `tls`: certificate and TLS handshake evidence;
+- `ingressTls`: compatibility projection of the two split domains;
 - `externalReachability`: public DNS and operator-route evidence.
 
 The compatible dimensions use these card/inspector terms:
 
-- `blocked by dependency`: at least one upstream dependency is not healthy;
+- `blocked by dependency`: at least one relevant upstream dependency is in a blocking state;
 - `workload absent`: a desired registry workload returned Kubernetes 404;
 - `workload not ready`: the workload exists, desired replicas are greater than
   zero, and ready replicas are fewer than desired replicas;
@@ -104,8 +109,9 @@ Overall state uses deterministic precedence. Direct component failures rank
 `unhealthy`, `misconfigured`, `stopped`, `unreachable`, `unknown`, `stale`,
 `starting`, then `degraded`. If direct evidence is healthy, a relevant blocked
 dependency yields `blocked`. If direct evidence and dependencies are healthy,
-an ingress/TLS/external failure yields `degraded`, never `unhealthy` or
-`blocked`. Environment aggregation retains the documented state ordering, so
+a composed external availability failure yields `degraded`, never `unhealthy`
+or `blocked`. Direct local ingress-routing and TLS failures retain their actual
+state. Environment aggregation retains the documented state ordering, so
 stopped or unhealthy applications are not hidden by degraded public access.
 
 ## Service availability is separate
@@ -120,7 +126,8 @@ licenses, worker registration, or authenticated functions are healthy.
 
 The availability projection is also composed into matching Web-component
 health domains. It remains independently sourced: it can degrade
-`externalReachability` or `ingressTls`, but cannot change `workload`,
+`externalReachability`, `tls`, or the compatibility `ingressTls` projection,
+but cannot change `workload`,
 `persistence`, `internalService`, or `application` evidence. A later fresh
 availability sample replaces stale evidence without restarting the Manager.
 

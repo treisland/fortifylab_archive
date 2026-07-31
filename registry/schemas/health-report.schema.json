@@ -41,18 +41,20 @@
           "directState": {"$ref": "#/$defs/state"},
           "affectedDomains": {
             "type": "array", "uniqueItems": true,
-            "items": {"enum": ["infrastructure", "workload", "persistence", "internalService", "application", "ingressTls", "externalReachability"]}
+            "items": {"enum": ["infrastructure", "workload", "persistence", "internalService", "application", "ingressRouting", "tls", "ingressTls", "externalReachability"]}
           },
           "downstreamImpact": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
           "domains": {
             "type": "object", "additionalProperties": false,
-            "required": ["infrastructure", "workload", "persistence", "internalService", "application", "ingressTls", "externalReachability"],
+            "required": ["infrastructure", "workload", "persistence", "internalService", "application", "ingressRouting", "tls", "ingressTls", "externalReachability"],
             "properties": {
               "infrastructure": {"$ref": "#/$defs/domain"},
               "workload": {"$ref": "#/$defs/domain"},
               "persistence": {"$ref": "#/$defs/domain"},
               "internalService": {"$ref": "#/$defs/domain"},
               "application": {"$ref": "#/$defs/domain"},
+              "ingressRouting": {"$ref": "#/$defs/domain"},
+              "tls": {"$ref": "#/$defs/domain"},
               "ingressTls": {"$ref": "#/$defs/domain"},
               "externalReachability": {"$ref": "#/$defs/domain"}
             }
@@ -93,7 +95,7 @@
               "required": ["id", "layer", "state", "required", "summary", "observedAt", "latencyMs"],
               "properties": {
                 "id": {"type": "string"},
-                "layer": {"enum": ["infrastructure", "storage", "workload", "network", "dependency", "internal-service", "application", "functional", "ingress-tls", "external-reachability"]},
+                "layer": {"enum": ["infrastructure", "storage", "workload", "network", "dependency", "internal-service", "application", "functional", "ingress-routing", "tls", "external-reachability"]},
                 "state": {"$ref": "#/$defs/state"},
                 "required": {"type": "boolean"},
                 "summary": {"type": "string", "minLength": 1, "maxLength": 256},

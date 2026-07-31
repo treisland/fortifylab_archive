@@ -30,13 +30,20 @@ _DIRECT_PRECEDENCE = (
     "unhealthy", "misconfigured", "stopped", "unreachable", "unknown",
     "stale", "starting", "degraded",
 )
+_BLOCKING_STATES = frozenset({
+    "unhealthy", "misconfigured", "stopped", "unreachable", "unknown",
+    "stale", "starting", "blocked",
+})
 _DOMAIN_LAYERS = {
     "infrastructure": ("infrastructure",),
     "workload": ("workload",),
     "persistence": ("storage",),
     "internalService": ("internal-service", "dependency"),
     "application": ("application", "functional"),
-    "ingressTls": ("ingress-tls",),
+    "ingressRouting": ("ingress-routing",),
+    "tls": ("tls",),
+    # Compatibility projection for clients predating the split domains.
+    "ingressTls": ("ingress-routing", "tls"),
     "externalReachability": ("external-reachability",),
 }
 
@@ -209,17 +216,11 @@ class HealthEngine:
         blocked_dependencies: tuple[str, ...],
     ) -> dict:
         required = [entry for entry in evidence if entry["required"]]
-        direct = [
-            entry for entry in required
-            if entry["layer"] not in {
-                "dependency", "ingress-tls", "external-reachability"
-            }
-            and not entry.get("derived", False)
-        ]
+        direct = [entry for entry in required if not entry.get("derived", False)]
         direct_state = self._rank_state(direct)
         access = [
             entry for entry in required
-            if entry["layer"] in {"ingress-tls", "external-reachability"}
+            if entry["layer"] in {"ingress-routing", "tls", "external-reachability"}
         ]
         access_state = self._rank_state(access)
         if direct_state != "healthy":
@@ -251,7 +252,8 @@ class HealthEngine:
         item["directState"] = direct_state
         item["affectedDomains"] = [
             name for name, domain in self._domains(evidence).items()
-            if domain["state"] not in {"healthy", "not-applicable"}
+            if name != "ingressTls"
+            and domain["state"] not in {"healthy", "not-applicable"}
         ]
         item["domains"] = self._domains(evidence)
         item["downstreamImpact"] = []
@@ -294,14 +296,14 @@ class HealthEngine:
             return True
         domains = item.get("domains", {})
         if dependency in {"microk8s-node", "storage", "dns", "ingress", "tls"}:
-            return item["state"] != "healthy"
+            return item["state"] in _BLOCKING_STATES
         relevant = (
             domains.get("workload", {}).get("state"),
             domains.get("persistence", {}).get("state"),
             domains.get("internalService", {}).get("state"),
             domains.get("application", {}).get("state"),
         )
-        return any(state not in {"healthy", "not-applicable"} for state in relevant)
+        return any(state in _BLOCKING_STATES for state in relevant)
 
     def _external_evidence(self, subject: _Subject, now: datetime) -> list[dict]:
         item = next(
@@ -347,16 +349,18 @@ class HealthEngine:
                 "summary": _safe_summary(item.get("summary", "External route evidence unavailable")),
                 "observedAt": observed,
                 "latencyMs": max(0, int(item.get("latencyMs") or 0)),
+                "derived": True,
             }]
         if item.get("tls") in {"valid", "warning", "failed"}:
             evidence.append({
-                "id": "ingress-tls",
-                "layer": "ingress-tls",
+                "id": "tls",
+                "layer": "tls",
                 "state": tls_state,
                 "required": True,
                 "summary": "TLS evidence is reported independently from application health",
                 "observedAt": observed,
                 "latencyMs": 0,
+                "derived": True,
             })
         return evidence
 
@@ -540,8 +544,8 @@ def _infrastructure_subjects() -> tuple[_Subject, ...]:
         ("microk8s-node", "MicroK8s node", (), "infrastructure", "node-ready", "node"),
         ("storage", "Storage", ("microk8s-node",), "storage", "storage-ready", "default"),
         ("dns", "In-cluster DNS", ("microk8s-node",), "internal-service", "dns-lookup", "kubernetes.default"),
-        ("ingress", "Ingress routing", ("microk8s-node",), "ingress-tls", "ingress-ready", "ingress"),
-        ("tls", "TLS", ("ingress",), "ingress-tls", "tls-valid", "managed-hosts"),
+        ("ingress", "Ingress routing", ("microk8s-node",), "ingress-routing", "ingress-ready", "ingress"),
+        ("tls", "TLS", ("ingress",), "tls", "tls-valid", "managed-hosts"),
     )
     return tuple(
         _Subject(

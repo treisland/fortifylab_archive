@@ -230,7 +230,8 @@ schema is
 Each item separates dependency, workload, and application dimensions. It also
 exposes compatible additive `directState`, `affectedDomains`,
 `downstreamImpact`, and `domains` fields for infrastructure, workload,
-persistence, internal service, application, ingress/TLS, and external
+persistence, internal service, application, split ingress routing and TLS,
+their compatible combined projection, and external
 reachability. External availability evidence can degrade access while leaving
 direct workload and application state unchanged. Workload
 evidence can include sanitized presence and desired/ready replica counts even

@@ -193,7 +193,14 @@ class HealthEngineTests(unittest.TestCase):
         self.probe.states["mysql"] = ("degraded", "Query latency is elevated", NOW)
         items = by_id(self.engine().document())
         self.assertEqual(items["mysql"]["state"], "degraded")
+        self.assertEqual(items["ssc"]["state"], "healthy")
+
+    def test_unhealthy_upstream_still_blocks_relevant_consumer_probes(self):
+        self.probe.states["mysql"] = ("unhealthy", "Database failed", NOW)
+        items = by_id(self.engine().document())
+        self.assertEqual(items["mysql"]["state"], "unhealthy")
         self.assertEqual(items["ssc"]["state"], "blocked")
+        self.assertEqual(items["ssc"]["domains"]["workload"]["state"], "healthy")
 
     def test_recovery_rechecks_previously_blocked_consumers(self):
         self.probe.states["storage"] = ("unhealthy", "Volume unavailable", NOW)
@@ -241,10 +248,43 @@ class HealthEngineTests(unittest.TestCase):
     def test_ingress_infrastructure_failure_is_independent_from_components(self):
         self.probe.states["ingress"] = ("unhealthy", "Ingress route failed", NOW)
         items = by_id(self.engine().document())
-        self.assertEqual(items["ingress"]["state"], "degraded")
-        self.assertEqual(items["ingress"]["directState"], "healthy")
+        self.assertEqual(items["ingress"]["state"], "unhealthy")
+        self.assertEqual(items["ingress"]["directState"], "unhealthy")
+        self.assertEqual(
+            items["ingress"]["domains"]["ingressRouting"]["state"], "unhealthy"
+        )
+        self.assertEqual(items["ingress"]["domains"]["tls"]["state"], "not-applicable")
+        self.assertEqual(items["tls"]["state"], "blocked")
         self.assertEqual(items["ssc"]["state"], "healthy")
         self.assertEqual(items["mysql"]["state"], "healthy")
+
+    def test_tls_failure_is_direct_and_does_not_change_ingress_or_components(self):
+        self.probe.states["tls"] = ("unhealthy", "TLS validation failed", NOW)
+        items = by_id(self.engine().document())
+        self.assertEqual(items["ingress"]["state"], "healthy")
+        self.assertEqual(items["tls"]["state"], "unhealthy")
+        self.assertEqual(items["tls"]["directState"], "unhealthy")
+        self.assertEqual(items["tls"]["domains"]["tls"]["state"], "unhealthy")
+        self.assertEqual(
+            items["tls"]["domains"]["ingressRouting"]["state"], "not-applicable"
+        )
+        self.assertEqual(items["ssc"]["state"], "healthy")
+
+    def test_degraded_ingress_does_not_suppress_tls_probe(self):
+        self.probe.states["ingress"] = ("degraded", "Ingress latency elevated", NOW)
+        items = by_id(self.engine().document())
+        self.assertEqual(items["ingress"]["state"], "degraded")
+        self.assertEqual(items["ingress"]["directState"], "degraded")
+        self.assertEqual(items["tls"]["state"], "healthy")
+
+    def test_mixed_ingress_and_tls_states_keep_independent_precedence(self):
+        self.probe.states["ingress"] = ("degraded", "Ingress latency elevated", NOW)
+        self.probe.states["tls"] = ("unhealthy", "TLS validation failed", NOW)
+        document = self.engine().document()
+        items = by_id(document)
+        self.assertEqual(items["ingress"]["directState"], "degraded")
+        self.assertEqual(items["tls"]["directState"], "unhealthy")
+        self.assertEqual(document["state"], "unhealthy")
 
     def test_database_failure_blocks_only_relevant_consumer_checks(self):
         probe = MultidimensionalProbe()
