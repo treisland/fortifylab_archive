@@ -19,7 +19,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "state", "canInspect", "canMutate", "code", "prerequisites", "remediation"],
+        "required": ["id", "state", "presentationState", "severity", "category", "responsibleBoundary", "evidenceAt", "canInspect", "canMutate", "code", "prerequisites", "remediation"],
         "properties": {
           "id": {
             "enum": ["observation", "functional-health", "lifecycle-execution", "approvals", "backup-restore", "upgrades", "secret-workflows", "notifications"]
@@ -27,6 +27,11 @@
           "state": {
             "enum": ["available", "disabled", "not-configured", "unauthorized", "degraded", "temporarily-unavailable"]
           },
+          "presentationState": {"enum": ["available", "disabled-by-policy", "setup-required", "unauthorized", "temporarily-unavailable", "unsupported"]},
+          "severity": {"enum": ["info", "warning", "error"]},
+          "category": {"enum": ["observation", "mutation"]},
+          "responsibleBoundary": {"type": "string", "pattern": "^[a-z][a-z0-9-]{2,63}$"},
+          "evidenceAt": {"type": "string", "format": "date-time"},
           "canInspect": {"type": "boolean"},
           "canMutate": {"type": "boolean"},
           "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
@@ -38,10 +43,21 @@
           "remediation": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["code", "href"],
+            "required": ["code", "href", "summary"],
             "properties": {
               "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]{2,63}$"},
-              "href": {"type": "string", "pattern": "^/docs/(operations/)?[a-z0-9-]+\\.md$"}
+              "href": {"type": "string", "pattern": "^/docs/(operations/)?[a-z0-9-]+\\.md$"},
+              "summary": {"type": "string", "minLength": 12, "maxLength": 180}
+            }
+          },
+          "activation": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["desired", "effective", "action"],
+            "properties": {
+              "desired": {"const": "RBAC"},
+              "effective": {"const": "previous-authorization"},
+              "action": {"const": "restart-required"}
             }
           }
         }

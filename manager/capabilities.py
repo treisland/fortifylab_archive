@@ -18,6 +18,37 @@ CAPABILITY_STATES = {
     "temporarily-unavailable",
 }
 
+PRESENTATION_STATES = {
+    "available": ("available", "info"),
+    "disabled": ("disabled-by-policy", "info"),
+    "not-configured": ("setup-required", "warning"),
+    "unauthorized": ("unauthorized", "error"),
+    "degraded": ("temporarily-unavailable", "warning"),
+    "temporarily-unavailable": ("temporarily-unavailable", "warning"),
+    "unsupported": ("unsupported", "info"),
+}
+
+SAFE_ACTIONS = {
+    "available": "No action required; current evidence supports this capability.",
+    "disabled": "Use the documented operator activation workflow if mutation is intended.",
+    "not-configured": "Complete the documented protected setup, then refresh.",
+    "unauthorized": "Use an authorized Manager account; do not broaden cluster RBAC.",
+    "degraded": "Restore the documented prerequisite, then refresh.",
+    "temporarily-unavailable": "Restore the documented prerequisite, then refresh.",
+    "unsupported": "Install and verify the documented service before enabling this feature.",
+}
+
+CAPABILITY_METADATA = {
+    "observation": ("observation", "manager-runtime-boundary"),
+    "functional-health": ("observation", "functional-probe-boundary"),
+    "lifecycle-execution": ("mutation", "lifecycle-service-boundary"),
+    "approvals": ("mutation", "approval-service-boundary"),
+    "backup-restore": ("mutation", "recovery-helper-boundary"),
+    "upgrades": ("mutation", "upgrade-service-boundary"),
+    "secret-workflows": ("mutation", "secret-service-boundary"),
+    "notifications": ("observation", "notification-provider-boundary"),
+}
+
 DOCS_ROOT = "/docs"
 PREREQUISITES = {
     "observation": (),
@@ -45,6 +76,7 @@ class CapabilityProvider:
         lifecycle_credential_state: Callable[[], bool] | None = None,
         lifecycle_authorization_state: Callable[[], bool] | None = None,
         lifecycle_adapter_state: Callable[[], bool] | None = None,
+        lifecycle_activation_state: Callable[[], str] | None = None,
         approvals_configured: bool = False,
         approvals_state: Callable[[], bool] | None = None,
         recovery_configured: bool = False,
@@ -66,6 +98,7 @@ class CapabilityProvider:
         self._lifecycle_credential_state = lifecycle_credential_state
         self._lifecycle_authorization_state = lifecycle_authorization_state
         self._lifecycle_adapter_state = lifecycle_adapter_state
+        self._lifecycle_activation_state = lifecycle_activation_state
         self._approvals_configured = approvals_configured
         self._approvals_state = approvals_state
         self._recovery_configured = recovery_configured
@@ -122,8 +155,13 @@ class CapabilityProvider:
                 generated + timedelta(seconds=CAPABILITY_MAX_AGE_SECONDS)
             ),
             "refreshAfterSeconds": 30,
-            "capabilities": entries,
+            "capabilities": [self._with_evidence(item, generated) for item in entries],
         }
+
+    @staticmethod
+    def _with_evidence(entry: dict[str, Any], generated: datetime) -> dict[str, Any]:
+        entry["evidenceAt"] = _timestamp(generated)
+        return entry
 
     def _effective_observation(self) -> dict[str, Any]:
         if self._observation_state is None:
@@ -157,7 +195,7 @@ class CapabilityProvider:
             )
         if not self._functional_health_configured:
             return _entry(
-                "functional-health", "degraded", True, False,
+                "functional-health", "not-configured", True, False,
                 "FUNCTIONAL_PROBE_NOT_CONFIGURED", "health-checks",
             )
         try:
@@ -183,6 +221,17 @@ class CapabilityProvider:
     ) -> dict[str, Any]:
         if not self._authorized(identity, "lifecycle-execution"):
             return _unauthorized("lifecycle-execution", "operations/lifecycle-engine")
+        activation = _activation(self._lifecycle_activation_state)
+        if activation == "restart-required":
+            return _entry(
+                "lifecycle-execution", "temporarily-unavailable", True, False,
+                "RBAC_RESTART_REQUIRED", "operations/manager",
+                activation={
+                    "desired": "RBAC",
+                    "effective": "previous-authorization",
+                    "action": "restart-required",
+                },
+            )
         if not self._lifecycle_enabled:
             return _entry(
                 "lifecycle-execution", "disabled", True, False,
@@ -200,7 +249,7 @@ class CapabilityProvider:
             )
         if not _current(self._lifecycle_credential_state):
             return _entry(
-                "lifecycle-execution", "temporarily-unavailable", True, False,
+                "lifecycle-execution", "not-configured", True, False,
                 "LIFECYCLE_CREDENTIAL_UNAVAILABLE", "operations/lifecycle-engine",
             )
         if not _current(self._lifecycle_authorization_state):
@@ -227,7 +276,8 @@ class CapabilityProvider:
             return _unauthorized(capability_id, docs)
         if not configured:
             return _entry(
-                capability_id, "not-configured", True, False, missing_code, docs
+                capability_id, "not-configured", True, False, missing_code, docs,
+                presentation_state="unsupported",
             )
         if lifecycle["state"] != "available":
             return _entry(
@@ -253,7 +303,8 @@ class CapabilityProvider:
             return _unauthorized(capability_id, docs)
         if not configured:
             return _entry(
-                capability_id, "not-configured", True, False, missing_code, docs
+                capability_id, "not-configured", True, False, missing_code, docs,
+                presentation_state="unsupported",
             )
         if not _current(runtime_state):
             return _entry(
@@ -276,6 +327,17 @@ def _current(check: Callable[[], bool] | None) -> bool:
         return False
 
 
+def _activation(check: Callable[[], str] | None) -> str:
+    """Return only the bounded activation states understood by this contract."""
+    if check is None:
+        return "not-reported"
+    try:
+        state = check()
+    except Exception:
+        return "ambiguous"
+    return state if state in {"active", "restart-required", "ambiguous"} else "ambiguous"
+
+
 def _unauthorized(capability_id: str, docs: str) -> dict[str, Any]:
     return _entry(
         capability_id, "unauthorized", True, False,
@@ -285,13 +347,22 @@ def _unauthorized(capability_id: str, docs: str) -> dict[str, Any]:
 
 def _entry(
     capability_id: str, state: str, inspect: bool, mutate: bool,
-    code: str, docs: str,
+    code: str, docs: str, *, activation: dict[str, str] | None = None,
+    presentation_state: str | None = None,
 ) -> dict[str, Any]:
     if state not in CAPABILITY_STATES:
         raise ValueError("invalid capability state")
-    return {
+    category, boundary = CAPABILITY_METADATA[capability_id]
+    presentation, severity = PRESENTATION_STATES[state]
+    if presentation_state == "unsupported":
+        presentation, severity = PRESENTATION_STATES["unsupported"]
+    entry = {
         "id": capability_id,
         "state": state,
+        "presentationState": presentation,
+        "severity": severity,
+        "category": category,
+        "responsibleBoundary": boundary,
         "canInspect": inspect,
         "canMutate": mutate,
         "code": code,
@@ -299,8 +370,18 @@ def _entry(
         "remediation": {
             "code": code,
             "href": f"{DOCS_ROOT}/{docs}.md",
+            "summary": (
+                "Restart MicroK8s through the documented operator workflow, then "
+                "verify least-privilege authorization and refresh."
+                if code == "RBAC_RESTART_REQUIRED" else SAFE_ACTIONS[
+                    "unsupported" if presentation == "unsupported" else state
+                ]
+            ),
         },
     }
+    if activation is not None:
+        entry["activation"] = activation
+    return entry
 
 
 def _timestamp(value: datetime) -> str:

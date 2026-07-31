@@ -41,6 +41,7 @@ from manager.config_migration import MigrationError, schema_version
 
 LOG = logging.getLogger("fortify-manager")
 DEFAULT_CONFIG = Path("/etc/fortify-lab-manager/manager.toml")
+DEFAULT_APISERVER_ARGS = Path("/var/snap/microk8s/current/args/kube-apiserver")
 
 
 class ConfigurationError(RuntimeError):
@@ -49,6 +50,50 @@ class ConfigurationError(RuntimeError):
 
 class ThreadingWSGIServer(ThreadingMixIn, WSGIServer):
     daemon_threads = True
+
+
+def microk8s_rbac_activation_state() -> str:
+    """Detect a desired-RBAC process restart transition without broad privileges."""
+    arguments = Path(os.environ.get(
+        "FORTIFY_MANAGER_APISERVER_ARGS", str(DEFAULT_APISERVER_ARGS)
+    ))
+    try:
+        desired = any(
+            line.startswith("--authorization-mode=")
+            and "RBAC" in line.split("=", 1)[1].split(",")
+            for line in arguments.read_text(encoding="utf-8").splitlines()
+        )
+    except OSError:
+        return "ambiguous"
+    if not desired:
+        return "ambiguous"
+
+    configured_pid = os.environ.get("FORTIFY_MANAGER_APISERVER_PID")
+    candidates = [configured_pid] if configured_pid else []
+    if not candidates:
+        try:
+            candidates = sorted(
+                (item.name for item in Path("/proc").iterdir() if item.name.isdigit()),
+                key=int,
+            )
+        except OSError:
+            return "ambiguous"
+    for pid in candidates:
+        if not pid:
+            continue
+        process = Path("/proc") / pid
+        try:
+            command = (process / "comm").read_text(encoding="utf-8").strip()
+            if not configured_pid and command not in {"kubelite", "kube-apiserver"}:
+                continue
+            return (
+                "restart-required"
+                if arguments.stat().st_mtime_ns > process.stat().st_mtime_ns
+                else "active"
+            )
+        except OSError:
+            continue
+    return "ambiguous"
 
 
 def load_config(path: Path) -> dict:
@@ -234,6 +279,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
         lifecycle_adapter_state=(
             lifecycle_adapter.runtime_ready if lifecycle_adapter is not None else None
         ),
+        lifecycle_activation_state=microk8s_rbac_activation_state,
         approvals_configured=operation_api is not None,
         approvals_state=(
             approval_store.available

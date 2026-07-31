@@ -186,6 +186,16 @@ reports `restart-required` when the arguments were changed after that process
 started. An unreadable arguments file, missing process evidence, or any other
 ambiguous state is rejected.
 
+The authenticated capability API exposes this exact transition as
+`RBAC_RESTART_REQUIRED`, `desired=RBAC`,
+`effective=previous-authorization`, and `action=restart-required`. This is not
+an activation claim: lifecycle mutation remains unavailable until the process
+is restarted and the positive and negative least-privilege probes pass.
+Observation remains a separate capability and deployed workloads are not
+marked unhealthy merely because lifecycle is disabled. For application-level
+rollback, run `deactivate-lifecycle`; reverting MicroK8s authorization is a
+separate cluster-owner decision and must not be automated by the Manager.
+
 `install-cluster-access` first disconnects any active Manager observer
 credential. It then applies the dedicated observer ServiceAccount and
 least-privilege RBAC, proves the complete allow-list, and proves denial of

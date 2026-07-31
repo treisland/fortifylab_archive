@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +14,7 @@ from jsonschema import Draft202012Validator
 
 from manager.capabilities import CapabilityProvider
 from manager.dashboard import CAPABILITIES_PATH, DashboardApp, password_verifier
+from manager.server import microk8s_rbac_activation_state
 from tests.test_dashboard import request
 
 
@@ -89,7 +93,64 @@ class CapabilityProviderTests(unittest.TestCase):
         self.assertEqual(capability["lifecycle-execution"]["code"], "OPERATIONS_DISABLED")
         self.assertFalse(capability["lifecycle-execution"]["canMutate"])
         self.assertEqual(capability["backup-restore"]["state"], "not-configured")
+        self.assertEqual(capability["backup-restore"]["presentationState"], "unsupported")
         self.assertEqual(capability["upgrades"]["state"], "not-configured")
+
+    def test_disabled_lifecycle_does_not_degrade_observation_or_health(self):
+        capability = states(self.provider(
+            observation_state=lambda: "available",
+            functional_health_configured=True,
+            functional_health_state=lambda: True,
+            lifecycle_enabled=False,
+        ).document())
+        self.assertEqual(capability["observation"]["state"], "available")
+        self.assertEqual(capability["functional-health"]["state"], "available")
+        self.assertEqual(capability["lifecycle-execution"]["state"], "disabled")
+        self.assertEqual(
+            capability["lifecycle-execution"]["presentationState"],
+            "disabled-by-policy",
+        )
+        self.assertEqual(capability["observation"]["category"], "observation")
+        self.assertEqual(capability["lifecycle-execution"]["category"], "mutation")
+
+    def test_rbac_restart_transition_fails_mutation_closed_and_recovers(self):
+        activation = ["restart-required"]
+        provider = self.provider(
+            observation_state=lambda: "available",
+            lifecycle_enabled=True,
+            lifecycle_configured=True,
+            lifecycle_credential_state=lambda: True,
+            lifecycle_authorization_state=lambda: True,
+            lifecycle_adapter_state=lambda: True,
+            lifecycle_activation_state=lambda: activation[0],
+        )
+        pending = states(provider.document())["lifecycle-execution"]
+        self.assertEqual(pending["code"], "RBAC_RESTART_REQUIRED")
+        self.assertEqual(pending["state"], "temporarily-unavailable")
+        self.assertFalse(pending["canMutate"])
+        self.assertEqual(pending["activation"], {
+            "desired": "RBAC",
+            "effective": "previous-authorization",
+            "action": "restart-required",
+        })
+        activation[0] = "active"
+        recovered = states(provider.document())["lifecycle-execution"]
+        self.assertEqual(recovered["state"], "available")
+        self.assertNotIn("activation", recovered)
+
+    def test_activation_probe_detects_restart_required_without_claiming_activation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            arguments = Path(temporary) / "kube-apiserver"
+            arguments.write_text("--authorization-mode=RBAC,Node\n", encoding="utf-8")
+            os.utime(arguments, ns=(2**62, 2**62))
+            environment = {
+                "FORTIFY_MANAGER_APISERVER_ARGS": str(arguments),
+                "FORTIFY_MANAGER_APISERVER_PID": str(os.getpid()),
+            }
+            with mock.patch.dict(os.environ, environment):
+                self.assertEqual(
+                    microk8s_rbac_activation_state(), "restart-required"
+                )
 
     def test_partial_observation_failure_temporarily_disables_mutation(self):
         document = self.provider(
@@ -158,6 +219,7 @@ class CapabilityProviderTests(unittest.TestCase):
         )
         first = states(provider.document())["lifecycle-execution"]
         self.assertEqual(first["code"], "LIFECYCLE_CREDENTIAL_UNAVAILABLE")
+        self.assertEqual(first["presentationState"], "setup-required")
         credential[0] = True
         adapter[0] = False
         self.assertEqual(

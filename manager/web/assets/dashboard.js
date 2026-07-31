@@ -8,7 +8,7 @@ const panels = [
   {name: "capabilities", path: "/api/v1alpha1/capabilities", render: renderCapabilities},
   {name: "operations", path: () => activeOperationId ? `/api/v1alpha1/operations/${activeOperationId}` : null, render: renderOperationsRead}
 ];
-const stateNames = new Set(["available", "healthy", "reachable", "degraded", "tls-warning", "dns-mismatch", "not-configured", "unhealthy", "unknown", "blocked", "stale", "starting", "misconfigured", "stopped", "unreachable", "loading", "unavailable", "unauthorized", "timed-out", "error"]);
+const stateNames = new Set(["available", "healthy", "reachable", "degraded", "tls-warning", "dns-mismatch", "not-configured", "setup-required", "disabled-by-policy", "unsupported", "unhealthy", "unknown", "blocked", "stale", "starting", "misconfigured", "stopped", "unreachable", "loading", "unavailable", "unauthorized", "temporarily-unavailable", "timed-out", "error"]);
 const errorCodePattern = /^[A-Z][A-Z0-9_]{2,63}$/;
 const autoRefreshMilliseconds = 30000;
 const readDeadlineMilliseconds = 8000;
@@ -143,6 +143,8 @@ function cleanCapabilityClass(state) {
   if (state === "unauthorized") return "unauthorized";
   if (state === "degraded") return "degraded";
   if (state === "temporarily-unavailable") return "unavailable";
+  if (state === "disabled" || state === "disabled-by-policy" || state === "unsupported") return "not-configured";
+  if (state === "not-configured" || state === "setup-required") return "degraded";
   return "unavailable";
 }
 
@@ -608,20 +610,44 @@ function renderCapabilities(payload) {
   text(byId("capability-detail"), `${payload.capabilities.length} effective capability states · refresh within ${payload.refreshAfterSeconds || 30}s`);
   const list = byId("capability-list");
   list.replaceChildren();
-  for (const capability of payload.capabilities) {
-    const item = documentNode("article", "capability-item");
-    item.append(
-      documentNode("strong", "", capability.id?.replaceAll("-", " ")),
-      status(cleanCapabilityClass(capability.state)),
-      documentNode("small", "", `${capability.state || "unknown"} · ${errorCodePattern.test(String(capability.code || "")) ? capability.code : "CAPABILITY_STATE_INVALID"} · prerequisites: ${Array.isArray(capability.prerequisites) && capability.prerequisites.length ? capability.prerequisites.join(", ") : "none"}`)
+  for (const category of ["observation", "mutation"]) {
+    const capabilities = payload.capabilities.filter(item => (item.category || (item.id === "observation" || item.id === "functional-health" ? "observation" : "mutation")) === category);
+    if (!capabilities.length) continue;
+    const group = documentNode("section", "capability-group");
+    group.append(
+      documentNode("h3", "", category === "observation" ? "Observation and health" : "Controlled mutation"),
+      documentNode("p", "muted", category === "observation"
+        ? "Read-only evidence remains independent from lifecycle controls."
+        : "Unavailable mutation capabilities never imply that deployed workloads are unhealthy.")
     );
-    if (capability.remediation?.href?.startsWith("/docs/")) {
-      const link = document.createElement("a");
-      link.href = capability.remediation.href;
-      link.textContent = "Open guidance";
-      item.append(link);
+    const cards = documentNode("div", "capability-group-cards");
+    for (const capability of capabilities) {
+      const item = documentNode("article", `capability-item severity-${capability.severity || "warning"}`);
+      const presentation = capability.presentationState || ({disabled: "disabled-by-policy", "not-configured": "setup-required", degraded: "temporarily-unavailable"}[capability.state] || capability.state || "temporarily-unavailable");
+      const badge = status(cleanCapabilityClass(presentation));
+      badge.textContent = presentation.replaceAll("-", " ");
+      item.append(
+        documentNode("strong", "", capability.id?.replaceAll("-", " ")),
+        badge,
+        documentNode("small", "capability-code", errorCodePattern.test(String(capability.code || "")) ? capability.code : "CAPABILITY_STATE_INVALID"),
+        documentNode("small", "", `Boundary: ${capability.responsibleBoundary || "not reported"}`),
+        documentNode("small", "", `Evidence: ${capability.evidenceAt ? safeDate(capability.evidenceAt) : "not reported"}`),
+        documentNode("small", "", `Prerequisites: ${Array.isArray(capability.prerequisites) && capability.prerequisites.length ? capability.prerequisites.join(" → ") : "none"}`)
+      );
+      if (capability.activation?.action === "restart-required") {
+        item.append(documentNode("small", "capability-activation", `Activation: desired=${capability.activation.desired} · effective=${capability.activation.effective} · action=restart-required`));
+      }
+      if (capability.remediation?.summary) item.append(documentNode("small", "capability-remediation", capability.remediation.summary));
+      if (capability.remediation?.href?.startsWith("/docs/")) {
+        const link = document.createElement("a");
+        link.href = capability.remediation.href;
+        link.textContent = "Open safe guidance";
+        item.append(link);
+      }
+      cards.append(item);
     }
-    list.append(item);
+    group.append(cards);
+    list.append(group);
   }
   lifecycleCapability = payload.capabilities.find(item => item.id === "lifecycle-execution") || null;
   capabilityExpiresAt = expires.valueOf();
