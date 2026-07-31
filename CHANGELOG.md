@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make Manager releases content-addressed and immutable, reuse identical
+  installs, validate launchers and pre-start behavior before shutdown, switch
+  `current` atomically, restore the prior release and services after failed
+  activation, and retain protected backups with sanitized failure evidence.
+
 - Add protected, versioned, atomic Manager configuration migration with
   operator-value preservation, observer credential/CA permission gating,
   lifecycle-disabled defaults, sanitized inspection and diagnostics,

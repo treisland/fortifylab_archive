@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -187,7 +188,11 @@ def validate(root: Path) -> None:
             "from manager.component_registry import ComponentRegistry; ComponentRegistry.load()",
         ],
         cwd=root,
-        env={**os.environ, "PYTHONPATH": str(root)},
+        env={
+            **os.environ,
+            "PYTHONPATH": str(root),
+            "PYTHONDONTWRITEBYTECODE": "1",
+        },
         capture_output=True,
         text=True,
     )
@@ -195,9 +200,27 @@ def validate(root: Path) -> None:
         raise PackagingError("staged runtime registry validation failed")
 
 
+def content_digest(root: Path) -> str:
+    """Return a deterministic digest of the validated runtime and its modes."""
+    validate(root)
+    root = root.resolve()
+    digest = hashlib.sha256()
+    for path in sorted(root.rglob("*"), key=lambda item: str(item.relative_to(root))):
+        relative = str(path.relative_to(root)).encode("utf-8")
+        kind = b"directory" if path.is_dir() else b"file"
+        mode = f"{stat.S_IMODE(path.stat().st_mode):04o}".encode("ascii")
+        digest.update(kind + b"\0" + relative + b"\0" + mode + b"\0")
+        if path.is_file():
+            with path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(block)
+            digest.update(b"\0")
+    return digest.hexdigest()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("command", choices=("stage", "validate"))
+    parser.add_argument("command", choices=("stage", "validate", "digest"))
     parser.add_argument("--source", type=Path)
     parser.add_argument("--target", type=Path, required=True)
     arguments = parser.parse_args()
@@ -206,8 +229,10 @@ def main() -> int:
             if arguments.source is None:
                 parser.error("stage requires --source")
             stage(arguments.source, arguments.target)
-        else:
+        elif arguments.command == "validate":
             validate(arguments.target)
+        else:
+            print(content_digest(arguments.target))
     except (OSError, PackagingError) as error:
         print(f"Manager runtime packaging failed: {error}", file=sys.stderr)
         return 1
