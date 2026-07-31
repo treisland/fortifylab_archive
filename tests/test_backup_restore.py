@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
@@ -68,6 +69,7 @@ class RecoveryTests(unittest.TestCase):
         )
 
     def tearDown(self):
+        self.assertTrue(self.service.wait_for_idle(2))
         self.store.close()
         self.temp.cleanup()
 
@@ -165,6 +167,20 @@ class RecoveryTests(unittest.TestCase):
         failed = self.completed(operation["id"])
         self.assertEqual(failed["state"], "failed")
         self.assertIn("verification failed", failed["error"])
+
+    def test_wait_for_idle_is_bounded_and_prevents_store_close_races(self):
+        release = threading.Event()
+        original = self.adapter.backup
+
+        def blocked(*args):
+            release.wait(1)
+            return original(*args)
+
+        self.adapter.backup = blocked
+        self.service.submit_backup(actor="local-cli:operator")
+        self.assertFalse(self.service.wait_for_idle(0.01))
+        release.set()
+        self.assertTrue(self.service.wait_for_idle(2))
 
     def test_restart_marks_active_operation_interrupted(self):
         document = self.service._new_operation(

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/evaluations/verified-platform-lifecycle-v0.4/schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "suiteVersion", "milestoneGate", "requiredProfileId", "scope", "scenarios"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/evaluations/v1alpha1"},
+    "kind": {"const": "VerifiedPlatformLifecycleEvaluationSuite"},
+    "suiteVersion": {"type": "string", "pattern": "^0\\.4\\.[0-9]+$"},
+    "milestoneGate": {"const": "0.4-verified-platform-lifecycle"},
+    "requiredProfileId": {"type": "string", "minLength": 1, "maxLength": 96},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "aspm", "liveEvidence"],
+      "properties": {
+        "platform": {"const": "single-node MicroK8s"},
+        "aspm": {"const": "excluded"},
+        "liveEvidence": {"const": "separate-required-artifact"}
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": {"$ref": "#/$defs/scenario"}
+    }
+  },
+  "$defs": {
+    "text": {"type": "string", "minLength": 1, "maxLength": 300},
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "area", "command", "expectedOutcome", "evidence", "fixture", "expected"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$", "maxLength": 96},
+        "area": {"enum": ["inventory", "health", "lifecycle", "recovery", "upgrade", "secret"]},
+        "command": {"$ref": "#/$defs/text"},
+        "expectedOutcome": {"$ref": "#/$defs/text"},
+        "evidence": {"const": "deterministic-fixture"},
+        "fixture": {
+          "type": "object",
+          "additionalProperties": {"type": ["string", "integer", "boolean", "null"]},
+          "minProperties": 1
+        },
+        "expected": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["state", "actualClusterState", "primaryRootCause", "blockedConsumers", "remediation", "residualLimitation"],
+          "properties": {
+            "state": {"enum": ["healthy", "degraded", "blocked", "succeeded", "failed", "cancelled", "restore-required"]},
+            "actualClusterState": {"$ref": "#/$defs/text"},
+            "primaryRootCause": {"$ref": "#/$defs/text"},
+            "blockedConsumers": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/text"}},
+            "remediation": {"$ref": "#/$defs/text"},
+            "residualLimitation": {"$ref": "#/$defs/text"}
+          }
+        }
+      }
+    }
+  }
+}

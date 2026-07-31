@@ -1,0 +1,6 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "VerifiedPlatformLifecycleLiveEvidence",
+  "status": "not-run",
+  "reason": "Authorized exact-profile live MicroK8s and browser evaluation has not been recorded."
+}

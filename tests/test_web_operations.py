@@ -137,6 +137,7 @@ class WebOperationTests(unittest.TestCase):
         self.cookie = login["headers"]["Set-Cookie"].split(";", 1)[0]
 
     def tearDown(self):
+        self.assertTrue(self.recovery.wait_for_idle(2))
         self.operation_store.close()
         self.approval_store.close()
         self.recovery_store.close()

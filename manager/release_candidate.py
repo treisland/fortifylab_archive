@@ -14,6 +14,9 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
+from manager.observable_evaluation import load
+from manager.verified_lifecycle_evaluation import evaluate as evaluate_lifecycle
+
 
 MAX_FILES = 1000
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -174,6 +177,16 @@ def _git_revision(root: Path) -> str:
     ).stdout.strip()
 
 
+def _lifecycle_gate(root: Path, evaluated_at: str) -> dict[str, object]:
+    evaluation_root = root / "evaluations" / "verified-platform-lifecycle-v0.4"
+    return evaluate_lifecycle(
+        load(evaluation_root / "scenarios.json"),
+        load(evaluation_root / "observations.json"),
+        load(evaluation_root / "live-evidence.json"),
+        evaluated_at=evaluated_at,
+    )
+
+
 def _write_tar(archive: Path, root: Path, paths: Iterable[str], epoch: int) -> None:
     with archive.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=epoch) as compressed:
@@ -206,6 +219,7 @@ def build_candidate(
     paths = tracked_release_files(root)
     files = _scan_files(root, paths)
     profile_matrix = _profile_matrix(root)
+    lifecycle_evaluation = _lifecycle_gate(root, recorded_at)
     directory = output_root.resolve() / version
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -259,6 +273,16 @@ def build_candidate(
             "evidence": "profile-matrix.json",
             "reason": None if live_passed else "Exact-profile licensed live lifecycle evidence is absent.",
         },
+        {
+            "id": "verified-platform-lifecycle-evaluation",
+            "status": lifecycle_evaluation["status"],
+            "evidence": "verified-platform-lifecycle-evaluation.json",
+            "reason": (
+                None
+                if lifecycle_evaluation["status"] == "passed"
+                else "Deterministic and fresh exact-profile live evaluation evidence is incomplete."
+            ),
+        },
         {"id": "installation-docs", "status": "passed", "evidence": "documentation-verification.json"},
         {"id": "upgrade-docs", "status": "passed", "evidence": "documentation-verification.json"},
     ]
@@ -287,6 +311,7 @@ def build_candidate(
             ],
             "scope": "static commands, links, and candidate contracts; no live execution",
         },
+        "verified-platform-lifecycle-evaluation.json": lifecycle_evaluation,
         "go-no-go.json": {
             "version": version,
             "verdict": verdict,
