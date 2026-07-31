@@ -171,6 +171,11 @@ supported `https://lab.$DOMAIN` MicroK8s ingress route, systemd lifecycle,
 authentication bootstrap, diagnostics, upgrades, backups, and uninstall/data
 deletion boundary.
 
+See the [manager API and local CLI reference](docs/api.md#local-cli-automation)
+for typed automation, durable recovery, versioned JSON, approval parity, and
+stable exit statuses. The repository keeps live lifecycle execution disabled
+until a bounded MicroK8s adapter is supplied and validated.
+
 Run and interpret the manager's read-only readiness report using
 [Deployment preflight](docs/deployment-preflight.md) before beginning a lab
 deployment.

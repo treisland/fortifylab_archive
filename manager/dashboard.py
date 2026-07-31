@@ -34,6 +34,7 @@ class WebIdentity:
     username: str
     session_id: str
     authenticated_at: float
+    source: str = "web"
 
 
 def password_verifier(password: str, *, iterations: int = 210_000) -> str:
@@ -62,6 +63,7 @@ class _Session:
     username: str
     created: float
     accessed: float
+    source: str
 
 
 class SessionStore:
@@ -79,10 +81,12 @@ class SessionStore:
         self._clock = clock
         self._sessions: dict[str, _Session] = {}
 
-    def create(self, username: str) -> str:
+    def create(self, username: str, *, source: str = "web") -> str:
+        if source not in {"web", "local-cli"}:
+            raise ValueError("unsupported session source")
         token = secrets.token_urlsafe(32)
         now = self._clock()
-        self._sessions[token] = _Session(username, now, now)
+        self._sessions[token] = _Session(username, now, now, source)
         return token
 
     def authenticated(self, token: str | None) -> bool:
@@ -97,7 +101,9 @@ class SessionStore:
             self._sessions.pop(token, None)
             return None
         session.accessed = now
-        return WebIdentity(session.username, token, session.created)
+        return WebIdentity(
+            session.username, token, session.created, source=session.source
+        )
 
     def delete(self, token: str | None) -> None:
         if token:
@@ -205,12 +211,15 @@ class DashboardApp:
                 document = json.loads(body)
                 username = str(document.get("username", ""))
                 password = str(document.get("password", ""))
+                source = str(document.get("client", "web"))
+                if source not in {"web", "local-cli"}:
+                    raise ValueError
             except (KeyError, ValueError, TypeError, json.JSONDecodeError):
                 return self._auth_failed(start_response)
             verifier = self._accounts.get(username, "")
             if not verifier or not verify_password(password, verifier):
                 return self._auth_failed(start_response)
-            token = self._sessions.create(username)
+            token = self._sessions.create(username, source=source)
             flags = "; HttpOnly; SameSite=Strict; Path=/"
             if self._secure_cookies:
                 flags += "; Secure"
