@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add protected, versioned, atomic Manager configuration migration with
+  operator-value preservation, observer credential/CA permission gating,
+  lifecycle-disabled defaults, sanitized inspection and diagnostics,
+  protected backups, and validated rollback.
+
 - Add time-bounded Autonomous supervisor leases with automatic Assisted
   reversion, immediate emergency hold, exact-head required-check and secret-
   scan enforcement, issue/milestone and sensitive-scope merge gates, durable

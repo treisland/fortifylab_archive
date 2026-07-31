@@ -22,13 +22,18 @@ KUBERNETES_SERVER="${FORTIFY_MANAGER_KUBERNETES_SERVER:-https://127.0.0.1:16443}
 TLS_SECRET="${FORTIFY_MANAGER_TLS_SECRET:-tls}"
 SERVICE_NAME="fortify-manager.service"
 PROBE_SERVICE_NAME="fortify-health-probe.service"
+CONFIG_BACKUP_ROOT="${FORTIFY_MANAGER_CONFIG_BACKUP_ROOT:-$STATE_ROOT/config-backups}"
 
 usage() {
     cat <<'EOF'
 Usage: sudo ./scripts/fortify-manager COMMAND [arguments]
 
 Commands:
-  install                         Install/upgrade files without changing config or state
+  install                         Install/upgrade files and safely migrate protected config
+  config-inspect                  Report schema and protected capability metadata
+  config-migrate                  Back up, validate, and atomically migrate manager.toml
+  config-rollback BACKUP          Validate and atomically restore a protected backup
+  config-diagnose                 Run sanitized configuration diagnostics
   rbac-preflight                  Report desired/effective MicroK8s RBAC state
   install-cluster-access [--approve-enable-rbac] [--approve-restart]
                                   Verify RBAC and activate protected observer access
@@ -55,6 +60,15 @@ fail() {
 
 require_root() {
     [ "$(id -u)" -eq 0 ] || fail "run this command with sudo"
+}
+
+manager_config() {
+    local command="$1"
+    shift
+    PYTHONPATH="$REPOSITORY_ROOT" python3 -m manager.config_migration "$command" "$@" \
+        --config "$CONFIG_ROOT/manager.toml" \
+        --backup-root "$CONFIG_BACKUP_ROOT" \
+        --access-root "$CLUSTER_ACCESS_ROOT"
 }
 
 validate_domain() {
@@ -161,6 +175,9 @@ install_runtime() {
             --home-dir /nonexistent --shell /usr/sbin/nologin fortify-health-probe
     install -d -m 700 -o fortify-manager -g fortify-manager "$STATE_ROOT"
     install -d -m 750 -o root -g fortify-manager "$CONFIG_ROOT"
+    if [ -e "$CONFIG_ROOT/manager.toml" ]; then
+        manager_config migrate
+    fi
     if [ -e "$release" ]; then
         replaced="$INSTALL_ROOT/releases/$VERSION.replaced.$(date -u +%Y%m%dT%H%M%SZ).$$"
         mv "$release" "$replaced"
@@ -338,6 +355,10 @@ install_cluster_access() {
     mv -f "$ca_candidate" "$CLUSTER_ACCESS_ROOT/ca.crt"
     trap - RETURN
     rm -f "$CLUSTER_ACCESS_ROOT/token.disconnected"
+    if ! manager_config migrate; then
+        mv -f "$CLUSTER_ACCESS_ROOT/token" "$CLUSTER_ACCESS_ROOT/token.disconnected"
+        fail "observer files are protected but configuration migration failed; Manager remains disconnected"
+    fi
     printf 'Verified effective RBAC and activated namespace-scoped observer access; no application Secret was read.\n'
 }
 
@@ -700,6 +721,23 @@ command="${1:-}"
 shift || true
 case "$command" in
     install) install_runtime ;;
+    config-inspect)
+        require_root
+        manager_config inspect
+        ;;
+    config-migrate)
+        require_root
+        manager_config migrate
+        ;;
+    config-rollback)
+        require_root
+        [ "$#" -eq 1 ] || fail "config-rollback requires one protected backup path"
+        manager_config rollback "$1"
+        ;;
+    config-diagnose)
+        require_root
+        manager_config diagnose
+        ;;
     rbac-preflight) rbac_preflight ;;
     install-cluster-access) install_cluster_access "$@" ;;
     activate-lifecycle) activate_lifecycle "$@" ;;
