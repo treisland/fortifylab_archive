@@ -130,6 +130,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
     recovery_service = None
     lifecycle_adapter = None
     approval_store = None
+    capability_provider_ref: dict[str, CapabilityProvider] = {}
     if cluster:
         try:
             functional_probe = (
@@ -191,7 +192,9 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
             authorization=authorization,
             state_provider=component_states,
             preflight_provider=lambda: PreflightEngine(
-                registry, observer
+                registry,
+                observer,
+                capability_provider=capability_provider_ref["provider"].document,
             ).document(),
             footprint_provider=getattr(observer, "installation_footprint", None),
         )
@@ -233,6 +236,7 @@ def build_app(config: dict) -> tuple[DashboardApp, LoopRecordStore]:
             lambda: _configured_socket_ready(config.get("recovery", {}).get("helper_socket"))
         ) if recovery_service is not None else None,
     )
+    capability_provider_ref["provider"] = capability_provider
     api = ManagerAPI(
         registry_loader=lambda: registry,
         observer=observer,
