@@ -14,6 +14,12 @@ The component registry selects exactly one profile with `profileRef`. Manager
 startup, registry validation, preflight, Web UI, CLI, and release evidence fail
 closed when that reference is absent, unknown, malformed, or its pins differ.
 
+Executable transitions are never inferred from version ordering. A target
+must name each allowed source and provide one corresponding transition with
+bounded downtime, backup, migration, rollback, and recovery metadata. Any
+declared transition also requires licensed-live evidence with a passed upgrade
+check. See [Profile-aware upgrades](operations/profile-upgrades.md).
+
 ## Current baseline
 
 `fortify-24.4-eval.1` contains:

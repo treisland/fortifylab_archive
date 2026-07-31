@@ -148,6 +148,25 @@ class OperationClient:
             "GET", f"/api/v1alpha1/recovery/operations/{operation_id}"
         )
 
+    def upgrade_plan(self, target_profile_id: str) -> dict[str, Any]:
+        return self._request(
+            "POST", "/api/v1alpha1/profile-upgrades/plans",
+            {"targetProfileId": target_profile_id},
+        )
+
+    def upgrade_profile(
+        self, plan_id: str, confirmation: str
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST", "/api/v1alpha1/profile-upgrades",
+            {"planId": plan_id, "confirmation": confirmation},
+        )
+
+    def upgrade_status(self, operation_id: str) -> dict[str, Any]:
+        return self._request(
+            "GET", f"/api/v1alpha1/profile-upgrades/{operation_id}"
+        )
+
     def wait(
         self, operation_id: str, *, timeout: float, interval: float = 1
     ) -> dict[str, Any]:
@@ -305,6 +324,20 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument("--wait", type=float, metavar="SECONDS")
     recovery_status = subparsers.add_parser("recovery-status")
     recovery_status.add_argument("operation_id")
+    upgrade_plan = subparsers.add_parser(
+        "upgrade-plan", help="validate a tested target-profile transition"
+    )
+    upgrade_plan.add_argument("target_profile_id")
+    upgrade = subparsers.add_parser(
+        "upgrade-profile", help="execute an exact fresh profile upgrade plan"
+    )
+    upgrade.add_argument("plan_id")
+    upgrade.add_argument(
+        "--confirmation", required=True,
+        help="exact confirmation emitted by upgrade-plan",
+    )
+    upgrade_status = subparsers.add_parser("upgrade-status")
+    upgrade_status.add_argument("operation_id")
     return parser
 
 
@@ -397,6 +430,12 @@ def main(argv: list[str] | None = None) -> int:
                 result = _wait_recovery(client, result["id"], args.wait)
         elif args.command == "recovery-status":
             result = client.recovery_status(args.operation_id)
+        elif args.command == "upgrade-plan":
+            result = client.upgrade_plan(args.target_profile_id)
+        elif args.command == "upgrade-profile":
+            result = client.upgrade_profile(args.plan_id, args.confirmation)
+        elif args.command == "upgrade-status":
+            result = client.upgrade_status(args.operation_id)
         else:
             result = client.retry(args.operation_id, args.approval_id)
             if args.wait is not None:
