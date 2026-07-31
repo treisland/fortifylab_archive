@@ -14,6 +14,9 @@ CLUSTER_ACCESS_ROOT="${FORTIFY_MANAGER_CLUSTER_ACCESS_ROOT:-$STATE_ROOT/cluster-
 APISERVER_ARGS="${FORTIFY_MANAGER_APISERVER_ARGS:-/var/snap/microk8s/current/args/kube-apiserver}"
 PACKAGE_VALIDATOR="${FORTIFY_MANAGER_PACKAGE_VALIDATOR:-$REPOSITORY_ROOT/scripts/package-manager-runtime.py}"
 LIFECYCLE_KUBECONFIG="$CLUSTER_ACCESS_ROOT/lifecycle.kubeconfig"
+LIFECYCLE_CLIENT_ROOT="${FORTIFY_MANAGER_LIFECYCLE_CLIENT_ROOT:-$STATE_ROOT/lifecycle-bin}"
+KUBECTL_CLIENT="${FORTIFY_MANAGER_KUBECTL_CLIENT:-/snap/microk8s/current/kubectl}"
+HELM_CLIENT="${FORTIFY_MANAGER_HELM_CLIENT:-/snap/microk8s/current/bin/helm}"
 KUBERNETES_SERVER="${FORTIFY_MANAGER_KUBERNETES_SERVER:-https://127.0.0.1:16443}"
 TLS_SECRET="${FORTIFY_MANAGER_TLS_SECRET:-tls}"
 SERVICE_NAME="fortify-manager.service"
@@ -361,7 +364,55 @@ PY
 lifecycle_can() {
     local kubeconfig="$1"
     shift
-    KUBECONFIG="$kubeconfig" microk8s kubectl auth can-i "$@" 2>/dev/null
+    runuser -u fortify-manager -- env \
+        KUBECONFIG="$kubeconfig" \
+        PATH="$LIFECYCLE_CLIENT_ROOT:/usr/sbin:/usr/bin:/sbin:/bin" \
+        microk8s kubectl auth can-i "$@" 2>/dev/null
+}
+
+install_lifecycle_clients() {
+    local candidate
+    [ -x "$KUBECTL_CLIENT" ] && [ -x "$HELM_CLIENT" ] ||
+        fail "unprivileged Kubernetes lifecycle clients are unavailable; lifecycle remains disabled"
+    install -d -m 755 "$LIFECYCLE_CLIENT_ROOT"
+    chown root:fortify-manager "$LIFECYCLE_CLIENT_ROOT"
+    candidate="$(mktemp "$LIFECYCLE_CLIENT_ROOT/.microk8s.XXXXXX")"
+    trap 'rm -f "$candidate"' RETURN
+    python3 - "$candidate" "$KUBECTL_CLIENT" "$HELM_CLIENT" <<'PY'
+import os
+import shlex
+import sys
+
+target, kubectl, helm = sys.argv[1:]
+document = f"""#!/bin/sh
+case "${{1:-}}" in
+    kubectl)
+        shift
+        exec {shlex.quote(kubectl)} "$@"
+        ;;
+    helm3)
+        shift
+        exec {shlex.quote(helm)} "$@"
+        ;;
+    *)
+        printf 'ERROR: unsupported lifecycle client command\n' >&2
+        exit 64
+        ;;
+esac
+"""
+with open(target, "w", encoding="utf-8") as stream:
+    stream.write(document)
+os.chmod(target, 0o755)
+PY
+    chown root:fortify-manager "$candidate"
+    mv -f "$candidate" "$LIFECYCLE_CLIENT_ROOT/microk8s"
+    trap - RETURN
+    runuser -u fortify-manager -- \
+        "$LIFECYCLE_CLIENT_ROOT/microk8s" kubectl version --client >/dev/null ||
+        fail "unprivileged Kubernetes lifecycle client verification failed; lifecycle remains disabled"
+    runuser -u fortify-manager -- \
+        "$LIFECYCLE_CLIENT_ROOT/microk8s" helm3 version --short >/dev/null ||
+        fail "unprivileged Helm lifecycle client verification failed; lifecycle remains disabled"
 }
 
 verify_lifecycle_authorization() {
@@ -455,6 +506,7 @@ activate_lifecycle() {
         fail "installed Manager packaging verification failed; lifecycle remains disabled"
     "$INSTALL_ROOT/current/bin/fortify-manager-server" diagnose-cluster >/dev/null ||
         fail "protected observer verification failed; lifecycle remains disabled"
+    install_lifecycle_clients
 
     health_socket="$(sed -n 's/^[[:space:]]*health_probe_socket[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$CONFIG_ROOT/manager.toml")"
     [ -n "$health_socket" ] && [ -S "$health_socket" ] &&
@@ -522,6 +574,7 @@ deactivate_lifecycle() {
     require_root
     set_lifecycle_enabled false
     rm -f "$LIFECYCLE_KUBECONFIG"
+    rm -f "$LIFECYCLE_CLIENT_ROOT/microk8s"
     microk8s kubectl -n fortify delete rolebinding fortify-manager-lifecycle \
         secret fortify-manager-lifecycle-token --ignore-not-found >/dev/null ||
         fail "lifecycle configuration is disabled, but credential revocation needs operator attention"

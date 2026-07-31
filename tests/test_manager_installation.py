@@ -98,6 +98,11 @@ class ManagerInstallationTests(unittest.TestCase):
                 state_root / "cluster-access"
             ),
             "FORTIFY_MANAGER_PACKAGE_VALIDATOR": str(validator),
+            "FORTIFY_MANAGER_LIFECYCLE_CLIENT_ROOT": str(
+                state_root / "lifecycle-bin"
+            ),
+            "FORTIFY_MANAGER_KUBECTL_CLIENT": str(bin_root / "microk8s"),
+            "FORTIFY_MANAGER_HELM_CLIENT": str(bin_root / "microk8s"),
         }
         return config, state_root / "cluster-access/lifecycle.kubeconfig", health_socket, environment
 
@@ -528,6 +533,9 @@ class ManagerInstallationTests(unittest.TestCase):
             self.assertIn("enabled = true", config.read_text())
             self.assertTrue(kubeconfig.is_file())
             self.assertEqual(kubeconfig.stat().st_mode & 0o777, 0o600)
+            lifecycle_client = Path(directory) / "state/lifecycle-bin/microk8s"
+            self.assertTrue(lifecycle_client.is_file())
+            self.assertEqual(lifecycle_client.stat().st_mode & 0o777, 0o755)
 
     def test_lifecycle_activation_denial_partial_retry_and_rollback(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -589,6 +597,9 @@ class ManagerInstallationTests(unittest.TestCase):
             self.assertEqual(deactivated.returncode, 0, deactivated.stderr)
             self.assertIn("enabled = false", config.read_text())
             self.assertFalse(kubeconfig.exists())
+            self.assertFalse(
+                (Path(directory) / "state/lifecycle-bin/microk8s").exists()
+            )
             self.assertEqual(history.read_text(), "preserved")
             self.assertIn("operation history were preserved", deactivated.stdout)
 

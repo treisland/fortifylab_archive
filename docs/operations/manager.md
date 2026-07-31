@@ -140,6 +140,14 @@ permission. Mandatory negative checks prove denial of Secrets, logs, exec,
 attach, port-forward, RBAC, namespaces, persistent volumes, and resources in
 `default`. Helm execution remains fixed to `HELM_DRIVER=configmap`.
 
+The Manager is never added to the privileged `microk8s` group. Activation
+installs a root-owned, fixed-command shim beneath
+`/var/lib/fortify-lab-manager/lifecycle-bin` that dispatches only `kubectl` and
+`helm3` to MicroK8s's unprivileged client binaries. Lifecycle adapters receive
+that directory first in their fixed `PATH` and always use the dedicated
+kubeconfig. The general `/snap/bin/microk8s` administrative wrapper is excluded
+from their environment.
+
 Only after all checks pass does the command enable configuration and restart
 the Manager. Success reports `lifecycle-execution: available`. Any failed
 prerequisite leaves the flag false; post-configuration failures also remove

@@ -88,6 +88,12 @@ class MicroK8sLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(captured["env"]["NAMESPACE"], "fortify")
         self.assertEqual(captured["env"]["HELM_DRIVER"], "configmap")
+        self.assertTrue(
+            captured["env"]["PATH"].startswith(
+                "/var/lib/fortify-lab-manager/lifecycle-bin:"
+            )
+        )
+        self.assertNotIn("/snap/bin", captured["env"]["PATH"])
         self.assertIs(captured["stdout"], subprocess.DEVNULL)
         self.assertIs(captured["stderr"], subprocess.DEVNULL)
 
