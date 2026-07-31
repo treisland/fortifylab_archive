@@ -358,6 +358,10 @@ class Store:
         )
         self.connection.commit()
 
+    def unset(self, key: str) -> None:
+        self.connection.execute("DELETE FROM settings WHERE key = ?", (key,))
+        self.connection.commit()
+
     def claim_issue(self, issue: int, title: str, milestone: str) -> bool:
         """Atomically claim one idle queue slot across monitor processes."""
 
@@ -2371,27 +2375,32 @@ class Supervisor:
         heartbeat = read_heartbeat(self.config.heartbeat_root, int(issue))
         if not heartbeat:
             return
-        self.store.set(
-            "process_policy:runner",
-            json.dumps(
-                {
-                    "generation": heartbeat["policy_generation"],
-                    "digest": heartbeat["policy_digest"],
-                    "updated_at": int(self.store.now()),
-                },
-                sort_keys=True,
-            ),
-        )
-        if (
-            int(heartbeat["policy_generation"]) != self.policy.generation
-            or str(heartbeat["policy_digest"]) != self.policy.digest
-        ):
-            self.store.set("autonomy_configuration_state", "mismatch")
-            raise SupervisorError("configuration mismatch; runner actions are blocked")
         now = self.store.now()
         generation = int(heartbeat["generation"])
         phase = str(heartbeat["phase"])
         health = str(heartbeat["runner_health"])
+        if health in {"completed", "failed"}:
+            self.store.unset("process_policy:runner")
+        else:
+            self.store.set(
+                "process_policy:runner",
+                json.dumps(
+                    {
+                        "generation": heartbeat["policy_generation"],
+                        "digest": heartbeat["policy_digest"],
+                        "updated_at": int(now),
+                    },
+                    sort_keys=True,
+                ),
+            )
+            if (
+                int(heartbeat["policy_generation"]) != self.policy.generation
+                or str(heartbeat["policy_digest"]) != self.policy.digest
+            ):
+                self.store.set("autonomy_configuration_state", "mismatch")
+                raise SupervisorError(
+                    "configuration mismatch; runner actions are blocked"
+                )
         prefix = f"runner:{issue}:{generation}"
         previous_phase = self.store.get(f"{prefix}:phase")
         previous_health = self.store.get(f"{prefix}:health")

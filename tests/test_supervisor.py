@@ -993,6 +993,29 @@ class SupervisorTest(unittest.TestCase):
         restarted.monitor_runner()
         self.assertEqual(len(self.telegram.messages), delivered)
 
+    def test_terminal_runner_does_not_attest_a_stale_policy_generation(self) -> None:
+        self.write_heartbeat(phase="completed", health="completed")
+        heartbeat_path = self.config.heartbeat_root / "issue-2.json"
+        heartbeat = json.loads(heartbeat_path.read_text(encoding="utf-8"))
+        heartbeat["policy_generation"] = 0
+        heartbeat["policy_digest"] = "b" * 64
+        heartbeat_path.write_text(json.dumps(heartbeat), encoding="utf-8")
+        self.store.set(
+            "process_policy:runner",
+            json.dumps(
+                {
+                    "generation": 0,
+                    "digest": "b" * 64,
+                    "updated_at": int(self.clock[0]),
+                }
+            ),
+        )
+
+        self.supervisor.monitor_runner()
+
+        self.assertEqual(self.store.get("process_policy:runner"), "")
+        self.assertEqual(self.supervisor.configuration_state(), "active")
+
     def test_quiet_hours_suppress_routine_but_not_stall(self) -> None:
         self.clock[0] = 1_800
         self.write_heartbeat(elapsed=900, health="stalled", activity_age=900)
