@@ -8,6 +8,7 @@ CONFIG_ROOT="${FORTIFY_MANAGER_CONFIG_ROOT:-/etc/fortify-lab-manager}"
 STATE_ROOT="${FORTIFY_MANAGER_STATE_ROOT:-/var/lib/fortify-lab-manager}"
 INSTALL_ROOT="${FORTIFY_MANAGER_INSTALL_ROOT:-/opt/fortify-lab-manager}"
 UNIT_PATH="${FORTIFY_MANAGER_UNIT_PATH:-/etc/systemd/system/fortify-manager.service}"
+CLI_PATH="${FORTIFY_MANAGER_CLI_PATH:-/usr/local/bin/fortify-manager-cli}"
 MANIFEST_PATH="${FORTIFY_MANAGER_MANIFEST_PATH:-/var/lib/fortify-lab-manager/manager-ingress.yaml}"
 TLS_SECRET="${FORTIFY_MANAGER_TLS_SECRET:-tls}"
 SERVICE_NAME="fortify-manager.service"
@@ -132,7 +133,13 @@ install_runtime() {
 cd "$release"
 exec /usr/bin/python3 -m manager.server "\$@"
 EOF
+    install -m 755 /dev/stdin "$release/bin/fortify-manager-cli" <<EOF
+#!/bin/sh
+cd "$release"
+exec /usr/bin/python3 -m manager.cli "\$@"
+EOF
     ln -sfn "$release" "$INSTALL_ROOT/current"
+    ln -sfn "$INSTALL_ROOT/current/bin/fortify-manager-cli" "$CLI_PATH"
     if [ ! -e "$CONFIG_ROOT/manager.toml" ]; then
         install -m 640 -o root -g fortify-manager \
             "$REPOSITORY_ROOT/config/manager.example.toml" \
@@ -283,6 +290,7 @@ PY
             service fortify-manager-host endpoints fortify-manager-host \
             --ignore-not-found
         rm -f "$UNIT_PATH"
+        rm -f "$CLI_PATH"
         systemctl daemon-reload
         printf 'Manager service and ingress removed. Configuration and state preserved.\n'
         ;;

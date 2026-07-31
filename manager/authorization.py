@@ -109,21 +109,28 @@ class ApprovalStore:
         self._lock = threading.RLock()
 
     def close(self) -> None:
-        self.connection.close()
+        with self._lock:
+            self.connection.close()
 
     def approval(self, approval_id: str) -> dict[str, Any]:
-        row = self.connection.execute(
-            "SELECT payload FROM operation_approvals WHERE id = ?", (approval_id,)
-        ).fetchone()
+        with self._lock:
+            row = self.connection.execute(
+                "SELECT payload FROM operation_approvals WHERE id = ?",
+                (approval_id,),
+            ).fetchone()
         if row is None:
             raise AuthorizationError("approval was not found")
         return json.loads(row["payload"])
 
     def audit(self) -> list[dict[str, Any]]:
-        return [dict(row) for row in self.connection.execute(
-            "SELECT at, approval_id, action, actor, outcome, reason "
-            "FROM authorization_audit ORDER BY sequence"
-        )]
+        with self._lock:
+            return [
+                dict(row)
+                for row in self.connection.execute(
+                    "SELECT at, approval_id, action, actor, outcome, reason "
+                    "FROM authorization_audit ORDER BY sequence"
+                )
+            ]
 
     def insert(self, document: dict[str, Any]) -> None:
         with self._lock:
@@ -147,11 +154,13 @@ class ApprovalStore:
         self, at: str, approval_id: str | None, action: str, actor: str,
         outcome: str, reason: str,
     ) -> None:
-        self.connection.execute(
-            "INSERT INTO authorization_audit(at, approval_id, action, actor, outcome, reason) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (at, approval_id, action, actor, outcome, reason),
-        )
+        with self._lock:
+            self.connection.execute(
+                "INSERT INTO authorization_audit("
+                "at, approval_id, action, actor, outcome, reason"
+                ") VALUES (?, ?, ?, ?, ?, ?)",
+                (at, approval_id, action, actor, outcome, reason),
+            )
 
 
 class AuthorizationService:

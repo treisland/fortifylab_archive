@@ -52,8 +52,8 @@ class WebOperationAPI:
         method = environ.get("REQUEST_METHOD", "GET").upper()
         path = environ.get("PATH_INFO", "")
         identity = ActorIdentity(
-            actor=f"web:{web.username}",
-            source="web",
+            actor=f"{web.source}:{web.username}",
+            source=web.source,
             session_id=web.session_id,
             authenticated_at=datetime.fromtimestamp(
                 web.authenticated_at, tz=timezone.utc
@@ -67,14 +67,18 @@ class WebOperationAPI:
                 request = self._body(environ)
                 plan = self._operation_plan(request)
                 approval = self._authorization.request(plan, identity)
-                return self._json(start_response, HTTPStatus.CREATED, approval)
+                return self._json(
+                    start_response, HTTPStatus.CREATED, self._approval(approval)
+                )
             if path.startswith(APPROVALS + "/") and path.endswith("/approve") and method == "POST":
                 approval_id = path[len(APPROVALS) + 1 : -len("/approve")]
                 request = self._body(environ)
                 approval = self._authorization.approve(
                     approval_id, identity, confirmation=request.get("confirmation")
                 )
-                return self._json(start_response, HTTPStatus.OK, approval)
+                return self._json(
+                    start_response, HTTPStatus.OK, self._approval(approval)
+                )
             if path == COLLECTION and method == "POST":
                 request = self._body(environ)
                 document = self._engine.submit_async(
@@ -95,12 +99,14 @@ class WebOperationAPI:
             return self._json(
                 start_response,
                 status,
-                {"code": getattr(error, "code", "INVALID_REQUEST"), "message": str(error)},
+                self._error(
+                    getattr(error, "code", "INVALID_REQUEST"), str(error)
+                ),
             )
         return self._json(
             start_response,
             HTTPStatus.METHOD_NOT_ALLOWED,
-            {"code": "METHOD_NOT_ALLOWED", "message": "method not allowed"},
+            self._error("METHOD_NOT_ALLOWED", "method not allowed"),
             (("Allow", "GET, POST"),),
         )
 
@@ -165,6 +171,14 @@ class WebOperationAPI:
         return result
 
     @staticmethod
+    def _approval(document: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "apiVersion": "fortifylab.io/v1alpha1",
+            "kind": "LifecycleApproval",
+            **document,
+        }
+
+    @staticmethod
     def _body(environ: dict) -> dict[str, Any]:
         try:
             length = int(environ.get("CONTENT_LENGTH", "0"))
@@ -191,3 +205,12 @@ class WebOperationAPI:
         ]
         start_response(f"{status.value} {status.phrase}", headers)
         return (body,)
+
+    @staticmethod
+    def _error(code: str, message: str) -> dict[str, str]:
+        return {
+            "apiVersion": "fortifylab.io/v1alpha1",
+            "kind": "Error",
+            "code": code,
+            "message": message,
+        }

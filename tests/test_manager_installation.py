@@ -164,6 +164,7 @@ class ManagerInstallationTests(unittest.TestCase):
         self.assertIn("FORTIFY_MANAGER_TLS_SECRET", script)
         self.assertIn("for _ in {1..15}", script)
         self.assertIn("prior manager release could not be restarted", script)
+        self.assertIn("fortify-manager-cli", script)
         self.assertNotIn("create-certs.sh", script)
 
 

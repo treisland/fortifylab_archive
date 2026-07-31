@@ -84,22 +84,25 @@ class AuthorizationTests(unittest.TestCase):
         self.assertIn(("authorize", "denied"), outcomes)
 
     def test_only_one_concurrent_approval_decision_wins(self) -> None:
-        approval = self.service.request(self.plan(), self.web)
-        outcomes: list[str] = []
+        for _ in range(25):
+            approval = self.service.request(self.plan(), self.web)
+            outcomes: list[str] = []
+            ready = threading.Barrier(2)
 
-        def decide() -> None:
-            try:
-                self.service.approve(approval["id"], self.web)
-                outcomes.append("approved")
-            except AuthorizationError:
-                outcomes.append("denied")
+            def decide() -> None:
+                ready.wait()
+                try:
+                    self.service.approve(approval["id"], self.web)
+                    outcomes.append("approved")
+                except AuthorizationError:
+                    outcomes.append("denied")
 
-        workers = [threading.Thread(target=decide) for _ in range(2)]
-        for worker in workers:
-            worker.start()
-        for worker in workers:
-            worker.join()
-        self.assertCountEqual(outcomes, ["approved", "denied"])
+            workers = [threading.Thread(target=decide) for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join()
+            self.assertCountEqual(outcomes, ["approved", "denied"])
 
     def test_provider_outage_does_not_consume_approval(self) -> None:
         plan, approval_id = self.approved()

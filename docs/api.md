@@ -5,7 +5,8 @@ inventory at `GET /api/v1alpha1/components`. `HEAD` is also supported.
 Mutation methods are rejected with `405 Method Not Allowed`. This contract is
 MicroK8s-first, limited to the managed `fortify` namespace, and excludes ASPM.
 
-The authenticated Web mutation transport uses the service documented in
+The authenticated mutation transport used by both Web and CLI clients uses
+the service documented in
 [Typed lifecycle operation engine](operations/lifecycle-engine.md). No
 live-cluster adapter is enabled by this repository. It accepts component and
 operation identifiers only; commands, paths, environment values, and secrets
@@ -13,8 +14,12 @@ are outside the contract.
 
 ## Lifecycle operation API
 
-All routes require the server-side Web session and return
-`Cache-Control: no-store`.
+All routes require a server-side authenticated session and return
+`Cache-Control: no-store`. Browser sessions have the `web` identity source;
+sessions established with `{"client":"local-cli"}` have the `local-cli`
+source. The client value is accepted only as part of successful password
+authentication and is persisted in the server-side session. It does not
+bypass authorization or approvals.
 
 | Method and path | Result |
 | --- | --- |
@@ -38,6 +43,71 @@ defines a separate high-risk replacement contract for approved external
 paths, protected uploads, existing Kubernetes Secret references, and generated
 values. It returns only `SecretUpdate` metadata and remains separate from the
 lifecycle routes; this change adds no browser secret-value endpoint.
+
+Successful lifecycle plan, approval, and operation documents carry
+`"apiVersion":"fortifylab.io/v1alpha1"`. Error responses use the same version,
+`"kind":"Error"`, a stable code, and a sanitized message; their schema is
+[`api-error.schema.json`](../registry/schemas/api-error.schema.json).
+Clients must branch on the code or operation state rather than message text.
+
+## Local CLI automation
+
+The installed `fortify-manager-cli` is a narrow HTTP client for exactly the
+plan, approval, submit, status, wait, cancel, and retry routes above. It never
+executes an input as a shell command and has no command, path, environment, or
+secret-value option. It prints one compact JSON document to standard output.
+Passwords are prompted without echo by default; automation may provide one
+line on standard input with `--password-stdin`. Do not place passwords in
+arguments, scripts, or environment variables.
+
+Plan and run a routine operation:
+
+```bash
+fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
+  plan start scancentral-sast
+fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
+  submit start scancentral-sast --wait 1200
+```
+
+For a disruptive or high-risk action, `submit --request-approval` requests
+and approves the exact plan in the same authenticated session before
+submitting it. High-risk approval requires `--confirm-high-risk`; the server
+still validates freshness, actor, session, current state, and single use.
+
+```bash
+fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
+  submit uninstall scancentral-dast-scanner --request-approval \
+  --confirm-high-risk --wait 900
+```
+
+The lower-level `approval-request`, `approve`, and `--approval-id` commands
+exist for clients that retain one authenticated `OperationClient` session.
+Separate CLI processes intentionally cannot replay a session-bound approval.
+
+CLI exit statuses are stable:
+
+| Status | Meaning |
+| --- | --- |
+| `0` | Request accepted, nonterminal status returned, or operation succeeded |
+| `20` | Request or approval rejected |
+| `21` | Plan blocked by component dependencies |
+| `22` | Operation failed or was interrupted |
+| `23` | Operation was cancelled |
+| `24` | Operation or client-side bounded wait timed out |
+| `25` | Manager unavailable or response invalid |
+
+A client-side wait timeout does not cancel server-side work. Recover by
+querying the durable operation ID, then explicitly cancel or retry according
+to its state:
+
+```bash
+fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
+  status OPERATION_ID --wait 300
+fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
+  cancel OPERATION_ID
+fortify-manager-cli --url https://lab.fortifydemo.com --username operator \
+  retry OPERATION_ID --wait 1200
+```
 
 The endpoint is a safe projection of the authoritative
 [`registry/components.json`](../registry/components.json). It never returns

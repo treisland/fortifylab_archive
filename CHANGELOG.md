@@ -10,6 +10,10 @@ platform profiles.
 
 ### Added
 
+- Local CLI and authenticated HTTP API parity for typed lifecycle plans,
+  authorization, session-bound approvals, durable progress, cancellation,
+  retries, and completion health, with versioned secret-safe JSON, stable
+  automation exit statuses, recovery examples, and cross-interface contracts.
 - Policy-bounded private Telegram lifecycle approvals and incident recovery
   actions with immutable plan digests, opaque single-use callbacks,
   authoritative state revalidation, Web UI escalation, and deep links.

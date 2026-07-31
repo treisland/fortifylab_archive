@@ -1,7 +1,9 @@
 # Typed lifecycle operation engine
 
 The manager lifecycle engine is the shared execution foundation for
-authenticated Web UI, CLI, and private Telegram controls. It is MicroK8s-first,
+authenticated Web UI, HTTP API, CLI, and private Telegram controls. Web and
+CLI callers use the same API methods and receive the same plan, approval,
+progress, sanitized event, and completion-health documents. It is MicroK8s-first,
 operates only on components in
 [`registry/components.json`](../../registry/components.json), and excludes
 ASPM. The shared [local authorization service](authorization.md) is enforced
@@ -75,7 +77,7 @@ evaluate only the supplied component/check IDs without returning secret-bearing
 evidence.
 
 The repository wires this engine to an adapter-neutral authenticated Web
-transport, but not to a live adapter. `DashboardApp` fails closed when no
+and CLI/API transport, but not to a live adapter. `DashboardApp` fails closed when no
 operation service is supplied. Before enabling live execution, add narrowly
 scoped MicroK8s permissions and
 integration evidence against a disposable lab. Production composition must
@@ -93,3 +95,9 @@ omission is reserved for isolated engine unit tests without a mutation adapter.
 | `OPERATION_TIMEOUT` | A step exceeded its bounded deadline |
 | `OPERATION_CANCELLED` | The adapter observed cancellation |
 | `OPERATION_FAILED` | Execution or post-operation health verification failed |
+
+The CLI maps these errors and terminal states to stable process statuses in
+the [API and CLI reference](../api.md#local-cli-automation). Its JSON errors
+use the same versioned, secret-safe API envelope as HTTP errors. A local CLI
+wait is bounded independently and never implies that server-side work was
+cancelled.
