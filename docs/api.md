@@ -222,6 +222,12 @@ order, freshness semantics, safe evidence, and remediation catalog are
 documented in [Dependency-aware health checks](health-checks.md). The response
 schema is
 [`registry/schemas/health-report.schema.json`](../registry/schemas/health-report.schema.json).
+Each item separates dependency, workload, and application dimensions. Workload
+evidence can include sanitized presence and desired/ready replica counts even
+while an upstream dependency blocks protected application probes. The legacy
+`state` and first `rootCause` remain available; `rootCauses` preserves every
+ranked actionable cause. Top-level `summary` provides overlapping deterministic
+component counts whose exact semantics are defined in the health guide.
 
 Deployment readiness is exposed at `GET /api/v1alpha1/preflight`. It performs
 fresh, read-only checks for host capacity, MicroK8s and required addons,

@@ -230,7 +230,38 @@ class KubernetesObserverTests(unittest.TestCase):
         )
         with patch("manager.kubernetes_observer.urllib.request.urlopen", metadata):
             self.assertEqual(self.observer.probe(pvc).state, "healthy")
-            self.assertEqual(self.observer.probe(workload).state, "healthy")
+            result = self.observer.probe(workload)
+        self.assertEqual(result.state, "healthy")
+        self.assertTrue(result.workload_present)
+        self.assertEqual(result.desired_replicas, 1)
+        self.assertEqual(result.ready_replicas, 1)
+
+    def test_workload_absence_and_replica_mismatch_are_structured(self):
+        workload = CheckSpec(
+            "scanner-ready", "scancentral-dast-scanner", "workload",
+            "workload-ready", "scanner", 1,
+        )
+
+        def absent(request, **kwargs):
+            raise urllib.error.HTTPError(
+                request.full_url, 404, "missing", {}, io.BytesIO()
+            )
+
+        with patch("manager.kubernetes_observer.urllib.request.urlopen", absent):
+            missing = self.observer.probe(workload)
+        self.assertEqual(missing.state, "unhealthy")
+        self.assertFalse(missing.workload_present)
+
+        with patch(
+            "manager.kubernetes_observer.urllib.request.urlopen",
+            return_value=Response(
+                {"spec": {"replicas": 1}, "status": {"readyReplicas": 0}}
+            ),
+        ):
+            mismatch = self.observer.probe(workload)
+        self.assertEqual(mismatch.state, "degraded")
+        self.assertTrue(mismatch.workload_present)
+        self.assertEqual((mismatch.ready_replicas, mismatch.desired_replicas), (0, 1))
 
     def test_clean_install_footprint_detects_workloads_and_retained_pvcs(self):
         urls = []

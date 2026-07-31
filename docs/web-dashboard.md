@@ -111,6 +111,14 @@ version, chart and image versions, declared HTTPS endpoint identifiers,
 storage purpose/retention, supported typed operations, and recent sanitized
 history.
 
+Component cards add a concise multidimensional summary: **blocked by
+dependency**, **workload absent**, **workload not ready**, and **application
+health unknown** can appear together. The inspector shows dependency, workload,
+and application states separately, every ranked actionable cause, and full
+sanitized evidence including desired/ready replica counts when observed. An
+upstream functional failure therefore does not erase independent Kubernetes
+evidence.
+
 Registry-approved Web components also show **Open service** and independent
 Manager-host availability evidence. SSC, ScanCentral SAST, LIM, ScanCentral
 DAST Core, and the Manager route are eligible when their approved TLS ingress

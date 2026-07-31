@@ -12,9 +12,10 @@ output.
 
 Set `cluster.health_probe_socket` to its Unix socket. The socket must not be
 accessible to other users. A missing, inaccessible, malformed, oversized, or
-slow service response becomes sanitized `unknown`; it never falls back to pod
-state. A later request performs every unblocked check again and can report
-recovery without restarting the Manager.
+slow service response becomes sanitized application-health `unknown`; it never
+turns ready workload metadata into application health. Independent Kubernetes
+workload checks still run. A later request performs protected checks again and
+can report recovery without restarting the Manager.
 
 `GET /api/v1alpha1/health` reports actionable runtime health for the
 single-node MicroK8s lab. This read-only contract never repairs resources,
@@ -33,8 +34,11 @@ Checks run from roots to consumers:
 6. ScanCentral SAST controller/workers and ScanCentral DAST API/scanners.
 
 Registry dependencies are preserved. When a dependency is not healthy, its
-consumers are `blocked` without running their probes. The root item therefore
-appears before downstream symptoms. Eligible checks for one subject use a
+consumers report `dimensions.dependency.state=blocked`, but their independent
+workload metadata checks still run. Protected application, functional, and
+dependency-connectivity probes become `unknown` until the dependency recovers.
+This preserves the upstream cause without hiding an absent workload or a
+desired-versus-ready replica mismatch. Eligible checks for one subject use a
 fixed worker pool; the whole report shares a 30-second aggregate deadline.
 When that deadline expires, unfinished checks become sanitized `unknown`
 evidence and queued work is cancelled. Runtime adapters must also honor each
@@ -51,11 +55,30 @@ adapter that ignores cancellation.
 | `unreachable` | The authoritative endpoint could not be reached. |
 | `unhealthy` | A required check produced authoritative failure evidence. |
 | `unknown` | A check timed out, failed safely, or could not be observed. |
-| `blocked` | A dependency is not healthy; the downstream probe was skipped. |
+| `blocked` | A dependency is not healthy; independent workload evidence remains visible. |
 | `stale` | Evidence is older than the five-minute freshness threshold. |
 
 Each item includes timestamps, bounded latency, sanitized summaries,
-root-cause fields, and a safe documentation link.
+root-cause fields, three independent `dimensions`, and a safe documentation
+link. The dimensions use these card/inspector terms:
+
+- `blocked by dependency`: at least one upstream dependency is not healthy;
+- `workload absent`: a desired registry workload returned Kubernetes 404;
+- `workload not ready`: the workload exists, desired replicas are greater than
+  zero, and ready replicas are fewer than desired replicas;
+- `application health unknown`: a protected probe is unavailable, blocked, or
+  stale; workload readiness is never substituted.
+
+`rootCause` is the first ranked cause for compatibility. `rootCauses` contains
+the upstream cause first, followed by independent component-local actionable
+failures in registry check order, without duplicates.
+
+The top-level `summary` counts only the seven registered components, never the
+five infrastructure subjects. `components` is the registered component count;
+`blocked`, `workloadAbsent`, `workloadNotReady`, and `applicationUnknown` each
+count components whose matching dimension has that exact state. Counts overlap
+by design, so one component can increment several fields. They are computed
+from the same report and are deterministic for that evidence snapshot.
 `evidence.source=live-cluster` means a runtime adapter supplied observations;
 `unavailable` means no adapter was configured. Repository tests and rendered
 configuration are static validation and are never live-cluster evidence.

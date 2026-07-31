@@ -4,7 +4,7 @@
   "title": "Dependency-aware environment health",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "kind", "generatedAt", "evidence", "state", "items"],
+  "required": ["apiVersion", "kind", "generatedAt", "evidence", "state", "summary", "items"],
   "properties": {
     "apiVersion": {"const": "fortifylab.io/v1alpha1"},
     "kind": {"const": "EnvironmentHealth"},
@@ -18,11 +18,22 @@
       }
     },
     "state": {"$ref": "#/$defs/state"},
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["components", "blocked", "workloadAbsent", "workloadNotReady", "applicationUnknown"],
+      "properties": {
+        "components": {"type": "integer", "minimum": 0},
+        "blocked": {"type": "integer", "minimum": 0},
+        "workloadAbsent": {"type": "integer", "minimum": 0},
+        "workloadNotReady": {"type": "integer", "minimum": 0},
+        "applicationUnknown": {"type": "integer", "minimum": 0}
+      }
+    },
     "items": {
       "type": "array", "minItems": 1,
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "displayName", "state", "dependencies", "checkedAt", "evidence", "remediation"],
+        "required": ["id", "displayName", "state", "dependencies", "checkedAt", "dimensions", "evidence", "remediation"],
         "properties": {
           "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
           "displayName": {"type": "string", "minLength": 1, "maxLength": 128},
@@ -31,6 +42,31 @@
           "checkedAt": {"type": "string", "format": "date-time"},
           "blockedBy": {"type": "string"},
           "rootCause": {"type": "string"},
+          "rootCauses": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+          "dimensions": {
+            "type": "object", "additionalProperties": false,
+            "required": ["dependency", "workload", "application"],
+            "properties": {
+              "dependency": {
+                "type": "object", "additionalProperties": false,
+                "required": ["state", "blockedBy"],
+                "properties": {
+                  "state": {"enum": ["clear", "blocked"]},
+                  "blockedBy": {"type": ["string", "null"]}
+                }
+              },
+              "workload": {
+                "type": "object", "additionalProperties": false,
+                "required": ["state"],
+                "properties": {"state": {"enum": ["ready", "absent", "not-ready", "unknown"]}}
+              },
+              "application": {
+                "type": "object", "additionalProperties": false,
+                "required": ["state"],
+                "properties": {"state": {"enum": ["healthy", "unhealthy", "unknown"]}}
+              }
+            }
+          },
           "evidence": {
             "type": "array", "minItems": 1,
             "items": {
@@ -43,7 +79,16 @@
                 "required": {"type": "boolean"},
                 "summary": {"type": "string", "minLength": 1, "maxLength": 256},
                 "observedAt": {"type": "string", "format": "date-time"},
-                "latencyMs": {"type": "integer", "minimum": 0}
+                "latencyMs": {"type": "integer", "minimum": 0},
+                "workload": {
+                  "type": "object", "additionalProperties": false,
+                  "required": ["present", "desiredReplicas", "readyReplicas"],
+                  "properties": {
+                    "present": {"type": ["boolean", "null"]},
+                    "desiredReplicas": {"type": ["integer", "null"], "minimum": 0},
+                    "readyReplicas": {"type": ["integer", "null"], "minimum": 0}
+                  }
+                }
               }
             }
           },
