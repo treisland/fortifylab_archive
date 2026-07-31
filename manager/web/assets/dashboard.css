@@ -51,7 +51,7 @@ main { width:min(1500px,94vw); margin:2rem auto 4rem; }
 .check-row a { grid-column:2; font-size:.85rem; }
 .root-cause { color:var(--red); font-weight:700; margin:.6rem 0; }
 .status { display:inline-block; width:max-content; border-radius:99px; padding:.18rem .5rem; text-transform:uppercase; letter-spacing:.05em; font-size:.67rem; font-weight:850; border:1px solid currentColor; }
-.available,.healthy { color:#60e6b2; }.starting,.loading { color:#8fd3ff; }.degraded { color:#f2c14e; }.blocked { color:#ff9f66; }.misconfigured { color:#ff7eaa; }.stopped { color:#c9a0ff; }.unreachable,.unavailable { color:#78bfff; }.unknown { color:#c3ced5; }.unhealthy,.error,.unauthorized,.timed-out { color:#ff8585; }.stale { color:#e6b957; border-style:dashed; }
+.available,.healthy,.reachable { color:#60e6b2; }.starting,.loading { color:#8fd3ff; }.degraded,.tls-warning,.dns-mismatch { color:#f2c14e; }.blocked { color:#ff9f66; }.misconfigured { color:#ff7eaa; }.stopped { color:#c9a0ff; }.unreachable,.unavailable { color:#78bfff; }.unknown,.not-configured { color:#c3ced5; }.unhealthy,.error,.unauthorized,.timed-out { color:#ff8585; }.stale { color:#e6b957; border-style:dashed; }
 .notice { padding:1rem; margin-bottom:1rem; border:1px solid var(--line); border-radius:.55rem; background:#142520; }
 .notice.danger { border-color:#7a3434; display:flex; gap:.5rem; flex-wrap:wrap; }
 .empty { color:var(--muted); padding:1rem; text-align:center; border:1px dashed var(--line); border-radius:.5rem; }
@@ -62,6 +62,8 @@ main { width:min(1500px,94vw); margin:2rem auto 4rem; }
 .capability-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:.65rem; }
 .capability-item { display:grid; grid-template-columns:1fr auto; gap:.35rem .7rem; padding:.75rem; border:1px solid var(--line); border-radius:.5rem; }
 .capability-item small,.capability-item a { grid-column:1 / -1; }
+.availability-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:.65rem; }
+.availability-item { display:grid; gap:.6rem; padding:.85rem; border:1px solid var(--line); border-radius:.5rem; }
 .table-wrap { overflow-x:auto; }
 table { width:100%; border-collapse:collapse; }
 th,td { text-align:left; padding:.75rem; border-bottom:1px solid var(--line); }

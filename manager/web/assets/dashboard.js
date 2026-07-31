@@ -2,12 +2,13 @@
 const panels = [
   {name: "components", path: "/api/v1alpha1/components", render: renderInventory},
   {name: "health", path: "/api/v1alpha1/health", render: renderHealth},
+  {name: "availability", path: "/api/v1alpha1/availability", render: renderAvailability},
   {name: "preflight", path: "/api/v1alpha1/preflight", render: renderPreflight},
   {name: "history", path: "/api/v1alpha1/history", render: renderHistory},
   {name: "capabilities", path: "/api/v1alpha1/capabilities", render: renderCapabilities},
   {name: "operations", path: () => activeOperationId ? `/api/v1alpha1/operations/${activeOperationId}` : null, render: renderOperationsRead}
 ];
-const stateNames = new Set(["available", "healthy", "degraded", "unhealthy", "unknown", "blocked", "stale", "starting", "misconfigured", "stopped", "unreachable", "loading", "unavailable", "unauthorized", "timed-out", "error"]);
+const stateNames = new Set(["available", "healthy", "reachable", "degraded", "tls-warning", "dns-mismatch", "not-configured", "unhealthy", "unknown", "blocked", "stale", "starting", "misconfigured", "stopped", "unreachable", "loading", "unavailable", "unauthorized", "timed-out", "error"]);
 const errorCodePattern = /^[A-Z][A-Z0-9_]{2,63}$/;
 const autoRefreshMilliseconds = 30000;
 const readDeadlineMilliseconds = 8000;
@@ -275,6 +276,42 @@ function renderPreflight(document) {
   );
 }
 
+function renderAvailability(document) {
+  const items = Array.isArray(document.items) ? document.items : [];
+  const list = byId("availability-list");
+  list.replaceChildren();
+  for (const item of items) {
+    const article = documentNode("article", "availability-item");
+    const heading = documentNode("div", "evidence-title");
+    heading.append(documentNode("strong", "", item.displayName), status(item.state));
+    article.append(
+      heading,
+      documentNode("p", "component-meta", `${item.summary || "No evidence"} · DNS ${item.dns || "unknown"} · TLS ${item.tls || "unknown"} · HTTP ${item.http || "unknown"}`),
+      documentNode("small", "muted", item.checkedAt ? `Checked ${safeDate(item.checkedAt)} · ${item.latencyMs ?? "—"} ms` : "Not checked")
+    );
+    if (typeof item.url === "string" && /^https:\/\/[a-z0-9.-]+\/$/.test(item.url)) {
+      const link = document.createElement("a");
+      link.href = item.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open service";
+      article.append(link);
+    }
+    list.append(article);
+  }
+  byId("availability-empty").hidden = items.length !== 0;
+  const configured = items.filter(item => item.state !== "not-configured");
+  panelState(
+    "availability",
+    configured.length ? "available" : "empty",
+    configured.length
+      ? `${configured.filter(item => item.state === "reachable").length} of ${configured.length} approved routes are reachable from the Manager host.`
+      : "Empty · No approved observed ingress routes are configured.",
+    items.map(item => item.checkedAt).filter(Boolean).sort().at(-1)
+  );
+  refreshInspector();
+}
+
 function renderHistory(document) {
   const items = Array.isArray(document.items) ? document.items : [];
   const body = byId("history-list");
@@ -422,6 +459,7 @@ function refreshInspector() {
   const item = items.find(candidate => candidate.identity?.id === selectedComponentId);
   if (!item) return;
   const health = (panelDocuments.get("health")?.items || []).find(candidate => candidate.id === selectedComponentId);
+  const availability = (panelDocuments.get("availability")?.items || []).find(candidate => candidate.componentId === selectedComponentId);
   const consumers = componentConsumers(selectedComponentId, items);
   const blockedConsumers = consumers.filter(candidate => {
     const candidateHealth = (panelDocuments.get("health")?.items || []).find(value => value.id === candidate.identity?.id);
@@ -433,7 +471,7 @@ function refreshInspector() {
   text(byId("inspector-title"), item.identity?.displayName);
   text(byId("inspector-subtitle"), `${item.identity?.id} · desired configuration and sanitized observed state`);
   const content = byId("inspector-content");
-  content.replaceChildren(
+  const sections = [
     detailSection("Overview", [
       ["Desired state", item.desiredState?.state || "not reported"],
       ["Observed state", componentRuntime(item)],
@@ -471,7 +509,24 @@ function refreshInspector() {
     detailSection("Recent history", recent.length
       ? recent.map(record => [safeDate(record.occurredAt), `${record.state} · ${record.summary}`])
       : [["History", "No recent sanitized records for this component"]])
-  );
+  ];
+  if (availability) {
+    const section = detailSection("Service availability (independent from health)", [
+      ["State", availability.state],
+      ["Evidence", `DNS ${availability.dns} · TLS ${availability.tls} · HTTP ${availability.http}`],
+      ["Checked", availability.checkedAt ? `${safeDate(availability.checkedAt)} · ${availability.latencyMs ?? "—"} ms` : "Not checked"]
+    ]);
+    if (typeof availability.url === "string" && /^https:\/\/[a-z0-9.-]+\/$/.test(availability.url)) {
+      const link = document.createElement("a");
+      link.href = availability.url;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open service";
+      section.append(link);
+    }
+    sections.splice(2, 0, section);
+  }
+  content.replaceChildren(...sections);
 }
 
 function renderCapabilities(document) {

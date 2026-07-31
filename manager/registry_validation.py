@@ -13,6 +13,7 @@ TOP_LEVEL_KEYS = {"$schema", "apiVersion", "kind", "scope", "profileRef", "compo
 COMPONENT_KEYS = {
     "id",
     "displayName",
+    "web",
     "version",
     "dependencies",
     "workloads",
@@ -74,6 +75,27 @@ def validate_registry(
             errors.append(f"{prefix} fields do not match component schema")
             continue
         version = component["version"]
+        web = component["web"]
+        health_document = component.get("health")
+        raw_checks = (
+            health_document.get("checks", [])
+            if isinstance(health_document, dict)
+            else []
+        )
+        https_checks = [
+            check
+            for check in raw_checks
+            if isinstance(check, dict) and check.get("type") == "https"
+        ]
+        if web is not None and (
+            not isinstance(web, dict)
+            or set(web) != {"hostLabel"}
+            or not isinstance(web.get("hostLabel"), str)
+            or not https_checks
+        ):
+            errors.append(
+                f"{prefix} web metadata requires a host label and HTTPS health check"
+            )
         if (
             not isinstance(version, dict)
             or set(version) != {"chart", "images"}

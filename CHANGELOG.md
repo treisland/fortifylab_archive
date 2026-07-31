@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add registry-curated Manager, SSC, SAST, LIM, and DAST Core quick links with
+  bounded Manager-host DNS/TLS/HTTP availability, latency, evidence time,
+  jittered backoff, compact recovery history, strict redirect/SSRF boundaries,
+  and explicit separation from application and client-network health.
 - Add a responsive, filterable component explorer with keyboard/pointer
   selection, safe deep links, dependency highlighting, and an accessible
   right-side inspector for desired and observed component context.

@@ -18,6 +18,7 @@ from manager.component_inventory import (
     ResourceIdentity,
     ResourceObservation,
 )
+from manager.availability import ObservedRoute
 from manager.component_registry import ComponentRegistry
 from manager.health import CheckSpec, HealthProbe, ProbeResult
 from manager.preflight import PreflightCheck, PreflightResult
@@ -164,6 +165,51 @@ class KubernetesObserver:
                     error.close()
             result[component_id] = "present" if present else "absent"
         return result
+
+    def observed_routes(self) -> tuple[ObservedRoute, ...]:
+        """Project only registry-approved Web ingress host and address metadata."""
+        document = self._get(
+            f"apis/networking.k8s.io/v1/namespaces/{self._namespace}/ingresses"
+        )
+        labels = {"lab": "manager"}
+        labels.update(
+            {
+                component["web"]["hostLabel"]: component_id
+                for component_id in self._registry.component_ids
+                for component in (self._registry.component(component_id),)
+                if component.get("web")
+            }
+        )
+        routes = []
+        for ingress in document.get("items", []):
+            spec = ingress.get("spec", {})
+            tls_hosts = {
+                host
+                for entry in spec.get("tls", [])
+                for host in entry.get("hosts", [])
+                if isinstance(host, str)
+            }
+            addresses = tuple(
+                sorted(
+                    {
+                        address["ip"]
+                        for address in ingress.get("status", {})
+                        .get("loadBalancer", {})
+                        .get("ingress", [])
+                        if isinstance(address.get("ip"), str)
+                    }
+                )
+            )
+            for rule in spec.get("rules", []):
+                host = rule.get("host")
+                if not isinstance(host, str) or "." not in host:
+                    continue
+                endpoint_id = labels.get(host.split(".", 1)[0])
+                if endpoint_id is not None:
+                    routes.append(
+                        ObservedRoute(endpoint_id, host, host in tls_hosts, addresses)
+                    )
+        return tuple(routes)
 
     def diagnose_access(self, resources: Sequence[ResourceIdentity]) -> ClusterEvidence:
         """Verify positive and negative permissions without returning API bodies."""

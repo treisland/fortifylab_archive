@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/schemas/service-availability.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "scope", "items", "notice"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/v1alpha1"},
+    "kind": {"const": "ServiceAvailability"},
+    "scope": {"const": "manager-host"},
+    "notice": {"type": "string", "minLength": 1},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "componentId", "displayName", "url", "state", "dns", "tls", "http", "latencyMs", "checkedAt", "summary", "applicationHealthIndependent", "history"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+          "componentId": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+          "displayName": {"type": "string", "minLength": 1},
+          "url": {"type": ["string", "null"], "pattern": "^https://[a-z0-9.-]+/$"},
+          "state": {"enum": ["reachable", "degraded", "tls-warning", "dns-mismatch", "unreachable", "not-configured", "unknown"]},
+          "dns": {"type": "string", "minLength": 1},
+          "tls": {"type": "string", "minLength": 1},
+          "http": {"type": "string", "minLength": 1},
+          "latencyMs": {"type": ["integer", "null"], "minimum": 0},
+          "checkedAt": {"type": ["string", "null"], "format": "date-time"},
+          "summary": {"type": "string", "minLength": 1},
+          "applicationHealthIndependent": {"const": true},
+          "history": {
+            "type": "array",
+            "maxItems": 48,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["state", "checkedAt", "latencyMs"],
+              "properties": {
+                "state": {"enum": ["reachable", "degraded", "tls-warning", "dns-mismatch", "unreachable", "not-configured", "unknown"]},
+                "checkedAt": {"type": "string", "format": "date-time"},
+                "latencyMs": {"type": "integer", "minimum": 0}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

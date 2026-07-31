@@ -7,6 +7,36 @@ profile endpoint with `fortify-manager-cli ... profile`. `HEAD` is also supporte
 Mutation methods are rejected with `405 Method Not Allowed`. This contract is
 MicroK8s-first, limited to the managed `fortify` namespace, and excludes ASPM.
 
+## Curated service availability
+
+`GET /api/v1alpha1/availability` returns `ServiceAvailability`, a read-only
+Manager-host view of approved Web routes. Targets are not request parameters:
+the allow-list is the component registry's explicit `web.hostLabel` metadata
+plus the fixed `lab` Manager route, intersected with observed ingresses in the
+managed namespace. Every route must use TLS and share the observed Manager
+route's domain. MySQL, PostgreSQL, and the DAST Scanner declare `web: null` and
+never receive browser links.
+
+Each item separates `dns`, `tls`, and `http` evidence from `state`, latency,
+and `checkedAt`. States are `reachable`, `degraded`, `tls-warning`,
+`dns-mismatch`, `unreachable`, `not-configured`, and `unknown`. An HTTP login
+page, `401`, or `403` proves only that an HTTP service answered and is
+`reachable`; `applicationHealthIndependent: true` explicitly prevents clients
+from treating this as application health. Use `GET /api/v1alpha1/health` for
+that separate evidence.
+
+Probes run from the Manager host with a fixed worker cap and per-layer timeout.
+Successful routes use a jittered 30-second cadence. Failures use exponential
+backoff capped at five minutes. At most 12 compact transitions are retained in
+memory per route. Probes send no authentication, cookies, or forms, do not read
+response bodies or certificate contents, and do not follow redirects. A
+redirect or server error is `degraded`. The contract is validated by
+[`service-availability.schema.json`](../registry/schemas/service-availability.schema.json).
+
+This evidence does not prove that an operator workstation, VPN, browser, AWS
+Security Group, load balancer, or other client network can reach the service.
+Test those paths independently when diagnosing client access.
+
 The authenticated mutation transport used by both Web and CLI clients uses
 the service documented in
 [Typed lifecycle operation engine](operations/lifecycle-engine.md). No
