@@ -71,6 +71,15 @@ class ReleaseCandidateTests(unittest.TestCase):
             self.assertEqual(
                 console["deterministicBrowserEvidence"]["status"], "passed"
             )
+            upgrade_gate = next(
+                item for item in gates["gates"]
+                if item["id"] == "manager-upgrade-ec2-acceptance"
+            )
+            self.assertEqual(upgrade_gate["status"], "failed")
+            upgrade = json.loads(
+                (first.directory / "manager-upgrade-ec2-evaluation.json").read_text()
+            )
+            self.assertIn("upgrade-evidence-not-passed", upgrade["reasons"])
             self.assertEqual(console["liveEvidence"]["status"], "unavailable")
 
     def test_sensitive_content_is_rejected_without_echoing_it(self):

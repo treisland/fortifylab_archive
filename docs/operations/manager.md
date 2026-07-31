@@ -385,6 +385,58 @@ upgrade advanced the schema, stop the service and restore the matching
 pre-upgrade database, verifier/configuration files, and program together.
 Manager history backup does not back up SSC or component data.
 
+### Live EC2 upgrade acceptance gate
+
+`scripts/live-manager-upgrade-acceptance.sh` is an opt-in, mutating lab gate
+for an authorized disposable EC2 host running the supported single-node
+MicroK8s target. It is not run by repository validation and is **not
+production certification**. ASPM, multi-node clusters, production exposure,
+and vendor workload performance remain outside its scope.
+
+Prerequisites are an already-installed older Manager, a different candidate
+checkout on the same host, healthy MicroK8s, existing private HTTPS ingress,
+and two root-readable curl cookie paths. Create the first by signing in before
+the run. When the gate reports that restart is complete, sign in again from a
+second protected terminal and create the second within the recovery deadline. Cookie files are
+inputs only; the gate consumes no password or application/Kubernetes Secret
+and never copies cookies into evidence. Run from the candidate checkout:
+
+```bash
+sudo env \
+  FORTIFY_ACCEPTANCE_DOMAIN=fortifydemo.com \
+  FORTIFY_ACCEPTANCE_PRIVATE_ADDRESS=10.0.0.10 \
+  FORTIFY_ACCEPTANCE_PRE_SESSION_COOKIE=/root/protected/pre-upgrade.cookies \
+  FORTIFY_ACCEPTANCE_POST_SESSION_COOKIE=/root/protected/post-upgrade.cookies \
+  FORTIFY_ACCEPTANCE_EVIDENCE=/root/protected/manager-upgrade-evidence.json \
+  ./scripts/live-manager-upgrade-acceptance.sh
+```
+
+Default command and recovery deadlines are 45 and 90 seconds. Bound them to
+5–300 and 15–600 seconds with `FORTIFY_ACCEPTANCE_TIMEOUT_SECONDS` and
+`FORTIFY_ACCEPTANCE_RECOVERY_SECONDS`. The gate checks the old package,
+account/history preservation, a distinct immutable activation and protected
+backup, configuration migration, old-session invalidation, service health,
+legacy-CA cluster access, positive and mandatory-negative RBAC, inventory,
+node/version, health, preflight, private HTTPS, and a private backend address.
+The authorization denial followed by a fresh post-upgrade session supplies a
+bounded partial-failure/recovery observation. Separately confirm that the EC2
+Security Group exposes 443 only to the operator/VPN CIDR and never port 8080.
+
+After activation begins, failure cleanup attempts to restore the prior release
+and restart both services within the recovery deadline. Program rollback does
+not reverse database migrations; use the protected pre-upgrade backup for
+coordinated recovery. Errors identify the earliest package, configuration,
+service, cluster-TLS, authorization, observation, ingress, DNS, or
+remote-access layer.
+
+The mode-0600 JSON contains categorical results, release digests, timestamps,
+limitations, and the earliest layer only—never raw output, logs, cookies,
+credentials, licensed artifacts, application Secrets, certificate contents,
+or private paths. After review, copy only it to
+`evaluations/manager-upgrade-ec2-v0.4/evidence.json`; the local 0.4
+release-candidate assessment consumes it and it expires after seven days.
+Keep protected troubleshooting data outside Git and remove temporary cookies.
+
 ## Uninstall and state deletion
 
 `sudo ./scripts/fortify-manager uninstall` disables the service and removes

@@ -188,6 +188,13 @@ validity instants, and residual limitations. The suite cannot establish
 multi-node behavior, production hardening, vendor workload performance, or
 ASPM support.
 
+The separate [live EC2 Manager upgrade acceptance gate](operations/manager.md#live-ec2-upgrade-acceptance-gate)
+produces the bounded
+`evaluations/manager-upgrade-ec2-v0.4/evidence.json` artifact. Local
+release-candidate assessment requires it to be passed, fresh, and for the
+exact 0.4 evaluation profile. Repository validation checks its schema and
+safe `not-run` default without contacting EC2 or MicroK8s.
+
 ## 0.4 operational-console browser gate
 
 `evaluations/operational-console-browser-v0.4` adds a separate blocking gate

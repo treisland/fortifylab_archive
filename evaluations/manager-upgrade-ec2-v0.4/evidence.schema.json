@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fortifylab.local/evaluations/manager-upgrade-ec2-v0.4/evidence.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "status", "profileId", "platform", "target", "recordedAt", "expiresAt", "releaseBefore", "releaseAfter", "failureLayer", "checks", "collection", "limitations"],
+  "properties": {
+    "apiVersion": {"const": "fortifylab.io/evaluations/v1alpha1"},
+    "kind": {"const": "ManagerUpgradeAcceptanceEvidence"},
+    "status": {"enum": ["passed", "failed"]},
+    "profileId": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"},
+    "platform": {"const": "single-node MicroK8s"},
+    "target": {"const": "EC2 lab"},
+    "recordedAt": {"type": "string", "format": "date-time"},
+    "expiresAt": {"type": "string", "format": "date-time"},
+    "releaseBefore": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"},
+    "releaseAfter": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"},
+    "failureLayer": {"type": ["string", "null"], "enum": [null, "package", "configuration", "service", "cluster-tls", "authorization", "observation", "ingress", "dns", "remote-access"]},
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["prerequisites", "account-preservation", "history-preservation", "session-invalidation", "immutable-activation", "rollback-evidence", "configuration-migration", "legacy-ca", "rbac-positive", "rbac-negative", "inventory", "node-version", "health", "preflight", "partial-failure", "recovery", "private-https", "no-public-backend", "dns-resolution"],
+      "properties": {
+        "prerequisites": {"$ref": "#/$defs/result"}, "account-preservation": {"$ref": "#/$defs/result"}, "history-preservation": {"$ref": "#/$defs/result"}, "session-invalidation": {"$ref": "#/$defs/result"}, "immutable-activation": {"$ref": "#/$defs/result"}, "rollback-evidence": {"$ref": "#/$defs/result"}, "configuration-migration": {"$ref": "#/$defs/result"}, "legacy-ca": {"$ref": "#/$defs/result"}, "rbac-positive": {"$ref": "#/$defs/result"}, "rbac-negative": {"$ref": "#/$defs/result"}, "inventory": {"$ref": "#/$defs/result"}, "node-version": {"$ref": "#/$defs/result"}, "health": {"$ref": "#/$defs/result"}, "preflight": {"$ref": "#/$defs/result"}, "partial-failure": {"$ref": "#/$defs/result"}, "recovery": {"$ref": "#/$defs/result"}, "private-https": {"$ref": "#/$defs/result"}, "no-public-backend": {"$ref": "#/$defs/result"}, "dns-resolution": {"$ref": "#/$defs/result"}
+      }
+    },
+    "collection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["rawOutput", "licensedArtifacts", "applicationSecrets", "credentials"],
+      "properties": {"rawOutput": {"const": false}, "licensedArtifacts": {"const": false}, "applicationSecrets": {"const": false}, "credentials": {"const": false}}
+    },
+    "limitations": {"type": "array", "minItems": 2, "maxItems": 8, "uniqueItems": true, "items": {"type": "string", "minLength": 1, "maxLength": 160}}
+  },
+  "$defs": {"result": {"enum": ["passed", "failed", "not-run"]}}
+}

@@ -1,0 +1,18 @@
+{
+  "apiVersion": "fortifylab.io/evaluations/v1alpha1",
+  "kind": "ManagerUpgradeAcceptanceEvidence",
+  "status": "failed",
+  "profileId": "fortify-24.4-eval.1",
+  "platform": "single-node MicroK8s",
+  "target": "EC2 lab",
+  "recordedAt": "1970-01-01T00:00:00Z",
+  "expiresAt": "1970-01-01T00:00:00Z",
+  "releaseBefore": "not-run",
+  "releaseAfter": "not-run",
+  "failureLayer": "package",
+  "checks": {
+    "prerequisites": "not-run", "account-preservation": "not-run", "history-preservation": "not-run", "session-invalidation": "not-run", "immutable-activation": "not-run", "rollback-evidence": "not-run", "configuration-migration": "not-run", "legacy-ca": "not-run", "rbac-positive": "not-run", "rbac-negative": "not-run", "inventory": "not-run", "node-version": "not-run", "health": "not-run", "preflight": "not-run", "partial-failure": "not-run", "recovery": "not-run", "private-https": "not-run", "no-public-backend": "not-run", "dns-resolution": "not-run"
+  },
+  "collection": {"rawOutput": false, "licensedArtifacts": false, "applicationSecrets": false, "credentials": false},
+  "limitations": ["Lab validation only; this is not production certification.", "Single-node MicroK8s on EC2 only; ASPM is excluded."]
+}

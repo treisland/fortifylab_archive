@@ -198,6 +198,33 @@ def _operational_console_gate(root: Path, evaluated_at: str) -> dict[str, object
     )
 
 
+def _manager_upgrade_gate(root: Path, evaluated_at: str) -> dict[str, object]:
+    evidence = load(root / "evaluations/manager-upgrade-ec2-v0.4/evidence.json")
+    reasons = []
+    if evidence.get("status") != "passed":
+        reasons.append("upgrade-evidence-not-passed")
+    if evidence.get("profileId") != "fortify-24.4-eval.1":
+        reasons.append("profile-mismatch")
+    checks = evidence.get("checks", {})
+    if not checks or any(state != "passed" for state in checks.values()):
+        reasons.append("upgrade-checks-incomplete")
+    if evidence.get("releaseBefore") == evidence.get("releaseAfter"):
+        reasons.append("immutable-release-not-advanced")
+    collection = evidence.get("collection", {})
+    if set(collection.values()) != {False}:
+        reasons.append("evidence-collection-unsafe")
+    try:
+        evaluated = datetime.fromisoformat(evaluated_at.replace("Z", "+00:00"))
+        recorded = datetime.fromisoformat(evidence["recordedAt"].replace("Z", "+00:00"))
+        expires = datetime.fromisoformat(evidence["expiresAt"].replace("Z", "+00:00"))
+        if not recorded <= evaluated <= expires:
+            reasons.append("upgrade-evidence-stale")
+    except (KeyError, TypeError, ValueError):
+        reasons.append("upgrade-evidence-time-invalid")
+    return {"status": "passed" if not reasons else "failed", "reasons": reasons,
+            "evidence": evidence}
+
+
 def _write_tar(archive: Path, root: Path, paths: Iterable[str], epoch: int) -> None:
     with archive.open("wb") as raw:
         with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=epoch) as compressed:
@@ -232,6 +259,7 @@ def build_candidate(
     profile_matrix = _profile_matrix(root)
     lifecycle_evaluation = _lifecycle_gate(root, recorded_at)
     console_evaluation = _operational_console_gate(root, recorded_at)
+    manager_upgrade_evaluation = _manager_upgrade_gate(root, recorded_at)
     directory = output_root.resolve() / version
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -296,6 +324,13 @@ def build_candidate(
             ),
         },
         {
+            "id": "manager-upgrade-ec2-acceptance",
+            "status": manager_upgrade_evaluation["status"],
+            "evidence": "manager-upgrade-ec2-evaluation.json",
+            "reason": None if manager_upgrade_evaluation["status"] == "passed" else
+                "Fresh sanitized EC2 Manager upgrade acceptance evidence is incomplete.",
+        },
+        {
             "id": "operational-console-browser-evaluation",
             "status": console_evaluation["status"],
             "evidence": "operational-console-browser-evaluation.json",
@@ -312,6 +347,7 @@ def build_candidate(
     documents = {
         "profile-matrix.json": profile_matrix,
         "operational-console-browser-evaluation.json": console_evaluation,
+        "manager-upgrade-ec2-evaluation.json": manager_upgrade_evaluation,
         "vulnerability-results.json": {
             "status": "not-run",
             "scanner": None,
