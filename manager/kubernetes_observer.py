@@ -60,6 +60,13 @@ class KubernetesObserver:
         self._server = server.rstrip("/")
         self._token_file = token_file
         self._context = ssl.create_default_context(cafile=str(ca_file))
+        # MicroK8s clusters upgraded from older releases can retain a trusted
+        # CA without the RFC 5280 keyUsage extension. OpenSSL strict mode
+        # rejects that legacy extension shape. Preserve CA-chain and hostname
+        # verification while accepting the documented MicroK8s CA.
+        strict_flag = getattr(ssl, "VERIFY_X509_STRICT", 0)
+        if strict_flag:
+            self._context.verify_flags &= ~strict_flag
         self._registry = registry
         self._namespace = namespace
         self._timeout = min(max(float(timeout_seconds), 0.1), 10.0)

@@ -5,10 +5,12 @@ from __future__ import annotations
 import io
 import json
 import datetime
+import ssl
 import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from manager.component_inventory import ClusterUnavailable, ResourceIdentity
@@ -89,6 +91,43 @@ class KubernetesObserverTests(unittest.TestCase):
         serialized = json.dumps([url for url, _, _ in calls])
         self.assertNotIn("secrets", serialized)
         self.assertNotIn("log", serialized)
+
+    def test_legacy_ca_compatibility_preserves_tls_verification(self):
+        strict = getattr(ssl, "VERIFY_X509_STRICT", 0)
+        retained = getattr(ssl, "VERIFY_X509_TRUSTED_FIRST", 0x8000)
+        context = SimpleNamespace(
+            verify_flags=strict | retained,
+            check_hostname=True,
+            verify_mode=ssl.CERT_REQUIRED,
+        )
+        with patch(
+            "manager.kubernetes_observer.ssl.create_default_context",
+            return_value=context,
+        ) as create_context:
+            observer = KubernetesObserver(
+                "https://127.0.0.1:16443",
+                self.token,
+                self.ca,
+                self.registry,
+            )
+        create_context.assert_called_once_with(cafile=str(self.ca))
+        self.assertEqual(observer._context.verify_flags & strict, 0)
+        self.assertEqual(observer._context.verify_flags & retained, retained)
+        self.assertTrue(observer._context.check_hostname)
+        self.assertEqual(observer._context.verify_mode, ssl.CERT_REQUIRED)
+
+    def test_invalid_ca_still_fails_context_construction(self):
+        with patch(
+            "manager.kubernetes_observer.ssl.create_default_context",
+            side_effect=ssl.SSLError("untrusted CA"),
+        ):
+            with self.assertRaises(ssl.SSLError):
+                KubernetesObserver(
+                    "https://127.0.0.1:16443",
+                    self.token,
+                    self.ca,
+                    self.registry,
+                )
 
     def test_other_namespace_and_unregistered_resource_are_rejected_before_io(self):
         invalid = (
