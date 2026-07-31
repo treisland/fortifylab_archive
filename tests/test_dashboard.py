@@ -300,6 +300,7 @@ class DashboardTests(unittest.TestCase):
 
     def test_deploy_control_uses_deployment_readiness_contract(self):
         script = (WEB / "assets/dashboard.js").read_text(encoding="utf-8")
+        html = (WEB / "index.html").read_text(encoding="utf-8")
         self.assertIn('action === "deploy" ? "deployment" : action', script)
         failure_handler = script.split(
             "function markPanelFailure", 1
@@ -313,6 +314,9 @@ class DashboardTests(unittest.TestCase):
         )[1].split("function documentNode", 1)[0]
         self.assertIn("setOperationsAvailable(available", operations_reader)
         self.assertIn("updateSelectedActionControls()", operations_reader)
+        self.assertIn('id="preflight-host"', html)
+        self.assertIn("payload.platformReadiness", script)
+        self.assertIn("payload.mutationAuthorization", script)
 
     def test_each_dashboard_panel_has_an_independent_live_state_region(self):
         html = (WEB / "index.html").read_text(encoding="utf-8")

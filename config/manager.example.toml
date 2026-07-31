@@ -12,6 +12,14 @@ database = "/var/lib/fortify-lab-manager/history.sqlite3"
 [authentication]
 accounts = "/var/lib/fortify-lab-manager/accounts.json"
 
+[preflight]
+# Optional absolute references may remain outside the repository. Files must be
+# regular, nonempty, mode 0600, and owned by root or the sudo operator.
+license_file = "/etc/fortify-lab/secrets/fortify.license"
+registry_auth_file = "/etc/fortify-lab/secrets/dockerconfig.json"
+# Only the public certificate is inspected. Private-key material is never read.
+tls_certificate_file = "/etc/fortify-lab/tls/tls.crt"
+
 [cluster]
 server = "https://127.0.0.1:16443"
 namespace = "fortify"

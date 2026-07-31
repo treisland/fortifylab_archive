@@ -16,6 +16,7 @@ from manager.config_migration import (
     inspect,
     migrate,
     rollback,
+    validate_document,
 )
 from manager.server import ConfigurationError, load_config
 
@@ -59,6 +60,13 @@ class ConfigMigrationTests(unittest.TestCase):
             path = self.access / name
             path.write_text(content, encoding="utf-8")
             path.chmod(mode)
+
+    def test_preflight_external_inputs_require_absolute_paths(self) -> None:
+        document = tomllib.loads(LEGACY + '\n[preflight]\nlicense_file = "relative.license"\n')
+        with self.assertRaisesRegex(MigrationError, "absolute path"):
+            validate_document(document)
+        document["preflight"]["license_file"] = "/protected/fortify.license"
+        self.assertEqual(validate_document(document), 0)
 
     def run_migration(self):
         return migrate(

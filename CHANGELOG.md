@@ -7,10 +7,9 @@
 
 ## Unreleased
 
-- Separate workload, persistence, in-cluster service/application,
-  ingress/TLS, and external-reachability health domains; public DNS failures
-  now degrade access without changing database workload health or blocking
-  unrelated internal dependencies.
+- Replace generic deployment-preflight placeholders with protected, bounded
+  host and MicroK8s discovery, capacity estimates, explicit platform versus
+  mutation readiness, and sanitized EC2-only guidance.
 
 - Separate observation and mutation capability presentation, distinguish
   policy-disabled, setup-required, unauthorized, transient, and unsupported

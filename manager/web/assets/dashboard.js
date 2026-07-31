@@ -273,6 +273,16 @@ function renderPreflight(payload) {
   const profile = payload.profile || {};
   text(byId("preflight-detail"), `${profile.id || "Unknown profile"} · ${profile.maturity || "unknown"} · ${summary.blocker || 0} blockers`);
   text(byId("preflight-summary"), `${payload.ready ? "Ready" : "Blocked"} · ${summary.blocker || 0} blockers · ${summary.warning || 0} warnings`);
+  const capacity = payload.capacity || {};
+  const host = payload.host || {};
+  const platform = payload.platformReadiness || {};
+  const mutationAccess = payload.mutationAuthorization || {};
+  byId("preflight-host").replaceChildren(
+    documentNode("span", "", `Platform prerequisites: ${platform.ready ? "ready" : "blocked"}`),
+    documentNode("span", "", `Mutation authorization: ${mutationAccess.ready ? "ready" : "blocked"}`),
+    documentNode("span", "", `Host: ${host.osFamily || "unavailable"} ${host.osVersion || ""} · ${host.architecture || "unavailable"} · MicroK8s ${host.microk8sVersion || "unavailable"}${host.ec2 ? " · EC2 guidance applies" : ""}`),
+    documentNode("span", "", `Remaining after profile: ${capacity.remainingCpuCores ?? "—"} CPU · ${capacity.remainingMemoryGiB ?? "—"} GiB memory · ${capacity.remainingStorageGiB ?? "—"} GiB disk`)
+  );
   const list = byId("preflight-list");
   list.replaceChildren();
   for (const item of items.filter(item => item.status !== "pass").slice(0, 8)) {

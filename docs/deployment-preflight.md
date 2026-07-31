@@ -1,13 +1,21 @@
 # Deployment preflight
 
-The authenticated Manager runs the Kubernetes-observable subset through its
-protected read-only observer. MicroK8s version, StorageClasses, Services, and
-Ingresses use live evidence. Checks requiring host capacity, addon discovery,
-license or registry credentials, image pulls, TLS contents, or external
-configuration remain warnings because the observer is intentionally unable to
-read Secrets, arbitrary files, or execute commands. Loss of Kubernetes access
-is a sanitized blocker for observable checks and is retried on the next
-request.
+The authenticated Manager consumes protected, sanitized host discovery. Refresh
+it with `sudo ./scripts/fortify-manager collect-host-preflight`. The collector
+uses only fixed, bounded read commands and metadata checks. It records CPU,
+available memory/disk, OS/kernel/architecture, MicroK8s version/state/addons,
+storage/ingress presence, local ingress ports, DNS agreement, and protected
+input presence. It never records hostnames, addresses, paths, command output,
+certificate or license contents, registry credentials, or authorization
+material. Collection uses the fixed `/snap/bin/microk8s` executable rather
+than `PATH`. Network expectations come from validated `manager.toml`, never
+sudo-stripped environment variables. Evidence is created with an unpredictable
+name in a root-owned mode-`0700` staging directory, validated, fsynced, and
+atomically installed as `root:fortify-manager` mode `0640`; invalid type,
+ownership, permissions, size, keys, values, or evidence
+older than 15 minutes fails closed. TLS checks decode only the public
+certificate metadata, require the managed names and more than seven days of
+remaining validity, and never inspect the private key.
 
 `GET /api/v1alpha1/preflight` tells an authenticated user whether the
 single-node MicroK8s lab is ready for observation, deployment, start, and
@@ -66,6 +74,16 @@ actionable blocker; it is never treated as a pass.
 
 ## Interpretation
 
+`platformReadiness` contains only prerequisite blockers. It does not consume
+lifecycle authorization and is not health evidence for an existing lab.
+`mutationAuthorization` separately reports whether the Manager can mutate.
+The legacy `readiness` entries and top-level `ready` retain their combined
+fail-closed behavior. `capacity` reports total and estimated remaining CPU,
+memory, and disk after subtracting the selected profile minimum; it is guidance,
+not a reservation. `host.ec2=true` enables guidance only: the collector never
+calls AWS APIs or changes IAM, DNS, security groups, volumes, instances, or
+network interfaces.
+
 The top-level `ready` value remains a backward-compatible alias for
 `readiness.deployment.ready`. New consumers use the selected readiness entry:
 
@@ -123,7 +141,7 @@ rerun preflight.
 
 ### storage
 
-Confirm a writable default storage class exists and has sufficient capacity
+Confirm a default storage class with a declared provisioner exists and has sufficient capacity
 for MySQL, PostgreSQL, SSC, LIM, and DAST data. Correct provisioning or
 capacity problems without deleting existing persistent claims.
 
@@ -150,8 +168,14 @@ evidence.
 
 ### external-license
 
-Configure the Fortify license through `FORTIFY_LICENSE_FILE` or the documented
-repository-local default. The adapter may verify existence, regular-file
+Configure the Fortify license with the optional absolute
+`preflight.license_file` reference in protected `manager.toml`, or use the
+repository-local `secrets/input/fortify.license` default. The registry
+credentials and public TLS certificate may similarly use
+`preflight.registry_auth_file` and `preflight.tls_certificate_file`. External
+references let protected inputs remain outside the checkout. Referenced files
+must be regular, nonempty, mode `0600`, and owned by root or the sudo operator;
+symlinks fail closed. The adapter may verify existence, regular-file
 type, readability, and protected permissions; it must not read content into
 the report or disclose the path. Fix ownership or permissions using the
 operator's protected secret workflow, then rerun preflight.
@@ -169,6 +193,11 @@ Confirm every pinned image in the component registry is reachable and has a
 compatible manifest for the lab host. Restore network/registry access or
 correct the pinned bundle. A read-only manifest check is sufficient;
 preflight must not pull images as proof.
+
+The current profile lacks some complete repository origins. With protected
+registry-authentication metadata present, this is a specific warning rather
+than a fabricated pass. Missing protected authentication is a blocker. No
+authorization header or registry response body enters evidence.
 
 ### configuration
 

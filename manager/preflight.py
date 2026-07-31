@@ -39,6 +39,7 @@ class PreflightResult:
     """State-only result; adapters cannot contribute report text."""
 
     state: str
+    facts: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.state not in RESULT_STATES:
@@ -113,12 +114,32 @@ class PreflightEngine:
             for classification in ("blocker", "warning", "information")
         }
         readiness = self._readiness(items)
+        platform_blockers = [
+            f"PREFLIGHT_{item['id'].upper().replace('-', '_')}"
+            for item in items if item["classification"] == "blocker"
+        ]
+        host_facts = next(
+            (item.get("facts", {}) for item in items if item["id"] == "host-capacity"),
+            {},
+        )
+        authorization_blockers = [
+            item for item in readiness["deployment"]["blockers"]
+            if item not in platform_blockers
+        ]
         return {
             "apiVersion": API_VERSION,
             "kind": "DeploymentPreflight",
             "generatedAt": _timestamp(generated_at),
             # Backward-compatible alias for deployment clients.
             "ready": readiness["deployment"]["ready"],
+            "platformReadiness": {
+                "ready": not platform_blockers,
+                "blockers": platform_blockers,
+            },
+            "mutationAuthorization": {
+                "ready": not authorization_blockers,
+                "blockers": authorization_blockers,
+            },
             "readiness": readiness,
             "profile": {
                 "id": self._registry.profile.id,
@@ -135,6 +156,18 @@ class PreflightEngine:
                 "mode": "read-only",
             },
             "items": items,
+            "capacity": {
+                key: host_facts[key] for key in (
+                    "cpuCores", "memoryGiB", "storageGiB", "remainingCpuCores",
+                    "remainingMemoryGiB", "remainingStorageGiB",
+                ) if key in host_facts
+            },
+            "host": {
+                key: host_facts[key] for key in (
+                    "osFamily", "osVersion", "kernel", "architecture",
+                    "microk8sVersion", "ec2",
+                ) if key in host_facts
+            },
         }
 
     def _readiness(self, items: list[dict]) -> dict[str, dict[str, Any]]:
@@ -178,12 +211,14 @@ class PreflightEngine:
         completed: bool,
         started: float,
     ) -> dict:
+        facts: dict[str, Any] = {}
         try:
             if not completed:
                 raise TimeoutError
             result = future.result()
             state = result.state
             summary = _result_summary(check.id, state)
+            facts = result.facts or {}
         except TimeoutError:
             state = "fail"
             summary = "Check exceeded the aggregate bounded deadline"
@@ -204,6 +239,8 @@ class PreflightEngine:
             "summary": summary,
             "latencyMs": max(0, round((time.monotonic() - started) * 1000)),
         }
+        if facts:
+            item["facts"] = facts
         if classification == "blocker":
             item["remediation"] = {
                 "summary": check.remediation,
@@ -247,9 +284,13 @@ class PreflightEngine:
 
 def _result_summary(check_id: str, state: str) -> str:
     subject = check_id.replace("-", " ").capitalize()
+    warning = {
+        "image-reachability": "Pinned image repository origins are incomplete; manifest reachability is unverified",
+        "tls": "TLS metadata is present but requires certificate validation",
+    }.get(check_id, f"{subject} produced bounded but incomplete evidence")
     return {
         "pass": f"{subject} check passed",
-        "warning": f"{subject} requires operator review",
+        "warning": warning,
         "fail": f"{subject} is not ready",
     }[state]
 

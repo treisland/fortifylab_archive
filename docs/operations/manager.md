@@ -239,6 +239,13 @@ disconnects the new token and leaves the prior configuration active.
 
 ### Protected lifecycle activation
 
+Before deployment, run `sudo ./scripts/fortify-manager collect-host-preflight`
+and refresh the dashboard. This read-only command updates only sanitized,
+short-lived host evidence. It does not enable add-ons, bind ports, pull images,
+modify DNS/AWS resources, or read secret values. External license and registry
+references may remain outside the repository; only their protected-file
+presence is recorded.
+
 `activate-lifecycle` is the only supported transition from
 `lifecycle.enabled = false` to `true`. It is idempotent on the supported
 single-node MicroK8s profile and starts every attempt disabled. Before
